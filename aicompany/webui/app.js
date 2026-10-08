@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-j";
+const PANEL_V = "2026.10.09-k";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -732,6 +732,49 @@ async function showAudit() {
       ...rows.map((r) => h("div", { class: "step" }, h("b", {}, `${r.actor} · ${r.action}`), h("div", {}, `${ago(r.ts)} oldin · ${r.detail}`))));
   } catch (e) { toast(e.message); }
 }
+// --- Push-bildirishnomalar ---
+const PUSH_KINDS = [["done", "✅ Vazifa tayyor bo'lganda"], ["failed", "⚠️ Vazifa bajarilmaganda"], ["approval", "🔐 Ruxsat so'ralganda"], ["reminder", "⏰ Eslatma vaqtida"]];
+let pushOn = null;  // shu qurilmada obuna bormi (null = hali bilmaymiz)
+const b64u = (s) => Uint8Array.from(atob((s + "=".repeat((4 - s.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+async function pushSub() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+async function pushEnable() {
+  if (!("Notification" in window) || !("PushManager" in window)) throw new Error("Bu brauzer bildirishnomani qo'llamaydi. iPhone'da avval ilovani «Bosh ekranga qo'shish» qiling.");
+  const perm = await Notification.requestPermission();
+  if (perm !== "granted") throw new Error("Ruxsat berilmadi. Sozlamalardan bildirishnomaga ruxsat bering.");
+  const { key } = await api("/push/key");
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64u(key) });
+  await post("/push/subscribe", { subscription: sub.toJSON() });
+}
+async function pushDisable() {
+  const sub = await pushSub();
+  if (sub) { try { await post("/push/unsubscribe", { endpoint: sub.endpoint }); } catch (_) { /* server o'zi tozalaydi */ } await sub.unsubscribe(); }
+}
+function pushBlock() {
+  const P = (S.state && S.state.push) || {};
+  if (!P.available) return [h("p", { class: "hint" }, "Serverda bildirishnoma moduli o'rnatilmagan (pywebpush). Serverni yangilang.")];
+  if (pushOn === null) pushSub().then((s) => { pushOn = !!s; if (S.tab === "stats") refresh(true); }).catch(() => { pushOn = false; });
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  const ios = /iPhone|iPad/.test(navigator.userAgent);
+  const act = async (fn, msg) => { try { await fn(); pushOn = null; toast(msg); refresh(true); } catch (e) { toast(e.message); } };
+  const out = [];
+  if (ios && !standalone) out.push(h("p", { class: "hint" }, "iPhone'da bildirishnoma faqat bosh ekranga o'rnatilgan ilovada ishlaydi: Ulashish → «Bosh ekranga qo'shish», keyin ilovani shu yerdan oching."));
+  out.push(h("div", { class: "seg" },
+    h("button", { class: pushOn ? "on" : "", onclick: () => act(pushEnable, "Bildirishnoma yoqildi") }, "Yoqilgan"),
+    h("button", { class: pushOn ? "" : "on", onclick: () => act(pushDisable, "Bildirishnoma o'chirildi") }, "O'chiq")));
+  if (pushOn) {
+    out.push(h("div", { class: "card" }, PUSH_KINDS.map(([k, l]) => h("div", { class: "kv" }, h("span", {}, l),
+      h("button", { class: "btn ghost", style: "padding:6px 14px", onclick: async () => { try { await post("/push/prefs", { [k]: !(P.prefs || {})[k] }); refresh(true); } catch (e) { toast(e.message); } } }, (P.prefs || {})[k] === false ? "O'chiq" : "Yoqilgan")))));
+    out.push(h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: async () => { try { await post("/push/test"); toast("Sinov yuborildi"); } catch (e) { toast(e.message); } } }, "🔔 Sinov bildirishnomasi")));
+  } else out.push(h("p", { class: "hint" }, "Yoqsangiz, ilova yopiq bo'lsa ham telefonga xabar keladi: vazifa tayyor, ruxsat kerak, eslatma."));
+  return out;
+}
+
 function callBlock(t) {
   const C = (t && t.calls) || { available: false };
   const save = async (d) => { try { await post("/tg/calls", d); toast("Saqlandi"); setTimeout(tgSheet, 800); } catch (e) { toast(e.message); } };
@@ -955,6 +998,7 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("p", { class: "hint" }, state.eco !== false
       ? "Reja va yakuniy qadoqlash arzon modelda, eng qimmat daraja ishlatilmaydi, bitta qadamli ishda qayta yozish yo'q. Odatda ~2 barobar arzon."
       : "Sifat rejimi: rahbar o'rta/kuchli modeldan foydalanadi, QA e'tirozida eng kuchli model qayta yozadi. Murakkab ishlar uchun."),
+    h("div", { class: "label" }, "Bildirishnomalar (telefonga)"), ...pushBlock(),
     h("div", { class: "label" }, "Bot xabarlari"),
     h("div", { class: "seg" },
       [["all", "Hammasi"], ["result", "Faqat natija"], ["off", "O'chiq"]].map(([v, l]) => h("button", { class: (state.bot_push || "all") === v ? "on" : "", onclick: async () => {
@@ -1111,15 +1155,26 @@ function start() {
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 }
 window.addEventListener("hashchange", () => location.reload());
+function openDeepLink(url) {  // bildirishnomadan kelganda: kerakli vazifa yoki sahifa ochiladi
+  try {
+    const q = new URL(url, location.origin).searchParams;
+    if (q.get("task")) { go("tasks"); openTask(Number(q.get("task"))); } else if (q.get("tab")) go(q.get("tab"));
+  } catch (_) { /* noto'g'ri havola e'tiborsiz */ }
+}
 (async function init() {
   const m = location.hash.match(/token=([^&]+)/);
   if (m) { history.replaceState(null, "", location.pathname); S.token = decodeURIComponent(m[1]); }
-  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    navigator.serviceWorker.addEventListener("message", (e) => { if (e.data && e.data.type === "open") openDeepLink(e.data.url); });
+  }
   const cached = S.cache[S.tab];
   if (S.token && cached) {  // oldin kirilgan: kutmasdan oxirgi holat bilan ochamiz, server orqada tekshiriladi
     if (S.cache._chat) { S.chat = S.cache._chat; S.lastChat = S.chat.length ? S.chat[S.chat.length - 1].id : 0; }
     paint(S.tab, cached); start();
+    if (location.search) setTimeout(() => { openDeepLink(location.href); history.replaceState(null, "", location.pathname); }, 600);
     return;
   }
   if (S.token && (await tryLogin(S.token))) start(); else showLogin();
+  if (location.search) setTimeout(() => { openDeepLink(location.href); history.replaceState(null, "", location.pathname); }, 600);
 })();

@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from aiohttp import web
 
+from .push import available as push_available
 from .app import App
 from .report import build_report, day_start_utc
 from .providers import ProviderError, VoiceError, VoiceUnavailable, suggest_model
@@ -171,6 +172,8 @@ def make_web_app(app: App) -> web.Application:
         return {
             "paused": await app.store.get_kv("paused") == "1",
             "eco": await app.store.get_kv("eco") != "0",
+            "push": {"available": bool(app.push and push_available()), "prefs": await app.push.prefs() if app.push else {},
+                     "devices": len(await app.push.subs()) if app.push else 0},
             "bot_push": (await app.store.get_kv("bot_push")) or "all",
             "today": round(await today_spend(), 4),
             "budgets": [{"provider": n, **v} for n, v in budgets.items()],
@@ -473,6 +476,35 @@ def make_web_app(app: App) -> web.Application:
     def kick_listener():
         if app.listener is not None:
             app.listener.kick()
+
+    async def h_push_key(request):
+        if not app.push or not push_available():
+            raise web.HTTPServiceUnavailable(reason="Serverda bildirishnoma moduli (pywebpush) o'rnatilmagan")
+        return json_ok({"key": await app.push.public_key()})
+
+    async def h_push_subscribe(request):
+        d = await body(request)
+        try:
+            n = await app.push.subscribe(d.get("subscription") or {}, request.headers.get("User-Agent", ""))
+        except ValueError as e:
+            raise web.HTTPBadRequest(reason=str(e))
+        await app.store.audit("owner", "push_on", f"bildirishnoma yoqildi ({n} qurilma)")
+        return json_ok({"devices": n})
+
+    async def h_push_unsubscribe(request):
+        d = await body(request)
+        await app.push.unsubscribe(str(d.get("endpoint", "")))
+        await app.store.audit("owner", "push_off", "bildirishnoma o'chirildi (qurilma)")
+        return json_ok({"ok": True})
+
+    async def h_push_prefs(request):
+        return json_ok({"prefs": await app.push.set_prefs(await body(request))})
+
+    async def h_push_test(request):
+        n = await app.push.notify("done", "🔔 Sinov", "Bildirishnomalar ishlayapti", "/", force=True)
+        if not n:
+            raise web.HTTPBadGateway(reason="Hech qaysi qurilmaga yetmadi. Bildirishnomani qayta yoqing.")
+        return json_ok({"sent": n})
 
     async def h_tg_calls(request):
         d = await body(request)
@@ -830,7 +862,7 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
         web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend),
-        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.post("/api/tg/call_test", h_tg_call_test), web.get("/api/tg/me", h_tg_me),
+        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),

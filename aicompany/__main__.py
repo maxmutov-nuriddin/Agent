@@ -131,7 +131,7 @@ async def amain():
             listen = asyncio.create_task(app.listener.supervise())
             resume = asyncio.create_task(app.orch.resume_interrupted(panel_sender(app)))
             try:
-                await reminder_loop(app, [panel_sender(app)])
+                await reminder_loop(app, [panel_sender(app), app.push.reminder_sender()])
             finally:
                 listen.cancel()
                 resume.cancel()

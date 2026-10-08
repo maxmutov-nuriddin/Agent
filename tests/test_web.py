@@ -960,3 +960,44 @@ async def test_api_bot_push(web):
     r = await c.post("/api/bot_push", json={"mode": "result"}, headers=TOK)
     assert r.status == 200 and await app.store.get_kv("bot_push") == "result"
     assert (await c.post("/api/bot_push", json={"mode": "zzz"}, headers=TOK)).status == 400
+
+
+async def test_push_subscribe_prefs_and_delivery(web, monkeypatch):
+    c, app = web
+    key = (await get(c, "/api/push/key"))[1]["key"]
+    assert len(key) > 60 and (await get(c, "/api/push/key"))[1]["key"] == key   # kalit barqaror
+    assert (await post(c, "/api/push/subscribe", {"subscription": {"endpoint": "http://x", "keys": {}}}))[0] == 400
+    sub = {"endpoint": "https://push.example/abc", "keys": {"p256dh": "P", "auth": "A"}}
+    assert (await post(c, "/api/push/subscribe", {"subscription": sub}))[0] == 200
+    assert (await get(c, "/api/state"))[1]["push"]["devices"] == 1
+
+    sent = []
+
+    def fake_send(self, s, payload, vapid):
+        sent.append(json.loads(payload))
+    monkeypatch.setattr(type(app.push), "_send", fake_send)
+    await app.push.task_done({"kind": "task", "task_id": 5, "status": "done", "result": "# Natija\nTayyor"})
+    assert sent[-1]["title"].startswith("✅") and sent[-1]["url"] == "/?task=5"
+    await post(c, "/api/push/prefs", {"done": False})
+    n = len(sent)
+    await app.push.task_done({"kind": "task", "task_id": 6, "status": "done", "result": "x"})
+    assert len(sent) == n                                                     # o'chirilgan tur yuborilmaydi
+    await app.push.task_done({"kind": "task", "task_id": 7, "status": "failed", "error": "limit"})
+    assert sent[-1]["tag"] == "failed"
+    await app.push.approval(1, 5, "dev", "rm -rf x")
+    assert sent[-1]["tag"] == "approval"
+
+    class Gone(Exception):
+        response = type("R", (), {"status_code": 410})()
+
+    def dead(self, s, payload, vapid):
+        raise Gone()
+    monkeypatch.setattr(type(app.push), "_send", dead)
+    await app.push.notify("approval", "t")
+    assert await app.push.subs() == []                                        # o'lik obuna tozalandi
+
+
+async def test_push_assets_and_ui(web):
+    js = (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()
+    sw = (Path(__file__).parent.parent / "aicompany/webui/sw.js").read_text()
+    assert "pushManager.subscribe" in js and "/push/prefs" in js and 'addEventListener("push"' in sw and "notificationclick" in sw

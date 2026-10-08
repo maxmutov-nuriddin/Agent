@@ -25,6 +25,7 @@ class App:
     center: ApprovalCenter | None = None
     tg: TgUser | None = None
     listener: object | None = None  # TgListener: agent akkaunti egasiga bot kabi javob beradi
+    push: object | None = None      # PushService: PWA bildirishnomalar
     calls: object | None = None     # CallService: Telegram ovozli qo'ng'iroq (ixtiyoriy)
 
 
@@ -85,5 +86,12 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     app.listener = TgListener(app)
     from .calls import CallService
     app.calls = CallService(app)
-    orch.on_done = app.calls.task_done
+    from .push import PushService
+    app.push = PushService(app)
+    center.announcers.append(app.push.approval)
+
+    async def on_done(res):
+        await app.push.task_done(res)
+        await app.calls.task_done(res)
+    orch.on_done = on_done
     return app
