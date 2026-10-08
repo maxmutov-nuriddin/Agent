@@ -252,3 +252,91 @@ async def test_gemini_agent_tool_loop_end_to_end_with_real_provider_class(make_a
     assert out == "fayl yozildi" and (tmp_path / "n.txt").read_text() == "salom"
     assert calls[1]["contents"][2]["parts"][0]["functionResponse"]["name"] == "write_file"
     assert calls[1]["contents"][1]["parts"][0]["thoughtSignature"] == "S"
+
+
+# ---------- noto'g'ri model nomi (404) ----------
+from aicompany.providers import ModelNotFound, suggest_model  # noqa: E402
+
+
+def test_suggest_model_picks_closest_real_name():
+    avail = ["gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-3-flash-image", "gemini-embedding-001", "gemini-2.5-pro"]
+    assert suggest_model("gemini-3-flash", avail) == "gemini-3-flash-preview"
+    assert suggest_model("gemini-3.1-flash-lite", avail) == "gemini-3.1-flash-lite"     # allaqachon to'g'ri
+    assert suggest_model("gemini-9-ultra", avail) is None
+    assert suggest_model("gemini-embedding", avail) is None                              # chat bo'lmagan modellar o'tkazib yuboriladi
+    assert suggest_model("gemini-3-flash", ["gemini-3-flash", "gemini-3-flash-preview"]) == "gemini-3-flash"
+
+
+async def test_real_provider_turns_404_into_model_not_found_without_retrying():
+    n = {"i": 0}
+
+    def h(req):
+        n["i"] += 1
+        return httpx.Response(404, json={"error": {"code": 404, "status": "NOT_FOUND"}})
+    with pytest.raises(ModelNotFound):
+        await GeminiProvider("k", gclient(h)).complete(CFG, "S", [{"role": "user", "content": "x"}], 10)
+    assert n["i"] == 1  # 404 qayta urinilmaydi
+
+
+def gem_only(handler_extra):
+    def handler(system, user, model):
+        if model == "gemini-3-flash":
+            return ModelNotFound("gemini: model 'gemini-3-flash' topilmadi")
+        return handler_extra(system, user, model)
+    return handler
+
+
+async def test_wrong_model_name_is_auto_resolved_remembered_and_reported(make_app):
+    app, provs = await make_app(gem_only(lambda *a: "ok"), names=("gemini",))
+    provs["gemini"].models_list = ["gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-embedding-001"]
+    warnings = []
+
+    async def warn(t):
+        warnings.append(t)
+    app.router.on_warning = warn
+    r = await app.router.call("mid", "You are 'x'", [{"role": "user", "content": "hi"}])
+    assert r.text == "ok" and provs["gemini"].calls == ["gemini-3-flash", "gemini-3-flash-preview"]
+    assert await app.store.get_kv("model:gemini:gemini-3-flash") == "gemini-3-flash-preview"
+    assert len(warnings) == 1 and "gemini-3-flash-preview" in warnings[0]
+    await app.router.call("mid", "You are 'x'", [{"role": "user", "content": "again"}])
+    assert provs["gemini"].calls[2:] == ["gemini-3-flash-preview"] and provs["gemini"].list_calls == 1  # qayta so'ralmadi
+    assert len(warnings) == 1
+
+
+async def test_no_close_match_falls_back_to_a_cheaper_working_model(make_app):
+    app, provs = await make_app(gem_only(lambda *a: "ok"), names=("gemini",))
+    provs["gemini"].models_list = ["gemini-3.1-flash-lite", "gemini-2.5-pro"]
+    r = await app.router.call("mid", "You are 'x'", [{"role": "user", "content": "hi"}])
+    assert r.text == "ok" and provs["gemini"].calls[-1] == "gemini-3.1-flash-lite"   # cheap modeliga tushdi
+    await app.router.call("mid", "You are 'x'", [{"role": "user", "content": "again"}])
+    assert provs["gemini"].calls.count("gemini-3-flash") == 1                      # noto'g'ri nom qayta urinilmadi
+
+
+async def test_lowest_tier_wrong_name_gives_actionable_error(make_app):
+    def handler(system, user, model):
+        return ModelNotFound(f"gemini: model '{model}' topilmadi")
+    app, provs = await make_app(handler, names=("gemini",))
+    with pytest.raises(BudgetExhausted) as e:
+        await app.router.call("cheap", "You are 'x'", [{"role": "user", "content": "hi"}])
+    assert "topilmadi" in str(e.value) and "aicompany check" in str(e.value)
+
+
+async def test_whole_task_survives_a_wrong_mid_tier_model(make_app):
+    base = scripted_company()
+
+    def handler(system, user, model):
+        return base(system, user, model)
+    app, provs = await make_app(gem_only(handler), names=("gemini",))
+    provs["gemini"].models_list = ["gemini-3-flash-preview", "gemini-3.1-flash-lite"]
+    res = await app.orch.run_task("x", 1)
+    assert res["status"] == "done" and res["result"] == "FINAL DELIVERABLE"
+
+
+async def test_check_command_suggests_correct_names(make_app, capsys):
+    from aicompany.__main__ import cmd_check
+    app, provs = await make_app(lambda *a: "ok", names=("gemini",))
+    provs["gemini"].models_list = ["gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-3.5-flash"]
+    app.router.providers["gemini"].list_models = provs["gemini"].list_models
+    await cmd_check(app)
+    out = capsys.readouterr().out
+    assert "TOPILMADI" in out and "gemini-3-flash-preview" in out and "taklif" in out

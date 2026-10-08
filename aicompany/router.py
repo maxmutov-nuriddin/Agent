@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from .config import Settings
 from .db import Store, cache_key
-from .providers import LLMResult, Provider, ProviderError, VoiceError, VoiceUnavailable
+import dataclasses
+
+from .config import TIERS
+from .providers import (LLMResult, ModelNotFound, Provider, ProviderError, VoiceError, VoiceUnavailable,
+                        suggest_model)
 
 MAX_TOKENS = {"cheap": 4096, "mid": 6000, "strong": 8000}
 
@@ -29,6 +33,8 @@ class Router:
     def __init__(self, settings: Settings, store: Store, providers: dict[str, Provider]):
         self.s, self.store, self.providers = settings, store, providers
         self.on_warning = None  # async callable(str)
+        self._bad_models: set[tuple[str, str]] = set()  # (provayder, model) shu jarayonda topilmagan
+        self._model_lists: dict[str, list[str]] = {}
 
     def _estimate(self, cfg, system, messages, max_tokens) -> float:
         in_tok = (len(system) + sum(len(str(m["content"])) for m in messages)) // 3
@@ -44,6 +50,43 @@ class Router:
     async def primary(self) -> str:
         """Asosiy provayder: panel/Telegramdagi tanlov (kv) > .env (PRIMARY_PROVIDER) > 'auto' (eng arzoni)."""
         return (await self.store.get_kv("primary_provider")) or self.s.primary_provider
+
+    async def _warn(self, text: str):
+        await self.store.audit("router", "model", text[:500])
+        if self.on_warning:
+            try:
+                await self.on_warning(text)
+            except Exception:  # noqa: BLE001 — ogohlantirish yetkazilmasa ham ish davom etadi
+                pass
+
+    async def _model_for(self, pc, tier):
+        """Tier uchun model sozlamasi: avval topilgan tuzatish (kv), keyin models.yaml."""
+        cfg = pc.models[tier]
+        fixed = await self.store.get_kv(f"model:{pc.name}:{cfg.id}")
+        return dataclasses.replace(cfg, id=fixed) if fixed else cfg
+
+    async def _resolve_model(self, pc, cfg) -> str | None:
+        """Model topilmasa: provayderning haqiqiy ro'yxatidan eng yaqinini tanlab, eslab qoladi."""
+        prov = self.providers[pc.name]
+        if pc.name not in self._model_lists:
+            try:
+                self._model_lists[pc.name] = await prov.list_models()
+            except (ProviderError, NotImplementedError):
+                self._model_lists[pc.name] = []
+        found = suggest_model(cfg.id, self._model_lists[pc.name])
+        if found and found != cfg.id:
+            await self.store.set_kv(f"model:{pc.name}:{cfg.id}", found)
+            await self._warn(f"⚙️ {pc.name}: '{cfg.id}' topilmadi, '{found}' ishlatiladi. models.yaml ni yangilang.")
+            return found
+        return None
+
+    async def _lower_tier_cfg(self, pc, tier):
+        """Yaqin nom topilmasa: shu provayderning ishlaydigan arzonroq modeliga tushamiz."""
+        for lower in reversed(TIERS[:TIERS.index(tier)]):
+            cfg = await self._model_for(pc, lower)
+            if (pc.name, cfg.id) not in self._bad_models:
+                return cfg
+        return None
 
     async def _candidates(self, tier, tools, only, exclude):
         provs = [p for n, p in self.s.providers.items() if n in self.providers and n not in exclude
@@ -69,18 +112,40 @@ class Router:
         candidates = await self._candidates(tier, tools, only, exclude)
         errors = []
         for pc in candidates:
-            cfg = pc.models[tier]
+            cfg = await self._model_for(pc, tier)
+            if (pc.name, cfg.id) in self._bad_models:
+                cfg = await self._lower_tier_cfg(pc, tier)
+                if cfg is None:
+                    errors.append(f"{pc.name}: model topilmadi")
+                    continue
             spent = await self.store.spent(pc.name)
             if spent + self._estimate(cfg, system, messages, max_tokens) > pc.budget_usd:
                 errors.append(f"{pc.name}: limit")
                 continue
-            try:
-                prov = self.providers[pc.name]
-                res = await prov.complete(cfg, system, messages, max_tokens,
-                                          tools if prov.supports_tools else None)
-            except ProviderError as e:
-                errors.append(str(e))
-                await self.store.audit("router", "provider_error", str(e)[:500])
+            prov = self.providers[pc.name]
+            res = None
+            for attempt in range(3):  # model nomi tuzatilsa yoki pastroq model olinsa, qayta urinamiz
+                try:
+                    res = await prov.complete(cfg, system, messages, max_tokens, tools if prov.supports_tools else None)
+                    break
+                except ModelNotFound as e:
+                    self._bad_models.add((pc.name, cfg.id))
+                    new_id = await self._resolve_model(pc, cfg)
+                    if new_id:
+                        cfg = dataclasses.replace(cfg, id=new_id)
+                        continue
+                    lower = await self._lower_tier_cfg(pc, tier)
+                    if lower is None:
+                        errors.append(f"{e} (python -m aicompany check)")
+                        break
+                    await self._warn(f"⚙️ {pc.name}: '{cfg.id}' topilmadi, '{lower.id}' ishlatiladi. "
+                                     "To'g'ri nomni `python -m aicompany check` ko'rsatadi.")
+                    cfg = lower
+                except ProviderError as e:
+                    errors.append(str(e))
+                    await self.store.audit("router", "provider_error", str(e)[:500])
+                    break
+            if res is None:
                 continue
             res.provider = pc.name
             await self.store.add_usage(pc.name, cfg.id, task_id, agent, res.tokens_in,

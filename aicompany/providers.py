@@ -13,6 +13,12 @@ from .config import ModelCfg
 class ProviderError(Exception):
     """Provayder xatosi: router keyingi provayderga o'tadi."""
 
+    status: int | None = None
+
+
+class ModelNotFound(ProviderError):
+    """Model nomi provayderda mavjud emas (models.yaml dagi nom noto'g'ri yoki eskirgan)."""
+
 
 @dataclass
 class LLMResult:
@@ -73,6 +79,8 @@ class AnthropicProvider(Provider):
                 model=cfg.id, max_tokens=max_tokens,
                 system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
                 messages=messages, **kwargs)
+        except self._anthropic.NotFoundError as e:
+            raise ModelNotFound(f"anthropic: model '{cfg.id}' topilmadi") from e
         except self._anthropic.APIError as e:
             raise ProviderError(f"anthropic: {e}") from e
         if r.stop_reason == "refusal":
@@ -105,8 +113,17 @@ class _HttpProvider(Provider):
     def _headers(self) -> dict:
         raise NotImplementedError
 
+    async def _generate(self, method: str, url: str, cfg: ModelCfg, **kw) -> dict:
+        """Generatsiya so'rovi: 404 = model nomi noto'g'ri (ModelNotFound)."""
+        try:
+            return await self._request(method, url, **kw)
+        except ProviderError as e:
+            if e.status == 404:
+                raise ModelNotFound(f"{self.name}: model '{cfg.id}' topilmadi") from e
+            raise
+
     async def _request(self, method: str, url: str, **kw) -> dict:
-        last = ""
+        last, status = "", None
         for attempt in range(3):
             try:
                 r = await self.http.request(method, url, headers=self._headers(), **kw)
@@ -116,10 +133,13 @@ class _HttpProvider(Provider):
                 if r.status_code < 400:
                     return r.json()
                 last = f"{r.status_code} {r.text[:300]}"
+                status = r.status_code
                 if r.status_code not in (408, 429) and r.status_code < 500:
                     break
             await asyncio.sleep(2 ** attempt)
-        raise ProviderError(f"{self.name}: {last}")
+        err = ProviderError(f"{self.name}: {last}")
+        err.status = status
+        raise err
 
 
 class OpenAIProvider(_HttpProvider):
@@ -132,7 +152,7 @@ class OpenAIProvider(_HttpProvider):
     async def complete(self, cfg, system, messages, max_tokens, tools=None):
         body = {"model": cfg.id, "max_completion_tokens": max_tokens,
                 "messages": [{"role": "system", "content": system}, *messages]}
-        data = await self._request("POST", f"{self.base}/chat/completions", json=body)
+        data = await self._generate("POST", f"{self.base}/chat/completions", cfg, json=body)
         try:
             text = data["choices"][0]["message"].get("content") or ""
             u = data["usage"]
@@ -209,7 +229,7 @@ class GeminiProvider(_HttpProvider):
                     d["parameters"] = params
                 decls.append(d)
             body["tools"] = [{"functionDeclarations": decls}]
-        data = await self._request("POST", f"{self.base}/models/{cfg.id}:generateContent", json=body)
+        data = await self._generate("POST", f"{self.base}/models/{cfg.id}:generateContent", cfg, json=body)
         try:
             cand = data["candidates"][0]
             content = cand["content"]
@@ -235,7 +255,7 @@ class GeminiProvider(_HttpProvider):
         body = {"contents": [{"role": "user", "parts": [
                     {"text": prompt}, {"inline_data": {"mime_type": mime, "data": base64.b64encode(audio).decode()}}]}],
                 "generationConfig": {"maxOutputTokens": 2048}}
-        data = await self._request("POST", f"{self.base}/models/{cfg.id}:generateContent", json=body)
+        data = await self._generate("POST", f"{self.base}/models/{cfg.id}:generateContent", cfg, json=body)
         try:
             text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"]).strip()
         except (KeyError, IndexError, TypeError) as e:
@@ -252,3 +272,16 @@ class GeminiProvider(_HttpProvider):
 def build_providers(settings) -> dict[str, Provider]:
     classes = {"anthropic": AnthropicProvider, "openai": OpenAIProvider, "gemini": GeminiProvider}
     return {n: classes[n](p.api_key) for n, p in settings.providers.items() if p.api_key}
+
+
+_NON_CHAT = ("embed", "tts", "image", "live", "audio", "robotics", "imagen", "veo", "aqa", "vision-only", "transcribe")
+
+
+def suggest_model(wanted: str, available: list[str]) -> str | None:
+    """Noto'g'ri model nomiga eng yaqin haqiqiy nomni topadi (masalan gemini-3-flash -> gemini-3-flash-preview)."""
+    usable = [m for m in available if not any(k in m for k in _NON_CHAT)]
+    if wanted in usable:
+        return wanted
+    stripped = lambda m: m.replace("-preview", "").replace("-latest", "").replace("-exp", "")  # noqa: E731
+    pool = [m for m in usable if stripped(m) == wanted] or [m for m in usable if m.startswith(wanted + "-") or m.startswith(wanted)]
+    return min(pool, key=len) if pool else None

@@ -7,7 +7,7 @@ import logging
 from .app import build_app
 from .approvals import CliApprover
 from .config import ensure_secret
-from .providers import ProviderError
+from .providers import ProviderError, suggest_model
 
 
 async def cmd_check(app):
@@ -24,11 +24,20 @@ async def cmd_check(app):
             print(f"❌ {name}: kalit ishlamadi — {str(e)[:150]}")
             continue
         print(f"🟢 {name}: kalit ishlaydi ({budget}), {len(available)} model")
+        bad = []
         for tier, m in pc.models.items():
-            ok = "✓" if m.id in available else "✗ TOPILMADI — models.yaml da tuzating"
-            print(f"    {tier:6} {m.id:28} {ok}")
-        if any(m.id not in available for m in pc.models.values()):
-            print("    mavjud modellar:", ", ".join(sorted(available))[:600])
+            ok = m.id in available
+            print(f"    {tier:6} {m.id:28} {'✓' if ok else '✗ TOPILMADI'}")
+            if not ok:
+                bad.append((tier, m.id, suggest_model(m.id, sorted(available))))
+        for tier, wanted, found in bad:
+            print(f"    → {tier}: " + (f"taklif: {found}  (models.yaml da `id: {wanted}` ni `id: {found}` ga almashtiring)"
+                                      if found else "mos nom topilmadi, quyidagi ro'yxatdan tanlang"))
+        if bad:
+            chat = [m for m in sorted(available) if not any(k in m for k in ("embed", "tts", "image", "live", "audio"))]
+            print("    mavjud modellar:", ", ".join(chat)[:700])
+        if bad and any(f for _, _, f in bad):
+            print("    (Bot ishlayotganda yaqin nomni o'zi topib ishlatadi, lekin models.yaml ni tuzatgan ma'qul.)")
 
 
 async def cmd_ask(app, text):

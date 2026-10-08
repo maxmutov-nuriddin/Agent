@@ -18,7 +18,12 @@ class MockProvider(Provider):
         self.tool_seen = []
         self.msgs_seen = []
         self.supports_audio = audio is not None
+        self.models_list, self.list_calls = [], 0
         self.audio_text, self.audio_calls = audio, []
+
+    async def list_models(self):
+        self.list_calls += 1
+        return list(self.models_list)
 
     async def transcribe(self, cfg, audio, mime):
         self.audio_calls.append((cfg.id, mime, len(audio)))

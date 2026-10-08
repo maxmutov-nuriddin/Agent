@@ -170,7 +170,7 @@ class Orchestrator:
         except TaskBudgetExceeded as e:
             out.update(status="stopped", error=f"Vazifa byudjet limiti sabab to'xtatildi: {e}")
         except BudgetExhausted as e:
-            out.update(status="stopped", error=f"Barcha provayder limitlari tugadi yoki ulanmagan: {e}")
+            out.update(status="stopped", error=f"AI ishlamadi (limit, kalit yoki model nomi): {str(e)[:350]}")
         except Exception as e:  # noqa: BLE001 — vazifa jimgina yo'qolmasligi kerak
             await self.store.audit("orchestrator", "task_error", f"#{task_id}: {e!r}")
             out.update(status="failed", error=f"Xatolik: {e}")
