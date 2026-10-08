@@ -71,6 +71,8 @@ async def amain():
     ask.add_argument("text")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)
+    for noisy in ("httpx", "httpx2", "httpcore", "aiohttp.access"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)  # har so'rovni terminalga chiqarmaymiz
     if args.cmd == "link":
         ensure_secret("WEB_TOKEN")
         from .config import load_settings

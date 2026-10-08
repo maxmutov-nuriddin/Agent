@@ -1,5 +1,6 @@
 import json
 import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -46,7 +47,7 @@ def settings(**env):
     base = {"ANTHROPIC_API_KEY": "x", "OPENAI_API_KEY": "x", "GEMINI_API_KEY": "x",
             "DATABASE_URL": "sqlite+aiosqlite:///" + tempfile.mkdtemp(prefix="aic_db_") + "/t.db", "MAX_TASK_USD": "1",
             "WORKSPACE_DIR": tempfile.mkdtemp(prefix="aic_ws_")}
-    return load_settings({**base, **env})
+    return load_settings({**base, **env}, models_path=Path(__file__).parent / "models_test.yaml")
 
 
 @pytest.fixture

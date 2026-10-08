@@ -16,8 +16,8 @@ providers:
       cheap:  {id: gpt-5.6-luna,  in: 0.20, out: 1.20,  cache_read: 0.02}
       mid:    {id: gpt-5.6-terra, in: 2.00, out: 12.00, cache_read: 0.20}
       strong: {id: gpt-5.6-sol,   in: 5.00, out: 30.00, cache_read: 0.50}
-  gemini:   # model nomlari `python -m aicompany check` bilan tasdiqlangan (2026-10-08); narxlar taxminiy
+  gemini:   # VERIFY
     models:
       cheap:  {id: gemini-3.1-flash-lite, in: 0.25, out: 1.50, cache_read: 0.025}
-      mid:    {id: gemini-3-flash-preview, in: 0.50, out: 3.00, cache_read: 0.05}
+      mid:    {id: gemini-3-flash,        in: 0.50, out: 3.00, cache_read: 0.05}
       strong: {id: gemini-3.5-flash,      in: 1.50, out: 9.00, cache_read: 0.15}
