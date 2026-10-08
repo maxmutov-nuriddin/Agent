@@ -23,7 +23,7 @@ class Router:
         self.on_warning = None  # async callable(str)
 
     def _estimate(self, cfg, system, messages, max_tokens) -> float:
-        in_tok = (len(system) + sum(len(m["content"]) for m in messages)) // 3
+        in_tok = (len(system) + sum(len(str(m["content"])) for m in messages)) // 3
         return (in_tok * cfg.price_in + max_tokens * cfg.price_out) / 1_000_000
 
     async def status(self) -> dict[str, dict]:
@@ -34,17 +34,19 @@ class Router:
         return out
 
     async def call(self, tier: str, system: str, messages: list[dict], *, task_id=None,
-                   agent="?", use_cache=False) -> LLMResult:
+                   agent="?", use_cache=False, tools: list[dict] | None = None) -> LLMResult:
         if task_id is not None and await self.store.spent_task(task_id) >= self.s.max_task_usd:
             raise TaskBudgetExceeded(f"vazifa limiti {self.s.max_task_usd}$ tugadi")
         max_tokens = MAX_TOKENS[tier]
-        key = cache_key(tier, system, messages) if use_cache else None
+        key = cache_key(tier, system, messages) if use_cache and not tools else None
         if key and (hit := await self.store.cache_get(key)) is not None:
             return LLMResult(hit, 0, 0, 0, 0.0)
 
         candidates = sorted(
             (p for n, p in self.s.providers.items() if n in self.providers),
             key=lambda p: p.models[tier].price_out)
+        if tools:  # asbob qo'llaydigan provayderlar birinchi; qolganlari asbobsiz javob beradi
+            candidates.sort(key=lambda p: not self.providers[p.name].supports_tools)
         errors = []
         for pc in candidates:
             cfg = pc.models[tier]
@@ -53,7 +55,9 @@ class Router:
                 errors.append(f"{pc.name}: limit")
                 continue
             try:
-                res = await self.providers[pc.name].complete(cfg, system, messages, max_tokens)
+                prov = self.providers[pc.name]
+                res = await prov.complete(cfg, system, messages, max_tokens,
+                                          tools if prov.supports_tools else None)
             except ProviderError as e:
                 errors.append(str(e))
                 await self.store.audit("router", "provider_error", str(e)[:500])

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -17,6 +18,7 @@ agents = sa.Table(
     sa.Column("role", sa.String, nullable=False),
     sa.Column("system_prompt", sa.Text, nullable=False),
     sa.Column("tier", sa.String, nullable=False, default="mid"),
+    sa.Column("tools", sa.String, nullable=False, default=""),
     sa.Column("status", sa.String, nullable=False, default="active"),  # active | fired
     sa.Column("created_by", sa.String, default="seed"),
     sa.Column("created_at", sa.String),
@@ -65,6 +67,23 @@ kv = sa.Table(
     sa.Column("key", sa.String, primary_key=True),
     sa.Column("value", sa.Text),
 )
+memories = sa.Table(
+    "memories", md,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("text", sa.Text, nullable=False),
+    sa.Column("source", sa.String),
+    sa.Column("created_at", sa.String),
+)
+approvals = sa.Table(
+    "approvals", md,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("task_id", sa.Integer),
+    sa.Column("agent", sa.String),
+    sa.Column("description", sa.Text),
+    sa.Column("status", sa.String, default="pending"),  # pending | approved | denied | expired
+    sa.Column("created_at", sa.String),
+    sa.Column("decided_at", sa.String),
+)
 audit_log = sa.Table(
     "audit_log", md,
     sa.Column("id", sa.Integer, primary_key=True),
@@ -87,7 +106,7 @@ class Store:
     def __init__(self, url: str):
         if url.startswith("sqlite") and ":memory:" not in url:
             Path(url.split("///", 1)[1]).parent.mkdir(parents=True, exist_ok=True)
-        self.engine = create_async_engine(url)
+        self.engine = create_async_engine(url, connect_args={"timeout": 30} if url.startswith("sqlite") else {})
 
     async def init(self):
         async with self.engine.begin() as c:
@@ -128,12 +147,12 @@ class Store:
     async def get_agent(self, name):
         return await self._one(sa.select(agents).where(agents.c.name == name, agents.c.status == "active"))
 
-    async def create_agent(self, name, role, system_prompt, tier="mid", created_by="seed"):
+    async def create_agent(self, name, role, system_prompt, tier="mid", created_by="seed", tools=""):
         async with self.engine.begin() as c:
             await c.execute(sa.delete(agents).where(agents.c.name == name, agents.c.status == "fired"))
             await c.execute(sa.insert(agents).values(
                 name=name, role=role, system_prompt=system_prompt, tier=tier,
-                status="active", created_by=created_by, created_at=now()))
+                status="active", created_by=created_by, created_at=now(), tools=tools))
 
     async def fire_agent(self, name) -> bool:
         res = await self._exec(sa.update(agents).where(agents.c.name == name, agents.c.status == "active")
@@ -194,6 +213,49 @@ class Store:
         async with self.engine.begin() as c:
             await c.execute(sa.delete(cache).where(cache.c.key == key))
             await c.execute(sa.insert(cache).values(key=key, value=value, created_at=now()))
+
+    # tasks (hisobot / HR tahlili)
+    async def recent_task_ids(self, n):
+        rows = await self._all(sa.select(tasks.c.id).order_by(tasks.c.id.desc()).limit(n))
+        return [r["id"] for r in rows]
+
+    async def tasks_since(self, iso_ts):
+        return await self._all(sa.select(tasks).where(tasks.c.created_at >= iso_ts).order_by(tasks.c.id))
+
+    async def agent_activity(self, task_ids):
+        if not task_ids:
+            return {}
+        rows = await self._all(
+            sa.select(messages.c.agent, sa.func.count().label("n"))
+            .where(messages.c.task_id.in_(task_ids)).group_by(messages.c.agent))
+        return {r["agent"]: r["n"] for r in rows}
+
+    # memory
+    async def add_memory(self, text, source="agent"):
+        await self._exec(sa.insert(memories).values(text=text.strip()[:1000], source=source, created_at=now()))
+
+    async def recent_memories(self, limit=500):
+        return await self._all(sa.select(memories).order_by(memories.c.id.desc()).limit(limit))
+
+    async def search_memories(self, query, limit=5):
+        words = {w for w in re.findall(r"\w{3,}", query.lower())}
+        scored = []
+        for m in await self.recent_memories(500):
+            score = len(words & set(re.findall(r"\w{3,}", m["text"].lower())))
+            if score:
+                scored.append((score, m["id"], m))
+        scored.sort(key=lambda x: (-x[0], -x[1]))
+        return [m for _, _, m in scored[:limit]]
+
+    # approvals
+    async def create_approval(self, task_id, agent, description) -> int:
+        res = await self._exec(sa.insert(approvals).values(
+            task_id=task_id, agent=agent, description=description[:2000], status="pending", created_at=now()))
+        return res.inserted_primary_key[0]
+
+    async def decide_approval(self, approval_id, status):
+        await self._exec(sa.update(approvals).where(approvals.c.id == approval_id)
+                         .values(status=status, decided_at=now()))
 
     # audit
     async def audit(self, actor, action, detail=""):

@@ -5,6 +5,7 @@ import asyncio
 import logging
 
 from .app import build_app
+from .approvals import CliApprover
 from .providers import ProviderError
 
 
@@ -47,7 +48,7 @@ async def amain():
     ask.add_argument("text")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)
-    app = await build_app()
+    app = await build_app(approver=CliApprover() if args.cmd == "ask" else None)
     try:
         if args.cmd == "check":
             await cmd_check(app)

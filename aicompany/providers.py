@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import httpx
 
@@ -19,6 +20,8 @@ class LLMResult:
     tokens_out: int     # fikrlash tokenlari bilan
     tokens_cached: int  # keshdan o'qilgan
     cost_usd: float = 0.0
+    tool_calls: list = field(default_factory=list)  # [{"id", "name", "input"}]
+    raw_content: Any = None  # asistent xabari (asboblar sikli uchun)
 
 
 def compute_cost(cfg: ModelCfg, tin: int, tout: int, tcached: int, cache_write: int = 0) -> float:
@@ -29,8 +32,10 @@ def compute_cost(cfg: ModelCfg, tin: int, tout: int, tcached: int, cache_write: 
 
 class Provider:
     name = "base"
+    supports_tools = False
 
-    async def complete(self, cfg: ModelCfg, system: str, messages: list[dict], max_tokens: int) -> LLMResult:
+    async def complete(self, cfg: ModelCfg, system: str, messages: list[dict], max_tokens: int,
+                       tools: list[dict] | None = None) -> LLMResult:
         raise NotImplementedError
 
     async def list_models(self) -> list[str]:
@@ -39,16 +44,19 @@ class Provider:
 
 class AnthropicProvider(Provider):
     name = "anthropic"
+    supports_tools = True
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, http_client: httpx.AsyncClient | None = None):
         import anthropic
         self._anthropic = anthropic
-        self.client = anthropic.AsyncAnthropic(api_key=api_key)
+        self.client = anthropic.AsyncAnthropic(api_key=api_key, http_client=http_client)
 
-    async def complete(self, cfg, system, messages, max_tokens):
+    async def complete(self, cfg, system, messages, max_tokens, tools=None):
         kwargs = {}
         if cfg.effort:
             kwargs["output_config"] = {"effort": cfg.effort}
+        if tools:
+            kwargs["tools"] = tools
         try:
             r = await self.client.messages.create(
                 model=cfg.id, max_tokens=max_tokens,
@@ -63,7 +71,10 @@ class AnthropicProvider(Provider):
         cached = getattr(u, "cache_read_input_tokens", 0) or 0
         written = getattr(u, "cache_creation_input_tokens", 0) or 0
         cost = compute_cost(cfg, u.input_tokens, u.output_tokens, cached, written)
-        return LLMResult(text, u.input_tokens + written, u.output_tokens, cached, cost)
+        calls = []
+        if r.stop_reason == "tool_use":
+            calls = [{"id": b.id, "name": b.name, "input": b.input} for b in r.content if b.type == "tool_use"]
+        return LLMResult(text, u.input_tokens + written, u.output_tokens, cached, cost, calls, r.content)
 
     async def list_models(self):
         try:
@@ -107,7 +118,7 @@ class OpenAIProvider(_HttpProvider):
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}"}
 
-    async def complete(self, cfg, system, messages, max_tokens):
+    async def complete(self, cfg, system, messages, max_tokens, tools=None):
         body = {"model": cfg.id, "max_completion_tokens": max_tokens,
                 "messages": [{"role": "system", "content": system}, *messages]}
         data = await self._request("POST", f"{self.base}/chat/completions", json=body)
@@ -133,7 +144,7 @@ class GeminiProvider(_HttpProvider):
     def _headers(self):
         return {"x-goog-api-key": self.api_key}
 
-    async def complete(self, cfg, system, messages, max_tokens):
+    async def complete(self, cfg, system, messages, max_tokens, tools=None):
         body = {
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "model" if m["role"] == "assistant" else "user",

@@ -1,4 +1,5 @@
 import json
+import tempfile
 
 import pytest
 
@@ -10,20 +11,28 @@ from aicompany.providers import LLMResult, Provider, ProviderError
 class MockProvider(Provider):
     """Skriptlangan javoblar: handler(system, user_text, tier_model_id) -> str."""
 
+    supports_tools = True
+
     def __init__(self, name, handler, cost=0.01):
         self.name, self.handler, self.cost, self.calls = name, handler, cost, []
+        self.tool_seen = []
 
-    async def complete(self, cfg, system, messages, max_tokens):
+    async def complete(self, cfg, system, messages, max_tokens, tools=None):
         self.calls.append(cfg.id)
+        self.tool_seen.append([t["name"] for t in tools or []])
         out = self.handler(system, messages[-1]["content"], cfg.id)
         if isinstance(out, Exception):
             raise out
+        if isinstance(out, LLMResult):
+            out.cost_usd = out.cost_usd or self.cost
+            return out
         return LLMResult(out, 100, 50, 0, self.cost)
 
 
 def settings(**env):
     base = {"ANTHROPIC_API_KEY": "x", "OPENAI_API_KEY": "x", "GEMINI_API_KEY": "x",
-            "DATABASE_URL": "sqlite+aiosqlite:///:memory:", "MAX_TASK_USD": "1"}
+            "DATABASE_URL": "sqlite+aiosqlite:///:memory:", "MAX_TASK_USD": "1",
+            "WORKSPACE_DIR": tempfile.mkdtemp(prefix="aic_ws_")}
     return load_settings({**base, **env})
 
 
@@ -50,6 +59,8 @@ def scripted_company(plan=None, qa=None):
     qa_answers = list(qa or [{"verdict": "pass", "issues": []}])
 
     def handler(system, user, model):
+        if "durable facts" in system:
+            return json.dumps({"facts": ["Owner prefers Uzbek"]})
         if "'ceo'" in system:
             return json.dumps(plan) if "Plan the work" in user else "FINAL DELIVERABLE"
         if "'qa'" in system:

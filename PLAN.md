@@ -43,6 +43,6 @@ Egasi (Telegram) <-> Bot <-> CEO-agent <-> HR / Dasturchi / Marketolog / QA ...
 - Xavfsizlik: kod izolyatsiyalangan muhitda; kalitlar agentga to'g'ridan-to'g'ri berilmaydi.
 
 ## Holat
-- 1-bosqich MVP qurildi (kod + testlar). Haqiqiy kalitlar bilan sinash hali qilinmagan.
-- Ochiq: birinchi haqiqiy vazifa; OpenAI/Gemini model ID va narxlarini `check` bilan tasdiqlash.
-- Qurilmalar haqidagi ma'lumot faqat 4-5-bosqichda kerak.
+- 1-2-bosqichlar qurildi (kod + 61 test): router va byudjet, jamoa, HR (yollash/bo'shatish), qadam darajasida model tanlash, asboblar (fayl, veb, xotira, tasdiq bilan buyruq), Telegram tasdiq tugmalari, fayl yuborish/qabul qilish, kunlik hisobot.
+- Haqiqiy kalitlar bilan sinash hali qilinmagan.
+- Keyingi: Docker sandbox, GitHub asbobi, OpenAI/Gemini asboblari, vektor xotira, VPS + Supabase, veb-panel, qurilma agenti.

@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+from pathlib import Path
 from typing import Awaitable, Callable
 
+from .approvals import Approver, DenyApprover
+from .config import TIERS
 from .db import Store, now
 from .router import BudgetExhausted, TaskBudgetExceeded
 from .team import Team
+from .tools import ToolEnv
 from .util import clip, extract_json
 
 Notify = Callable[[str], Awaitable[None]]
 MAX_STEPS = 8
+REVIEW_EVERY = 10
 
 
 class Paused(Exception):
@@ -22,58 +28,90 @@ async def _noop(_: str):
 
 
 class Orchestrator:
-    def __init__(self, store: Store, team: Team, max_revisions: int = 1):
-        self.store, self.team, self.max_revisions = store, team, max_revisions
+    def __init__(self, store: Store, team: Team, settings, max_revisions: int = 1,
+                 approver: Approver | None = None):
+        self.store, self.team, self.settings, self.max_revisions = store, team, settings, max_revisions
+        self.approver = approver or DenyApprover()
 
     async def _check_pause(self):
         if await self.store.get_kv("paused") == "1":
             raise Paused()
 
-    async def run_task(self, request: str, chat_id: int = 0, notify: Notify = _noop) -> dict:
+    def _workspace(self, task_id: int) -> Path:
+        ws = self.settings.workspace_dir / f"task_{task_id}"
+        ws.mkdir(parents=True, exist_ok=True)
+        return ws
+
+    @staticmethod
+    def _files(ws: Path) -> list[str]:
+        return sorted(str(f.relative_to(ws)) for f in ws.rglob("*") if f.is_file())
+
+    async def run_task(self, request: str, chat_id: int = 0, notify: Notify = _noop,
+                       attachments: list[Path] | None = None) -> dict:
         task_id = await self.store.create_task(chat_id, request)
+        ws = self._workspace(task_id)
+        for src in attachments or []:
+            shutil.copy(src, ws / Path(src).name)
+        if attachments:
+            request += "\n\n[Attached files in the workspace: " + ", ".join(Path(a).name for a in attachments) + "]"
+        env = ToolEnv(workspace=ws, store=self.store, settings=self.settings, task_id=task_id,
+                      approver=self.approver)
         await notify(f"📝 Vazifa #{task_id} qabul qilindi. Rahbar rejalashtiryapti...")
+        out = {"task_id": task_id, "workspace": str(ws)}
         try:
-            result = await self._run(task_id, request, notify)
+            result = await self._run(task_id, request, notify, env)
             await self.store.update_task(task_id, status="done", result=result, finished_at=now())
-            return {"task_id": task_id, "status": "done", "result": result}
+            out.update(status="done", result=result)
+            await self._learn(task_id, request, result)
         except Paused:
-            msg = "Vazifa /pause sababli to'xtatildi."
-            status = "paused"
+            out.update(status="paused", error="Vazifa /pause sababli to'xtatildi.")
         except TaskBudgetExceeded as e:
-            msg, status = f"Vazifa byudjet limiti sabab to'xtatildi: {e}", "stopped"
+            out.update(status="stopped", error=f"Vazifa byudjet limiti sabab to'xtatildi: {e}")
         except BudgetExhausted as e:
-            msg, status = f"Barcha provayder limitlari tugadi yoki ulanmagan: {e}", "stopped"
+            out.update(status="stopped", error=f"Barcha provayder limitlari tugadi yoki ulanmagan: {e}")
         except Exception as e:  # noqa: BLE001 — vazifa jimgina yo'qolmasligi kerak
             await self.store.audit("orchestrator", "task_error", f"#{task_id}: {e!r}")
-            msg, status = f"Xatolik: {e}", "failed"
-        partial = "\n\n".join(f"[{m['agent']}]\n{m['content']}" for m in await self.store.task_messages(task_id)
-                              if m["agent"] not in ("hr", "qa"))
-        await self.store.update_task(task_id, status=status, result=partial or None, finished_at=now())
-        return {"task_id": task_id, "status": status, "result": partial, "error": msg}
+            out.update(status="failed", error=f"Xatolik: {e}")
+        if out["status"] != "done":
+            out["result"] = "\n\n".join(f"[{m['agent']}]\n{m['content']}" for m in await self.store.task_messages(task_id)
+                                        if m["agent"] not in ("hr", "qa"))
+            await self.store.update_task(task_id, status=out["status"], result=out["result"] or None, finished_at=now())
+        out["files"] = self._files(ws)
+        await self._maybe_review(task_id, notify)
+        return out
 
-    async def _run(self, task_id: int, request: str, notify: Notify) -> str:
-        plan = await self._plan(task_id, request)
+    async def _maybe_review(self, task_id: int, notify: Notify):
+        if task_id % REVIEW_EVERY:
+            return
+        fired = await self.team.review(REVIEW_EVERY)
+        if fired:
+            await notify("🧑‍💼 HR tahlili: ishsiz qolgan xodimlar bo'shatildi: " + ", ".join(fired))
+
+    async def _run(self, task_id: int, request: str, notify: Notify, env: ToolEnv) -> str:
+        plan = await self._plan(task_id, request, env)
         await self.store.update_task(task_id, plan=json.dumps(plan, ensure_ascii=False))
 
-        for role in plan.get("new_roles", [])[:3]:
+        for role in plan.get("new_roles", [])[:2]:
             await self._check_pause()
             name = await self.team.hire(role.get("name", "specialist"), role.get("why", ""), task_id=task_id)
             if name:
                 await notify(f"🧑‍💼 HR yangi xodim oldi: {name}")
 
         steps = plan["steps"][:MAX_STEPS]
-        await notify(f"📋 Reja: {plan.get('summary', '')}\n" + "\n".join(f"• {s['agent']}: {s['task'][:80]}" for s in steps))
+        await notify(f"📋 Reja: {str(plan.get('summary', ''))[:500]}\n" + "\n".join(
+            f"• {s['agent']} [{s.get('tier') or 'auto'}]: {s['task'][:80]}" for s in steps))
         outputs: dict[str, str] = {}
         remaining = {s["id"]: s for s in steps}
         while remaining:
             ready = [s for s in remaining.values() if not any(d in remaining for d in s.get("depends_on", []))]
-            if not ready:  # sikl yoki noto'g'ri bog'liqlik: qolganlarini ketma-ket bajaramiz
+            if not ready:  # sikl: qolganlarini ketma-ket bajaramiz
                 ready = [next(iter(remaining.values()))]
             await self._check_pause()
 
             async def work(s):
                 ctx = "\n\n".join(f"## {d}\n{clip(outputs[d])}" for d in s.get("depends_on", []) if d in outputs)
-                out = await self.team.run_agent(s["agent"], s["task"], ctx, task_id=task_id)
+                tier = s.get("tier") if s.get("tier") in TIERS else None
+                out = await self.team.run_agent(s["agent"], s["task"], ctx, task_id=task_id, tier=tier, env=env)
                 await notify(f"✅ {s['agent']} tugatdi ({s['id']})")
                 return s["id"], out
 
@@ -81,30 +119,35 @@ class Orchestrator:
                 outputs[sid] = out
                 remaining.pop(sid)
 
-        deliverable = await self._synthesize(task_id, request, outputs, None, "mid")
+        deliverable = await self._synthesize(task_id, request, outputs, None, "mid", env)
         for attempt in range(self.max_revisions + 1):
             await self._check_pause()
-            verdict = await self._review(task_id, request, deliverable)
+            verdict = await self._review(task_id, request, deliverable, env)
             if verdict.get("verdict") == "pass" or attempt == self.max_revisions:
                 if verdict.get("verdict") != "pass":
                     deliverable += "\n\n⚠️ QA hali ham e'tiroz bildirgan:\n- " + "\n- ".join(verdict.get("issues", []))
                 break
             await notify(f"🔎 QA {len(verdict.get('issues', []))} ta muammo topdi, tuzatilyapti...")
-            deliverable = await self._synthesize(task_id, request, outputs, verdict.get("issues", []), "strong",
+            deliverable = await self._synthesize(task_id, request, outputs, verdict.get("issues", []), "strong", env,
                                                  previous=deliverable)
         return deliverable
 
-    async def _plan(self, task_id, request) -> dict:
+    async def _plan(self, task_id, request, env) -> dict:
         roster = await self.team.roster()
-        prompt = (f"# Team\n{roster}\n\n# Request\n{request}\n\n"
+        mems = await self.store.search_memories(request, 5)
+        memo = ("# Relevant memory about the owner/business\n" + "\n".join(f"- {m['text']}" for m in mems) + "\n\n") if mems else ""
+        prompt = (f"# Team\n{roster}\n\n{memo}# Request\n{request}\n\n"
                   "Plan the work. Use at most 6 steps; steps without dependencies run in parallel. "
+                  "Specialists can write files, search the web and (with the owner's approval) run commands. "
+                  "Pick a model tier per step: 'cheap' for lookups and simple drafting, 'mid' for substantive "
+                  "creation, 'strong' ONLY for the hardest reasoning or architecture. Prefer the cheaper tier when unsure. "
                   "Only propose new_roles if no existing role fits (max 2). "
                   'Return ONLY JSON: {"summary": "...", "steps": [{"id": "s1", "agent": "<team member name>", '
-                  '"task": "self-contained instruction", "depends_on": []}], '
+                  '"task": "self-contained instruction", "tier": "cheap|mid|strong", "depends_on": []}], '
                   '"new_roles": [{"name": "snake_case_name", "why": "..."}]}')
         last_err = None
         for _ in range(2):
-            raw = await self.team.run_agent("ceo", prompt, task_id=task_id)
+            raw = await self.team.run_agent("ceo", prompt, task_id=task_id, env=env)
             try:
                 plan = extract_json(raw)
                 steps = [s for s in plan["steps"] if s.get("id") and s.get("agent") and s.get("task")]
@@ -118,25 +161,45 @@ class Orchestrator:
             prompt += "\n\nYour previous answer was not valid JSON in the required shape. Return ONLY the JSON."
         raise RuntimeError(f"Rahbar yaroqli reja tuza olmadi: {last_err}")
 
-    async def _synthesize(self, task_id, request, outputs, issues, tier, previous=None) -> str:
+    async def _synthesize(self, task_id, request, outputs, issues, tier, env, previous=None) -> str:
         parts = "\n\n".join(f"## {k}\n{clip(v, 8000)}" for k, v in outputs.items())
+        files = self._files(env.workspace)
         prompt = (f"# Original request\n{request}\n\n# Team outputs\n{parts}\n\n"
-                  "Assemble ONE final, complete deliverable for the user. Merge the outputs, remove duplication, "
-                  "keep all concrete content (code, copy, numbers).")
+                  f"# Files in the workspace (delivered to the user automatically)\n{', '.join(files) or '(none)'}\n\n"
+                  "Assemble ONE final, complete answer for the user. Merge the outputs, remove duplication, "
+                  "keep all concrete content, and refer to the delivered files by name.")
         if issues:
             prompt += ("\n\n# Previous draft\n" + clip(previous or "", 8000) +
                        "\n\n# Reviewer issues to fix\n- " + "\n- ".join(issues))
-        return await self.team.run_agent("ceo", prompt, task_id=task_id, tier=tier)
+        return await self.team.run_agent("ceo", prompt, task_id=task_id, tier=tier, env=env)
 
-    async def _review(self, task_id, request, deliverable) -> dict:
+    async def _review(self, task_id, request, deliverable, env) -> dict:
+        files = self._files(env.workspace)
         prompt = (f"# Original request\n{request}\n\n# Deliverable\n{clip(deliverable, 12000)}\n\n"
+                  f"# Workspace files (you may read them)\n{', '.join(files) or '(none)'}\n\n"
                   "Does the deliverable fully and correctly satisfy the request? Report only real problems "
                   '(missing parts, errors, ignored requirements). Return ONLY JSON: '
                   '{"verdict": "pass|fail", "issues": ["..."]}')
-        raw = await self.team.run_agent("qa", prompt, task_id=task_id)
+        raw = await self.team.run_agent("qa", prompt, task_id=task_id, env=env)
         try:
             v = extract_json(raw)
             v["issues"] = [str(i) for i in v.get("issues", [])]
             return v
         except (ValueError, TypeError):
             return {"verdict": "pass", "issues": []}  # QA ishlamasa vazifani bloklamaymiz
+
+    async def _learn(self, task_id, request, result):
+        """Vazifadan so'ng 0-2 ta uzoq muddatli fakt saqlaydi (arzon model, kichik so'rov)."""
+        try:
+            res = await self.team.router.call(
+                "cheap", "You extract durable facts worth remembering about the owner or their business.",
+                [{"role": "user", "content":
+                  f"Request:\n{clip(request, 1500)}\n\nResult summary:\n{clip(result, 1500)}\n\n"
+                  'Return ONLY JSON {"facts": ["..."]} with at most 2 facts about the owner\'s preferences, '
+                  "business details or decisions that will matter in FUTURE tasks. No task content. "
+                  "Empty list if nothing durable."}],
+                task_id=task_id, agent="memory")
+            for fact in extract_json(res.text).get("facts", [])[:2]:
+                await self.store.add_memory(str(fact), source=f"task#{task_id}")
+        except (ValueError, TypeError, BudgetExhausted, TaskBudgetExceeded):
+            return  # xotira yozilmasa vazifa natijasiga ta'sir qilmaydi

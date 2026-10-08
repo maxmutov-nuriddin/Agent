@@ -16,8 +16,25 @@ Faqat Claude bilan boshlash: `.env` da faqat `ANTHROPIC_API_KEY` ni to'ldiring, 
 
 `.env` da kerak: `TELEGRAM_BOT_TOKEN` (@BotFather), `OWNER_TELEGRAM_ID` (@userinfobot), kamida bitta API kalit.
 
-## Telegram buyruqlari
-`/team` `/tasks` `/task <id>` `/budget` `/hire <nom> <sabab>` `/fire <nom>` `/pause` `/resume`. Oddiy matn = yangi vazifa. Bot faqat `OWNER_TELEGRAM_ID` ga javob beradi.
+## Telegram
+`/team` `/tasks` `/task <id>` `/budget` `/report` `/memory` `/hire <nom> <sabab>` `/fire <nom>` `/review` `/pause` `/resume`. Oddiy matn = yangi vazifa; fayl yuborsangiz vazifaga ilova bo'ladi. Tayyor fayllar vazifa tugagach Telegramga yuboriladi. Har kuni `REPORT_HOUR` da hisobot keladi (LLM ishlatmaydi, pul sarflamaydi). Bot faqat `OWNER_TELEGRAM_ID` ga javob beradi.
+
+## Agentlar nima qila oladi (asboblar)
+| Guruh | Asboblar | Eslatma |
+|---|---|---|
+| files | write_file, read_file, list_files | faqat vazifaning `workspace/task_N/` papkasi ichida |
+| web | web_search, fetch_url | ichki/lokal manzillar bloklangan; natija "ishonchsiz" deb belgilanadi |
+| memory | remember, recall | uzoq muddatli xotira |
+| shell | run_command | **har bir buyruq Telegramda sizning tasdig'ingizni kutadi** (✅/❌), 10 daqiqada javob bo'lmasa rad etiladi |
+
+Rollarga guruhlar biriktirilgan (masalan faqat dasturchida `shell` bor). HR yangi xodim yaratganda unga kerakli guruhlarni tanlaydi.
+
+**Xavfsizlik chegarasi:** `run_command` to'liq izolyatsiyalangan sandbox EMAS. U workspace papkasida, API kalitlarisiz (toza muhit) ishlaydi, lekin sizning kompyuteringizdagi oddiy jarayon. Shuning uchun har buyruq tasdiqlanadi. Buyruqni o'qib chiqib keyin ruxsat bering. Kelajakda Docker sandbox qo'shiladi.
+
+## Xodimlar
+- HR yangi xodim yaratadi (jamoa `MAX_AGENTS` bilan cheklangan, yangi xodim hech qachon avtomatik `strong` bo'lmaydi).
+- Har 10-vazifadan keyin (yoki `/review`) HR-yollagan va oxirgi 10 vazifada ishlamagan xodimlarni bo'shatadi. Asosiy xodimlar (ceo/hr/qa/generalist) va siz yollaganlar avtomatik bo'shatilmaydi.
+- Rahbar har qadamga model darajasini (cheap/mid/strong) o'zi belgilaydi, noaniq bo'lsa arzonini tanlaydi.
 
 ## Tejamkorlik
 Router vazifa darajasiga (cheap/mid/strong) qarab eng arzon provayderni tanlaydi, xato bo'lsa keyingisiga o'tadi. Claude uchun prompt caching va past `effort` yoqilgan. Limit tugagan provayder o'tkazib yuboriladi. Bitta vazifa uchun `MAX_TASK_USD` chegarasi bor. 80% da Telegramga ogohlantirish keladi. Limitni oshirish: `.env` dagi `BUDGET_USD_*`.
@@ -25,5 +42,5 @@ Router vazifa darajasiga (cheap/mid/strong) qarab eng arzon provayderni tanlaydi
 ## Muhim
 `models.yaml` dagi OpenAI/Gemini model nomlari va narxlar tasdiqlanmagan. Kalit qo'ygach `check` ni ishga tushiring.
 
-## Hozircha yo'q (keyingi bosqich)
-Asboblar (kod bajarish, veb, GitHub), vektor xotira, tasdiqlash kartalari, HR'ning o'zi ishdan bo'shatishi, VPS/Supabase.
+## Hozircha yo'q
+Docker sandbox, GitHub asbobi, ovozli xabar, OpenAI/Gemini uchun asbob qo'llash (ular faqat matn rejimida ishlaydi), vektor qidiruv (xotira hozir kalit so'z bo'yicha), veb-panel, VPS/Supabase joylashtirish.

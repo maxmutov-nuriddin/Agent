@@ -40,6 +40,12 @@ class Settings:
     max_parallel: int
     max_revisions: int
     warn_ratio: float = 0.8
+    workspace_dir: Path = ROOT / "workspace"
+    brave_key: str | None = None
+    report_hour: int = 9
+    report_tz: str = "Asia/Tashkent"
+    max_tool_turns: int = 8
+    command_timeout: int = 60
 
 
 def load_settings(env: dict | None = None, models_path: Path | None = None) -> Settings:
@@ -72,4 +78,10 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
         max_agents=int(env.get("MAX_AGENTS", 12)),
         max_parallel=int(env.get("MAX_PARALLEL_TASKS", 2)),
         max_revisions=int(env.get("MAX_REVISIONS", 1)),
+        workspace_dir=Path(env.get("WORKSPACE_DIR", ROOT / "workspace")),
+        brave_key=env.get("BRAVE_API_KEY") or None,
+        report_hour=int(env.get("REPORT_HOUR", 9)),
+        report_tz=env.get("REPORT_TZ", "Asia/Tashkent"),
+        max_tool_turns=int(env.get("MAX_TOOL_TURNS", 8)),
+        command_timeout=int(env.get("COMMAND_TIMEOUT", 60)),
     )

@@ -19,11 +19,11 @@ class App:
     orch: Orchestrator
 
 
-async def build_app(settings: Settings | None = None, providers=None) -> App:
+async def build_app(settings: Settings | None = None, providers=None, approver=None) -> App:
     settings = settings or load_settings()
     store = Store(settings.database_url)
     await store.init()
     router = Router(settings, store, providers if providers is not None else build_providers(settings))
-    team = Team(store, router, settings.max_agents)
+    team = Team(store, router, settings.max_agents, settings.max_tool_turns)
     await team.ensure_seed()
-    return App(settings, store, router, team, Orchestrator(store, team, settings.max_revisions))
+    return App(settings, store, router, team, Orchestrator(store, team, settings, settings.max_revisions, approver))
