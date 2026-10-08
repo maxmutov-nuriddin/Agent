@@ -52,6 +52,14 @@ class Settings:
     widget_token: str | None = None
     web_public_url: str | None = None
     primary_provider: str = "auto"
+    google_maps_key: str | None = None
+    tg_api_id: int | None = None
+    tg_api_hash: str | None = None
+    tg_session: str = "data/tg"
+    tg_mode: str = "read"  # read | write
+    tg_allowed: tuple = ()
+    tg_max_sends: int = 10
+    private_providers: tuple = ()
     tier_providers: dict = field(default_factory=dict)
 
 
@@ -106,6 +114,15 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
         web_token=env.get("WEB_TOKEN") or None,
         widget_token=env.get("WIDGET_TOKEN") or None,
         web_public_url=(env.get("WEB_PUBLIC_URL") or "").rstrip("/") or None,
+        google_maps_key=env.get("GOOGLE_MAPS_API_KEY") or None,
+        tg_api_id=int(env["TG_API_ID"]) if str(env.get("TG_API_ID", "")).strip().isdigit() else None,
+        tg_api_hash=env.get("TG_API_HASH") or None,
+        tg_session=str(Path(env.get("TG_SESSION") or "data/tg") if Path(env.get("TG_SESSION") or "data/tg").is_absolute()
+                       else ROOT / (env.get("TG_SESSION") or "data/tg")),  # ish papkasiga bog'liq bo'lmasin
+        tg_mode="write" if (env.get("TG_MODE") or "").strip().lower() == "write" else "read",
+        tg_allowed=tuple(x.strip().lower().lstrip("@") for x in (env.get("TG_ALLOWED") or "").split(",") if x.strip()),
+        tg_max_sends=int(env.get("TG_MAX_SENDS_PER_HOUR", 10)),
+        private_providers=tuple(x.strip().lower() for x in (env.get("PRIVATE_PROVIDERS") or "").split(",") if x.strip()),
         primary_provider=(env.get("PRIMARY_PROVIDER") or "auto").strip().lower(),
         tier_providers=parse_tier_providers(env.get("PROVIDER_BY_TIER", "")),
     )

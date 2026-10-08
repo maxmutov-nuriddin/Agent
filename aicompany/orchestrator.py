@@ -33,9 +33,10 @@ async def _noop(_: str):
 
 class Orchestrator:
     def __init__(self, store: Store, team: Team, settings, max_revisions: int = 1,
-                 approver: Approver | None = None):
+                 approver: Approver | None = None, tg=None):
         self.store, self.team, self.settings, self.max_revisions = store, team, settings, max_revisions
         self.approver = approver or DenyApprover()
+        self.tg = tg
         self.sem = asyncio.Semaphore(getattr(settings, "max_parallel", 2))
         self.running: dict[int, asyncio.Task] = {}
         self._stopping: set[int] = set()
@@ -155,7 +156,7 @@ class Orchestrator:
         if attachments:
             request += "\n\n[Attached files in the workspace: " + ", ".join(Path(a).name for a in attachments) + "]"
         env = ToolEnv(workspace=ws, store=self.store, settings=self.settings, task_id=task_id,
-                      approver=self.approver, notify=notify)
+                      approver=self.approver, notify=notify, tg=self.tg)
         await notify(f"📝 Vazifa #{task_id} qabul qilindi. Rahbar rejalashtiryapti...")
         out = {"task_id": task_id, "workspace": str(ws)}
         try:

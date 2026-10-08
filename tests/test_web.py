@@ -413,3 +413,25 @@ async def test_task_detail_lists_approval_decisions(web):
     ap = (await get(c, f"/api/tasks/{tid}"))[1]["approvals"]
     assert [(a["command"], a["status"]) for a in ap] == [("rm -rf /", "denied"), ("npm install", "expired")]
     assert "Siz rad etdingiz" in (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()
+
+
+async def test_location_endpoint_validates_and_stores(web):
+    c, app = web
+    assert (await post(c, "/api/location", {"lat": 41.31, "lon": 69.28, "live": True}))[0] == 200
+    loc = json.loads(await app.store.get_kv("loc:last"))
+    assert (loc["lat"], loc["lon"], loc["live"]) == (41.31, 69.28, True)
+    for bad in ({}, {"lat": "x", "lon": 1}, {"lat": 95, "lon": 0}, {"lat": 0, "lon": 200}):
+        assert (await post(c, "/api/location", bad))[0] == 400
+    assert (await c.post("/api/location", data="{}")).status == 401
+
+
+async def test_telegram_approval_card_has_its_own_kind(web):
+    c, app = web
+    t = asyncio.create_task(app.center.ask(9, 1, "assistant", "Kimga: Ali\n\nSalom", "telegram"))
+    await asyncio.sleep(0.05)
+    items = (await get(c, "/api/approvals"))[1]
+    assert items[0]["kind"] == "telegram" and "Kimga: Ali" in items[0]["description"]
+    await post(c, "/api/approvals/9", {"approve": True})
+    assert await t is True
+    js = (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()
+    assert "Telegramda shu xabarni yuborishga ruxsat" in js

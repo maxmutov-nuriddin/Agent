@@ -9,6 +9,7 @@ from .orchestrator import Orchestrator
 from .providers import build_providers
 from .router import Router
 from .team import Team
+from .tguser import TgUser
 
 
 @dataclass
@@ -19,6 +20,7 @@ class App:
     team: Team
     orch: Orchestrator
     center: ApprovalCenter | None = None
+    tg: TgUser | None = None
 
 
 async def build_app(settings: Settings | None = None, providers=None, approver=None) -> App:
@@ -26,9 +28,10 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     store = Store(settings.database_url)
     await store.init()
     router = Router(settings, store, providers if providers is not None else build_providers(settings))
-    team = Team(store, router, settings.max_agents, settings.max_tool_turns)
+    team = Team(store, router, settings.max_agents, settings.max_tool_turns, settings.private_providers)
     await team.ensure_seed()
     await store.fail_stale_tasks()
     center = ApprovalCenter()
-    orch = Orchestrator(store, team, settings, settings.max_revisions, approver or center)
-    return App(settings, store, router, team, orch, center)
+    tg = TgUser(settings) if settings.tg_api_id else None
+    orch = Orchestrator(store, team, settings, settings.max_revisions, approver or center, tg)
+    return App(settings, store, router, team, orch, center, tg)

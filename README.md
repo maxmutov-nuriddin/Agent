@@ -39,6 +39,26 @@ Panel bo'limlari: **Jamoa** (kim ishlayapti, Rahbar kartasi, xodim yollash/bo'sh
 
 **Xavfsizlik:** barcha `/api` so'rovlari `WEB_TOKEN` talab qiladi (8 ta xato urinishdan keyin 1 daqiqa bloklanadi), qat'iy CSP, fayllar faqat workspace ichidan yuklanadi, token yo'q bo'lsa server ishga tushmaydi.
 
+## Yordamchi: joylashuv, yo'l vaqti, Telegram akkaunt
+Yangi xodim **assistant** shu imkoniyatlarga ega.
+
+**Joylashuv va xarita** (hech narsa o'rnatish shart emas, bepul OpenStreetMap):
+- Telegramda botga 📎 → **Joylashuv** yuboring (jonli joylashuv ham bo'ladi). Uyingizni `/home` deb yozib, joylashuvni yuborib saqlang (yoki `/home <manzil>`).
+- Keyin so'rang: «uyga necha daqiqada yetaman?», «yaqin dorixonani top». Asboblar: `where_am_i`, `route_eta`, `find_places`, `save_place`.
+- `GOOGLE_MAPS_API_KEY` qo'ysangiz tirbandlik va jamoat transporti hisobga olinadi, joy qidiruv aniqroq. Bo'lmasa vaqt tirbandliksiz taxminiy.
+- Panel yoki iPhone Shortcuts: `POST /api/location {"lat":..,"lon":..}` (Authorization: Bearer WEB_TOKEN).
+
+**Shaxsiy Telegram akkaunt** (rasmiy foydalanuvchi API'si, sizning akkauntingiz sifatida):
+1. https://my.telegram.org → API development tools → `TG_API_ID` va `TG_API_HASH` ni `.env` ga yozing.
+2. `pip install -r requirements.txt`, so'ng `python -m aicompany tglogin` (telefon raqami + Telegramga kelgan kod; bir marta).
+3. Boshlanishda `TG_MODE=read` (faqat o'qish va javob loyihasi). Yuborish uchun `TG_MODE=write`: **har bir xabar** Kartalar/Telegram tugmalarida sizga kimga va qanday matn bilan ketishi ko'rsatilib, tasdig'ingizdan keyingina yuboriladi. Soatiga `TG_MAX_SENDS_PER_HOUR` dan ko'p yuborilmaydi, `TG_ALLOWED` bilan faqat ma'lum kontaktlarga cheklash mumkin.
+4. Asboblar: `tg_chats`, `tg_read`, `tg_send`. Chatdagi xabarlar «ishonchsiz matn» deb belgilanadi: ularda «pul o'tkaz» kabi ko'rsatma bo'lsa bajarilmaydi.
+
+**Xavfsizlik va maxfiylik (muhim):**
+- `data/tg.session` fayli akkauntingizga **to'liq kirish** beradi: git'ga tushmaydi, 600 ruxsat bilan turadi, hech kimga bermang. Chiqarish: Telegram → Sozlamalar → Qurilmalar.
+- Shaxsiy yozishmalar matni AI xizmatiga yuboriladi. **Bepul Gemini kaliti ma'lumotni o'qitishda ishlatishi mumkin**, shuning uchun `PRIVATE_PROVIDERS=anthropic` kabi qilib shaxsiy chat faqat ishonchli provayderga yuborilsin (aks holda hamma ulangan AI'ga ketadi).
+- Instagram uchun parol bilan kirish YO'Q (shartlarga zid). Rasmiy yo'l: akkauntni Creator/Business qilib Graph API ulash (keyingi bosqich).
+
 ## Agentlar nima qila oladi (asboblar)
 | Guruh | Asboblar | Eslatma |
 |---|---|---|

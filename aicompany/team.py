@@ -29,6 +29,8 @@ SEED = {
     "marketer": ("Marketing strategist and copywriter: positioning, content plans, ad copy, social media.", "mid", "files,web,memory"),
     "researcher": ("Analyst: structured research with sources, comparisons, summaries and recommendations.", "cheap", "files,web,memory"),
     "generalist": ("Versatile specialist used when no other role fits.", "cheap", "files,web"),
+    "assistant": ("Personal assistant: knows where the owner is, travel times, nearby places, and handles their Telegram "
+                  "messages (read, draft replies, send only with approval).", "mid", "maps,telegram,memory,web"),
 }
 
 
@@ -37,8 +39,10 @@ def system_prompt(name: str, role: str) -> str:
 
 
 class Team:
-    def __init__(self, store: Store, router: Router, max_agents: int, max_tool_turns: int = 8):
+    def __init__(self, store: Store, router: Router, max_agents: int, max_tool_turns: int = 8,
+                 private_providers: tuple = ()):
         self.store, self.router, self.max_agents, self.max_tool_turns = store, router, max_agents, max_tool_turns
+        self.private_providers = frozenset(private_providers)  # shaxsiy chat matni faqat shularga yuboriladi
         self.busy: dict[str, dict] = {}  # agent -> {"count": n, "task_id": id}: hozir kim ishlayapti
 
     async def ensure_seed(self):
@@ -53,7 +57,7 @@ class Team:
                         tier=None, env: ToolEnv | None = None) -> str:
         agent = await self.store.get_agent(name) or await self.store.get_agent("generalist")
         content = instruction if not context else f"{instruction}\n\n# Context from teammates\n{context}"
-        tools = tools_for(agent["tools"]) if env else []
+        tools = tools_for(agent["tools"], env) if env else []
         defs = tool_defs(tools) or None
         by_name = {t.name: t for t in tools}
         system = agent["system_prompt"] + (TOOL_RULES if defs else "")
@@ -63,6 +67,11 @@ class Team:
         b["count"] += 1
         b["task_id"] = task_id
         excluded: set[str] = set()
+        if self.private_providers and any(t.group == "telegram" for t in tools):
+            # shaxsiy yozishmalar (masalan bepul Gemini kalitiga yuborilmasin): ruxsat etilmagan provayderlar chiqariladi
+            excluded = {p for p in self.router.providers if p not in self.private_providers}
+            if len(excluded) >= len(self.router.providers):
+                raise BudgetExhausted("shaxsiy yozishmalar uchun PRIVATE_PROVIDERS dagi provayder ulanmagan")
         try:
             while True:
                 try:  # asbob sikli bitta provayderda boshdan oxirigacha; u yiqilsa, ish boshqasida qayta boshlanadi

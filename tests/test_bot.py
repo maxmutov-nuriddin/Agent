@@ -140,3 +140,50 @@ async def test_voice_message_without_gemini_key_explains(make_app, monkeypatch):
     await dp.feed_update(bot, voice_update(OWNER, size=20_000_000))
     assert any("katta" in (t or "") for t in sent)
     await bot.session.close()
+
+
+def location_update(uid, lat=41.31, lon=69.28, edited=False, live=None):
+    from aiogram.types import Location
+    msg = Message(message_id=7, date=datetime.now(), chat=Chat(id=uid, type="private"),
+                  from_user=User(id=uid, is_bot=False, first_name="x"),
+                  location=Location(latitude=lat, longitude=lon, live_period=live))
+    return Update(update_id=11, **({"edited_message": msg} if edited else {"message": msg}))
+
+
+async def test_bot_stores_location_home_and_live_updates(make_app, monkeypatch):
+    import json
+    sent = []
+
+    async def fake_call(self, method, request_timeout=None):
+        sent.append(getattr(method, "text", None))
+        return True
+    monkeypatch.setattr(Bot, "__call__", fake_call)
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID=str(OWNER))
+    bot = Bot("123456:ABC")
+    dp = make_dispatcher(app, bot)
+    assert await dp.feed_update(bot, location_update(999)) is UNHANDLED and await app.store.get_kv("loc:last") is None
+    await dp.feed_update(bot, location_update(OWNER, 41.31, 69.28))
+    assert "Joylashuv saqlandi" in sent[-1] and json.loads(await app.store.get_kv("loc:last"))["lat"] == 41.31
+    assert await app.store.get_kv("place:home") is None                  # oddiy joylashuv uy emas
+    await dp.feed_update(bot, update(OWNER, "/home"))                    # keyingi joylashuv = uy
+    await dp.feed_update(bot, location_update(OWNER, 41.2, 69.1))
+    assert "Uy manzili saqlandi" in sent[-1] and json.loads(await app.store.get_kv("place:home"))["lat"] == 41.2
+    await dp.feed_update(bot, location_update(OWNER, 41.5, 69.5, edited=True, live=900))   # jonli yangilanish: jimgina
+    loc = json.loads(await app.store.get_kv("loc:last"))
+    assert loc["lat"] == 41.5 and loc["live"] is True and sent[-1].startswith("🏠")
+    await bot.session.close()
+
+
+async def test_tg_status_command_without_account(make_app, monkeypatch):
+    sent = []
+
+    async def fake_call(self, method, request_timeout=None):
+        sent.append(getattr(method, "text", None))
+        return True
+    monkeypatch.setattr(Bot, "__call__", fake_call)
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID=str(OWNER))
+    bot = Bot("123456:ABC")
+    dp = make_dispatcher(app, bot)
+    await dp.feed_update(bot, update(OWNER, "/tg"))
+    assert "tglogin" in sent[0]
+    await bot.session.close()

@@ -83,6 +83,7 @@ approvals = sa.Table(
     sa.Column("task_id", sa.Integer),
     sa.Column("agent", sa.String),
     sa.Column("description", sa.Text),
+    sa.Column("kind", sa.String, server_default="command"),  # command | telegram
     sa.Column("status", sa.String, default="pending"),  # pending | approved | denied | expired
     sa.Column("created_at", sa.String),
     sa.Column("decided_at", sa.String),
@@ -322,9 +323,9 @@ class Store:
         await self._exec(sa.delete(chat_log).where(chat_log.c.chat_id == chat_id))
 
     # approvals
-    async def create_approval(self, task_id, agent, description) -> int:
+    async def create_approval(self, task_id, agent, description, kind="command") -> int:
         res = await self._exec(sa.insert(approvals).values(
-            task_id=task_id, agent=agent, description=description[:2000], status="pending", created_at=now()))
+            task_id=task_id, agent=agent, description=description[:2000], kind=kind, status="pending", created_at=now()))
         return res.inserted_primary_key[0]
 
     async def decide_approval(self, approval_id, status):
@@ -333,6 +334,10 @@ class Store:
 
     async def task_approvals(self, task_id):
         return await self._all(sa.select(approvals).where(approvals.c.task_id == task_id).order_by(approvals.c.id))
+
+    async def count_audit_since(self, action, iso_ts) -> int:
+        row = await self._one(sa.select(sa.func.count().label("n")).where(audit_log.c.action == action, audit_log.c.ts >= iso_ts))
+        return int(row["n"])
 
     # audit
     async def audit(self, actor, action, detail=""):

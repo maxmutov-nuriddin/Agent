@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-g";
+const PANEL_V = "2026.10.08-h";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -177,8 +177,8 @@ function drawCards(items) {
   const col = (label, circle) => h("div", {}, circle, h("div", { class: "cap" }, label));
   return [h("div", { class: "cardsview" }, head("Kartalar", liveTag()), sub,
     h("div", { class: "paper" },
-      h("div", { class: "meta" }, h("span", {}, a.agent + " · vazifa #" + a.task_id), h("span", { class: "tag" }, "buyruq")),
-      h("h2", {}, "Terminal buyrug'ini bajarishga ruxsat?"), h("pre", {}, a.description)),
+      h("div", { class: "meta" }, h("span", {}, a.agent + " · vazifa #" + a.task_id), h("span", { class: "tag" }, a.kind === "telegram" ? "Telegram" : "buyruq")),
+      h("h2", {}, a.kind === "telegram" ? "Telegramda shu xabarni yuborishga ruxsat?" : "Terminal buyrug'ini bajarishga ruxsat?"), h("pre", {}, a.description)),
     h("div", { class: "actions" },
       col("Rad", h("button", { class: "circle no", onclick: () => decide(false), "aria-label": "Rad etish" }, "✕")),
       items.length > 1 ? col("Keyin", h("button", { class: "circle", onclick: () => { S.skip++; refresh(true); }, "aria-label": "Keyin" }, "›")) : null,

@@ -34,6 +34,7 @@ class ToolEnv:
     approver: Approver = field(default_factory=DenyApprover)
     http: httpx.AsyncClient | None = None
     notify: Any = None  # async (matn) -> None: egasiga xabar (Telegram/panel)
+    tg: Any = None      # TgUser (shaxsiy Telegram akkaunt) yoki None
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class Tool:
     description: str
     schema: dict
     handler: Callable[[ToolEnv, dict], Awaitable[str]]
+    requires: str = ""  # "tg": faqat Telegram akkaunt ulangan bo'lsa agentga beriladi
 
 
 def _obj(props: dict, required: list[str]) -> dict:
@@ -177,27 +179,32 @@ async def recall(env, a):
     return "\n".join(f"- {m['text']}" for m in rows) or "mos xotira topilmadi"
 
 
+async def confirm(env: ToolEnv, description: str, kind: str, audit_action: str, texts: tuple, noun: str):
+    """Egasidan ruxsat so'raydi (Telegram tugmalari/panel kartasi). Rad etilsa yoki muddat tugasa ToolError."""
+    aid = await env.store.create_approval(env.task_id, env.agent, description, kind)
+    ok = await env.approver.ask(aid, env.task_id, env.agent, description, kind)
+    timed_out = (not ok) and aid in getattr(env.approver, "expired", set())
+    status = "approved" if ok else "expired" if timed_out else "denied"
+    await env.store.decide_approval(aid, status)
+    await env.store.audit(env.agent, audit_action.removeprefix("audit-"), f"{status.upper()}: {description[:300]}")
+    if env.notify:
+        try:
+            await env.notify(f"{texts[{'approved': 0, 'denied': 1, 'expired': 2}[status]]}: {description[:120]}")
+        except Exception:  # noqa: BLE001 — xabar yetmasa ham ish davom etadi
+            pass
+    if not ok:
+        raise ToolError(f"egasi {noun}ni rad etdi; boshqa yo'l tanlang" if not timed_out
+                        else f"egasi belgilangan vaqtda javob bermadi, {noun} bajarilmadi; boshqa yo'l tanlang yoki keyinroq so'rang")
+
+
 # ---------- buyruq (faqat tasdiq bilan) ----------
 async def run_command(env, a):
     cmd = a["command"].strip()
     if not cmd:
         raise ToolError("bo'sh buyruq")
-    aid = await env.store.create_approval(env.task_id, env.agent, cmd)
-    ok = await env.approver.ask(aid, env.task_id, env.agent, cmd)
-    timed_out = (not ok) and aid in getattr(env.approver, "expired", set())
-    status = "approved" if ok else "expired" if timed_out else "denied"
-    await env.store.decide_approval(aid, status)
-    await env.store.audit(env.agent, "run_command", f"{status.upper()}: {cmd[:300]}")
-    if env.notify:
-        text = {"approved": "✅ Buyruqqa ruxsat berildi", "denied": "✕ Siz buyruqni rad etdingiz",
-                "expired": "⏱ Buyruqqa javob berilmadi (muddat tugadi), bajarilmadi"}[status]
-        try:
-            await env.notify(f"{text}: {cmd[:120]}")
-        except Exception:  # noqa: BLE001 — xabar yetmasa ham ish davom etadi
-            pass
-    if not ok:
-        raise ToolError("egasi buyruqni rad etdi; boshqa yo'l tanlang" if not timed_out
-                        else "egasi belgilangan vaqtda javob bermadi, buyruq bajarilmadi; boshqa yo'l tanlang yoki keyinroq so'rang")
+    await confirm(env, cmd, "command", "audit-run_command",
+                  ("✅ Buyruqqa ruxsat berildi", "✕ Siz buyruqni rad etdingiz", "⏱ Buyruqqa javob berilmadi (muddat tugadi), bajarilmadi"),
+                  "buyruq")
     # API kalitlari va boshqa sirlar bolalar jarayoniga o'tmaydi
     clean = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(env.workspace), "LANG": "C.UTF-8"}
     proc = await asyncio.create_subprocess_shell(
@@ -232,13 +239,16 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
          "Run a shell command inside the task workspace. The owner must approve EACH command, so use it sparingly.",
          _obj({"command": {"type": "string"}}, ["command"]), run_command),
 ]}
-GROUPS = ("files", "web", "memory", "shell")
+GROUPS = ("files", "web", "memory", "shell", "maps", "telegram")
 
 
-def tools_for(groups: str) -> list[Tool]:
+def tools_for(groups: str, env: "ToolEnv | None" = None) -> list[Tool]:
     wanted = {g.strip() for g in groups.split(",") if g.strip()}
-    return [t for t in TOOLS.values() if t.group in wanted]
+    return [t for t in TOOLS.values() if t.group in wanted and (t.requires != "tg" or (env is not None and env.tg is not None))]
 
 
 def tool_defs(tools: list[Tool]) -> list[dict]:
     return [{"name": t.name, "description": t.description, "input_schema": t.schema} for t in tools]
+
+
+from . import tools_ext  # noqa: E402,F401  (joylashuv va Telegram asboblarini ro'yxatga oladi)

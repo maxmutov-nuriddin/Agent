@@ -9,7 +9,7 @@ APPROVAL_TIMEOUT = 600
 class Approver:
     """Xavfli amallar uchun egasidan ruxsat so'raydi."""
 
-    async def ask(self, approval_id: int, task_id: int | None, agent: str, description: str) -> bool:
+    async def ask(self, approval_id: int, task_id: int | None, agent: str, description: str, kind: str = "command") -> bool:
         return False
 
 
@@ -21,19 +21,19 @@ class AutoApprover(Approver):  # faqat testlar uchun
     def __init__(self, answer=True):
         self.answer, self.asked = answer, []
 
-    async def ask(self, approval_id, task_id, agent, description):
+    async def ask(self, approval_id, task_id, agent, description, kind="command"):
         self.asked.append(description)
         return self.answer
 
 
 class CliApprover(Approver):
-    async def ask(self, approval_id, task_id, agent, description):
+    async def ask(self, approval_id, task_id, agent, description, kind="command"):
         print(f"\n🔐 [{agent}] ruxsat so'ralmoqda:\n{description}")
         ans = await asyncio.to_thread(input, "Ruxsat berasizmi? [y/N] ")
         return ans.strip().lower() in ("y", "yes", "ha")
 
 
-Announcer = Callable[[int, int | None, str, str], Awaitable[None]]
+Announcer = Callable[[int, int | None, str, str, str], Awaitable[None]]
 
 
 class ApprovalCenter(Approver):
@@ -45,14 +45,14 @@ class ApprovalCenter(Approver):
         self.announcers: list[Announcer] = []
         self.expired: set[int] = set()  # javob berilmagan (muddati o'tgan) so'rovlar
 
-    async def ask(self, approval_id, task_id, agent, description) -> bool:
+    async def ask(self, approval_id, task_id, agent, description, kind="command") -> bool:
         fut = asyncio.get_running_loop().create_future()
         self.pending[approval_id] = {"id": approval_id, "task_id": task_id, "agent": agent,
-                                     "description": description, "future": fut}
+                                     "description": description, "kind": kind, "future": fut}
         try:
             for announce in self.announcers:
                 try:
-                    await announce(approval_id, task_id, agent, description)
+                    await announce(approval_id, task_id, agent, description, kind)
                 except Exception:  # noqa: BLE001 — bitta kanal ishlamasa ikkinchisi baribir ishlaydi
                     continue
             return await asyncio.wait_for(fut, self.timeout)

@@ -202,7 +202,7 @@ def make_web_app(app: App) -> web.Application:
         msgs = await app.store.task_messages(t["id"])
         return json_ok({"id": t["id"], "status": t["status"], "request": t["request"], "result": t["result"],
                         "archived": bool(t["archived"]), "note": t["note"],
-                        "approvals": [{"agent": a["agent"], "command": a["description"], "status": a["status"],
+                        "approvals": [{"agent": a["agent"], "command": a["description"], "status": a["status"], "kind": a["kind"],
                                        "at": a["decided_at"] or a["created_at"]} for a in await app.store.task_approvals(t["id"])],
                         "cost": round(await app.store.spent_task(t["id"]), 4), "files": task_files(t["id"]),
                         "messages": [{"agent": m["agent"], "content": clip(m["content"] or "", 6000)} for m in msgs]})
@@ -352,6 +352,19 @@ def make_web_app(app: App) -> web.Application:
         except VoiceError as e:
             raise web.HTTPUnprocessableEntity(reason=str(e))
 
+    async def h_location(request):
+        """Joylashuvni yuborish (brauzer geolokatsiyasi yoki iPhone Shortcuts): {"lat":..., "lon":...}"""
+        from .tools_ext import save_location
+        d = await body(request)
+        try:
+            lat, lon = float(d["lat"]), float(d["lon"])
+        except (KeyError, TypeError, ValueError):
+            raise web.HTTPBadRequest(reason="lat va lon kerak")
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            raise web.HTTPBadRequest(reason="koordinata noto'g'ri")
+        await save_location(app.store, lat, lon, bool(d.get("live")))
+        return json_ok({"ok": True})
+
     async def h_pause(request):
         await app.store.set_kv("paused", "1")
         return json_ok({"paused": True})
@@ -390,7 +403,7 @@ def make_web_app(app: App) -> web.Application:
         web.post(r"/api/tasks/{id:\d+}/stop", h_task_stop), web.post(r"/api/tasks/{id:\d+}/archive", h_task_archive),
         web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
         web.post("/api/pause", h_pause), web.post("/api/resume", h_resume),
-        web.post("/api/provider", h_provider), web.post("/api/voice", h_voice),
+        web.post("/api/provider", h_provider), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.get("/api/spend", h_agent_spend),
         web.get("/api/widget", h_widget),
     ])

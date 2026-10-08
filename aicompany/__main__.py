@@ -40,6 +40,29 @@ async def cmd_check(app):
             print("    (Bot ishlayotganda yaqin nomni o'zi topib ishlatadi, lekin models.yaml ni tuzatgan ma'qul.)")
 
 
+async def cmd_tglogin(settings):
+    """Shaxsiy Telegram akkauntga bir marta kirish (telefon raqami + kod). Parol saqlanmaydi, faqat sessiya fayli."""
+    import getpass
+    from .tguser import lock_down, session_file
+    if not (settings.tg_api_id and settings.tg_api_hash):
+        raise SystemExit("Avval .env ga TG_API_ID va TG_API_HASH ni yozing (https://my.telegram.org → API development tools)")
+    try:
+        from telethon import TelegramClient
+    except ImportError:
+        raise SystemExit("Avval: pip install telethon")
+    client = TelegramClient(settings.tg_session, settings.tg_api_id, settings.tg_api_hash)
+    await client.start(phone=lambda: input("Telegram telefon raqamingiz (+998...): ").strip(),
+                       code_callback=lambda: input("Telegramga kelgan kod: ").strip(),
+                       password=lambda: getpass.getpass("Ikki bosqichli parol (bo'lsa): "))
+    me = await client.get_me()
+    await client.disconnect()
+    lock_down(session_file(settings))
+    print(f"✅ Ulandi: {me.first_name} (@{me.username}). Sessiya: {session_file(settings)} (faqat sizga o'qiladigan qilindi).")
+    print("⚠️ Sessiya fayli akkauntingizga to'liq kirish beradi: hech kimga bermang, git'ga qo'shmang.")
+    print("   Chiqarib yuborish: Telegram → Sozlamalar → Qurilmalar → shu sessiyani tugatish.")
+    print(f"   Hozirgi rejim: {settings.tg_mode} (yuborishni yoqish uchun .env da TG_MODE=write).")
+
+
 async def cmd_ask(app, text):
     async def notify(s):
         print(s)
@@ -66,6 +89,7 @@ async def amain():
     sub.add_parser("run", help="Telegram bot + veb-panel")
     sub.add_parser("web", help="faqat veb-panel (Telegramsiz)")
     sub.add_parser("link", help="veb-panel havolasini chiqarish")
+    sub.add_parser("tglogin", help="shaxsiy Telegram akkauntga bir marta kirish")
     sub.add_parser("check", help="kalitlar va model ID'larni tekshirish")
     ask = sub.add_parser("ask", help="vazifani terminaldan berish (Telegramsiz)")
     ask.add_argument("text")
@@ -73,6 +97,10 @@ async def amain():
     logging.basicConfig(level=logging.INFO)
     for noisy in ("httpx", "httpx2", "httpcore", "aiohttp.access"):
         logging.getLogger(noisy).setLevel(logging.WARNING)  # har so'rovni terminalga chiqarmaymiz
+    if args.cmd == "tglogin":
+        from .config import load_settings
+        await cmd_tglogin(load_settings())
+        return
     if args.cmd == "link":
         ensure_secret("WEB_TOKEN")
         from .config import load_settings

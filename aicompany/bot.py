@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -45,12 +46,12 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
 
     app.router.on_warning = warn
 
-    async def announce(aid, task_id, agent, description):
+    async def announce(aid, task_id, agent, description, kind="command"):
         kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Ruxsat", callback_data=f"ap:{aid}:y"),
+            InlineKeyboardButton(text="✅ Ruxsat" if kind == "command" else "✅ Yuborilsin", callback_data=f"ap:{aid}:y"),
             InlineKeyboardButton(text="❌ Rad", callback_data=f"ap:{aid}:n")]])
-        await bot.send_message(owner, f"🔐 Ruxsat so'ralmoqda (vazifa #{task_id}, {agent})\n\n{description[:3000]}",
-                               reply_markup=kb)
+        title = "🔐 Buyruqqa ruxsat" if kind == "command" else "📨 Telegramda xabar yuborish"
+        await bot.send_message(owner, f"{title} (vazifa #{task_id}, {agent})\n\n{description[:3000]}", reply_markup=kb)
     if app.center:
         app.center.announcers.append(announce)
     # Faqat egasi: boshqa hech kimga javob berilmaydi
@@ -122,6 +123,46 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
         options = ", ".join(["auto"] + enabled)
         await m.answer(f"🤖 Asosiy AI: {NAMES.get(cur, cur)}\nUlangan: {', '.join(NAMES[e] for e in enabled) or 'yo`q'}\n"
                        f"O'zgartirish: /ai <{options}>")
+
+    @dp.message(F.location)
+    async def _location(m: Message):
+        from .tools_ext import save_location
+        await save_location(app.store, m.location.latitude, m.location.longitude, bool(m.location.live_period))
+        text = "📍 Joylashuv saqlandi."
+        if await app.store.get_kv("await_home") == "1":
+            await app.store.set_kv("await_home", "0")
+            await app.store.set_kv("place:home", json.dumps({"lat": m.location.latitude, "lon": m.location.longitude, "label": "uy"}))
+            text = "🏠 Uy manzili saqlandi."
+        await m.answer(text)
+
+    @dp.edited_message(F.location)
+    async def _live_location(m: Message):
+        from .tools_ext import save_location  # jonli joylashuv yangilanishlari: jimgina saqlanadi
+        await save_location(app.store, m.location.latitude, m.location.longitude, True)
+
+    @dp.message(Command("home"))
+    async def _home(m: Message, command: CommandObject):
+        from .tools_ext import geocode_text
+        arg = (command.args or "").strip()
+        if not arg:
+            await app.store.set_kv("await_home", "1")
+            return await m.answer("🏠 Uy joylashuvingizni yuboring (📎 → Joylashuv), yoki /home <manzil> deb yozing.")
+        try:
+            env = type("E", (), {"settings": app.settings, "http": None, "store": app.store})()
+            lat, lon, label = await geocode_text(env, arg)
+        except Exception as e:  # noqa: BLE001
+            return await m.answer(f"❌ Manzil topilmadi: {e}")
+        await app.store.set_kv("place:home", json.dumps({"lat": lat, "lon": lon, "label": label}, ensure_ascii=False))
+        await m.answer(f"🏠 Uy saqlandi: {label}")
+
+    @dp.message(Command("tg"))
+    async def _tg(m: Message):
+        s = app.settings
+        if not app.tg or not app.tg.configured():
+            return await m.answer("Telegram akkaunt ulanmagan. Kompyuterda: python -m aicompany tglogin")
+        await m.answer(f"📨 Telegram akkaunt ulangan.\nRejim: {'o`qish va yuborish (tasdiq bilan)' if s.tg_mode == 'write' else 'faqat o`qish'}\n"
+                       f"Ruxsat etilgan kontaktlar: {', '.join(s.tg_allowed) or 'cheklanmagan (har xabar tasdiqlanadi)'}\n"
+                       f"Maxfiy yozishmalar faqat: {', '.join(s.private_providers) or 'barcha AI provayderlarga yuborilishi mumkin'}")
 
     @dp.message(Command("stop"))
     async def _stop(m: Message, command: CommandObject):
