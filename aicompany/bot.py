@@ -26,7 +26,7 @@ HELP = (
     "/team — jamoa\n/tasks — oxirgi vazifalar\n/task <id> — vazifa natijasi\n"
     "/budget — sarf\n/report — hisobot\n/memory — xotira\n"
     "/hire <nom> <nima uchun> — xodim olish\n/fire <nom> — ishdan bo'shatish\n/review — HR tahlili\n"
-    "/clear — suhbat tarixini tozalash\n/pause — hammasini to'xtatish\n/resume — davom ettirish"
+    "/suhbat — faqat suhbat rejimi (on/off)\n/clear — suhbat tarixini tozalash\n/pause — hammasini to'xtatish\n/resume — davom ettirish"
 )
 
 
@@ -212,6 +212,18 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
             text += ("\n\n⚠️ Bu manzil faqat kompyuterning o'zida ishlaydi. Telefondan ochish uchun .env ga "
                      "WEB_HOST=0.0.0.0 (WiFi) yoki WEB_PUBLIC_URL (Tailscale/Tunnel) qo'ying.")
         await m.answer(text, disable_web_page_preview=True)
+
+    @dp.message(Command("suhbat"))
+    async def _talk(m: Message, command: CommandObject):
+        arg = (command.args or "").strip().lower()
+        if arg in ("on", "yoq", "yoqish", "1"):
+            await app.store.set_kv("talk_only", "1")
+            return await m.answer("💬 Faqat suhbat rejimi yoqildi: dildan gaplashamiz, o'zim ish boshlamayman. Ish berish: /task <matn>. O'chirish: /suhbat off")
+        if arg in ("off", "ochir", "o'chir", "0"):
+            await app.store.set_kv("talk_only", "0")
+            return await m.answer("🛠 Oddiy rejim: ish so'ralsa, jamoa bajaradi.")
+        on = await app.store.get_kv("talk_only") == "1"
+        await m.answer(f"Suhbat rejimi: {'faqat suhbat' if on else 'oddiy (suhbat + ish)'}\nO'zgartirish: /suhbat on yoki /suhbat off")
 
     @dp.message(Command("clear"))
     async def _clear(m: Message):

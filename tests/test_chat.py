@@ -166,3 +166,26 @@ async def test_chat_proposal_carries_based_on(make_app):
     assert r["kind"] == "chat" and r["proposed_task"] == "Rangni o'zgartir"
     prop = [m for m in await app.store.recent_chat(1, 20) if m["role"] == "proposal"][-1]
     assert json.loads(prop["text"]) == {"task": "Rangni o'zgartir", "based_on": 1}
+
+
+async def test_small_talk_hides_old_task_summaries_and_talk_only_mode(make_app):
+    import json
+    seen = []
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "front desk" in system or "CEO of an AI company" in system:
+            seen.append((system, user))
+            if "CHAT" in system and "FRONT DESK" not in system and "front desk" not in system:
+                return json.dumps({"reply": "Yaxshi, o'zingiz qalaysiz?", "proposed_task": ""})
+            return json.dumps({"mode": "chat", "reply": "Yaxshi, o'zingiz qalaysiz?", "task": ""})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID="1")
+    await app.store.add_chat(5, "ceo", "[Vazifa #3 interrupted] Uzildi (dastur qayta yoqilgan)")
+    await app.orch.handle("nma gap", 5)
+    assert "Uzildi" not in seen[-1][1] and "CONVERSATION STYLE" in seen[-1][0]
+    await app.orch.handle("vazifa nima bo'ldi", 5)
+    assert "Uzildi" in seen[-1][1]                      # so'ralsa, eski vazifa ko'rinadi
+    await app.store.set_kv("talk_only", "1")
+    await app.orch.handle("salom", 5)
+    assert "NEVER start or claim to do work" in seen[-1][0]
