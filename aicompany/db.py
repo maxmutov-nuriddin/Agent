@@ -107,6 +107,17 @@ reminders = sa.Table(
     sa.Column("created_at", sa.String),
     sa.Column("sent_at", sa.String),
 )
+# Egasining rejalari (kunlik/haftalik/oylik ro'yxatlar). AI vazifalari rejasi bilan aralashmaydi: u vazifaning o'zida.
+plans = sa.Table(
+    "plans", md,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("period", sa.String, server_default="day"),   # day | week | month | year | other
+    sa.Column("title", sa.Text, nullable=False),
+    sa.Column("items", sa.Text, server_default="[]"),        # JSON: [{"text": "...", "done": false}]
+    sa.Column("target", sa.String),                          # ixtiyoriy sana (YYYY-MM-DD)
+    sa.Column("created_at", sa.String),
+    sa.Column("updated_at", sa.String),
+)
 # Vazifa fayllari bazada ham (Render kabi disksiz serverda qayta ishga tushganda yo'qolmasin)
 task_files = sa.Table(
     "task_files", md,
@@ -502,6 +513,31 @@ class Store:
     async def list_reminders(self, include_done=False, limit=50):
         q = sa.select(reminders).order_by(reminders.c.due_at).limit(limit)
         return await self._all(q if include_done else q.where(reminders.c.status == "pending"))
+
+    async def list_reminders_all(self, limit=60):
+        """Kutilayotgan (vaqt bo'yicha) va oxirgi yuborilgan/bekor qilinganlar."""
+        pend = await self._all(sa.select(reminders).where(reminders.c.status == "pending").order_by(reminders.c.due_at).limit(limit))
+        past = await self._all(sa.select(reminders).where(reminders.c.status != "pending").order_by(reminders.c.id.desc()).limit(15))
+        return pend + past
+
+    # rejalar
+    async def add_plan(self, period, title, items, target=None) -> int:
+        res = await self._exec(sa.insert(plans).values(period=period, title=title, items=items, target=target, created_at=now(), updated_at=now()))
+        return res.inserted_primary_key[0]
+
+    async def list_plans(self, limit=200):
+        return await self._all(sa.select(plans).order_by(plans.c.id.desc()).limit(limit))
+
+    async def get_plan(self, plan_id):
+        return await self._one(sa.select(plans).where(plans.c.id == plan_id))
+
+    async def update_plan(self, plan_id, **fields) -> bool:
+        res = await self._exec(sa.update(plans).where(plans.c.id == plan_id).values(updated_at=now(), **fields))
+        return res.rowcount > 0
+
+    async def delete_plan(self, plan_id) -> bool:
+        res = await self._exec(sa.delete(plans).where(plans.c.id == plan_id))
+        return res.rowcount > 0
 
     async def cancel_reminder(self, rid) -> bool:
         res = await self._exec(sa.update(reminders).where(reminders.c.id == rid, reminders.c.status == "pending")

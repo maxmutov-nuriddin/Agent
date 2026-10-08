@@ -1001,3 +1001,24 @@ async def test_push_assets_and_ui(web):
     js = (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()
     sw = (Path(__file__).parent.parent / "aicompany/webui/sw.js").read_text()
     assert "hardRefresh" in js and "checkUpdate" in js and "setupPullToRefresh" in js and "voiceCapture" in js and "pushManager.subscribe" in js and "/push/prefs" in js and 'addEventListener("push"' in sw and "notificationclick" in sw
+
+
+async def test_plans_crud_and_reminder_list(web):
+    c, app = web
+    assert (await post(c, "/api/plans", {"title": "  ", "items": []}))[0] == 400
+    code, plan = await post(c, "/api/plans", {"period": "week", "title": "Haftalik reja", "items": ["Bozor", {"text": "Hisobot", "done": True}, ""]})
+    assert code == 200 and plan["total"] == 2 and plan["done"] == 1 and plan["period"] == "week"
+    pid = plan["id"]
+    items = plan["items"]
+    items[0]["done"] = True
+    code, upd = await post(c, f"/api/plans/{pid}", {"items": items, "period": "zzz"})
+    assert upd["done"] == 2 and upd["period"] == "week"                       # noto'g'ri davr e'tiborsiz
+    assert [p["id"] for p in (await get(c, "/api/plans"))[1]] == [pid]
+    assert (await post(c, "/api/plans/999", {"title": "x"}))[0] == 404
+    assert (await c.delete(f"/api/plans/{pid}", headers=TOK)).status == 200
+    assert (await get(c, "/api/plans"))[1] == []
+    await post(c, "/api/reminders", {"text": "dori", "when": "+30m"})
+    rid = (await get(c, "/api/reminders?all=1"))[1][0]["id"]
+    await c.delete(f"/api/reminders/{rid}", headers=TOK)
+    allr = (await get(c, "/api/reminders?all=1"))[1]
+    assert allr[0]["status"] == "cancelled" and (await get(c, "/api/reminders"))[1] == []

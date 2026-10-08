@@ -306,3 +306,19 @@ async def test_same_reminder_is_merged_not_duplicated_and_call_needs_module(make
     assert len(await app.store.list_reminders()) == 1
     rid = (await app.store.list_reminders())[0]["id"]
     assert await app.store.get_kv(f"rcall:{rid}") == "1"
+
+
+async def test_owner_plan_dictated_in_chat_goes_to_plans_page(make_app):
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "front desk" in system:
+            return json.dumps({"mode": "chat", "reply": "", "task": "",
+                               "plan": {"period": "day", "title": "Bugungi reja", "items": ["Bozorga borish", "Aliga qo'ng'iroq"]}})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID="1")
+    res = await app.orch.handle("bugungi rejam: bozor, Aliga qo'ng'iroq", 5)
+    assert "Reja saqlandi" in res["reply"]
+    plans = await app.store.list_plans()
+    assert plans[0]["title"] == "Bugungi reja" and "Bozorga borish" in plans[0]["items"]
+    assert await app.store.list_tasks() == []                              # vazifa ochilmadi

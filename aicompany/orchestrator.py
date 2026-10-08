@@ -133,7 +133,10 @@ class Orchestrator:
         "Briefly confirm it in the reply.\n"
         "- \"call\": text to SPEAK when the owner asks you to phone/call them right now (e.g. 'menga qo'ng'iroq qil, natijani ayt'). "
         "You can only call the owner, nobody else; if asked to call someone else, say you cannot.\n"
-        "- inside \"reminder\": \"call\": true when the owner wants the reminder delivered as a phone call ('tel qilib eslat').")
+        "- inside \"reminder\": \"call\": true when the owner wants the reminder delivered as a phone call ('tel qilib eslat').\n"
+        "- \"plan\": {\"period\": \"day\"|\"week\"|\"month\"|\"year\"|\"other\", \"title\": \"...\", \"items\": [\"...\", ...]} when the owner dictates "
+        "THEIR OWN daily/weekly/monthly plan or to-do list ('bugungi rejam: ...', 'haftalik reja tuz'). It is saved to their Plans page. "
+        "This is not for work you should do: that is a task.")
 
     TALK_STYLE = (
         "\n\nCONVERSATION STYLE: the owner may just want to talk (feelings, ideas, life, plans). Then be a warm, "
@@ -284,6 +287,9 @@ class Orchestrator:
             reply = str(d.get("reply", "")).strip()
             based_on = await self._valid_task_id(d.get("based_on"))
             await self._save_pref(d.get("remember"))
+            plan = await self._save_plan(d.get("plan"))
+            if plan and not reply:
+                reply = f"📋 Reja saqlandi: {plan['title']} ({len(plan['items'])} band). Rejalar sahifasida ko'rasiz."
             say = str(d.get("call") or "").strip() if isinstance(d.get("call"), (str, bool)) and d.get("call") else ""
             if say and say.lower() not in ("true", "1"):
                 return {"mode": "chat", "reply": reply, "task": "", "call": say}
@@ -344,6 +350,18 @@ class Orchestrator:
             pass
         finally:
             self._summarizing.discard(chat_id)
+
+    async def _save_plan(self, value):
+        """Egasi aytgan o'z rejasi (kunlik/haftalik...) Rejalar sahifasiga yoziladi. AI vazifa rejalari bu yerga tushmaydi."""
+        if not isinstance(value, dict):
+            return None
+        title = " ".join(str(value.get("title") or "").split())[:200]
+        items = [{"text": " ".join(str(i).split())[:300], "done": False} for i in (value.get("items") or []) if str(i).strip()][:60]
+        if not title:
+            return None
+        period = value.get("period") if value.get("period") in ("day", "week", "month", "year", "other") else "day"
+        await self.store.add_plan(period, title, json.dumps(items, ensure_ascii=False))
+        return {"title": title, "items": items}
 
     async def _save_pref(self, value):
         """Egasining doimiy qoidasi yoki tuzatishi: xotiraga yoziladi va keyingi barcha suhbat/vazifalarda hisobga olinadi."""

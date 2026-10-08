@@ -769,8 +769,66 @@ def make_web_app(app: App) -> web.Application:
 
     async def h_reminders(request):
         from .reminders import local_text
-        rows = await app.store.list_reminders()
-        return json_ok([{"id": r["id"], "text": r["text"], "due_at": r["due_at"], "local": local_text(r["due_at"], s.report_tz)} for r in rows])
+        rows = await (app.store.list_reminders_all() if request.query.get("all") == "1" else app.store.list_reminders())
+        return json_ok([{"id": r["id"], "text": r["text"], "due_at": r["due_at"], "local": local_text(r["due_at"], s.report_tz),
+                         "status": r["status"], "call": bool(await app.store.get_kv(f"rcall:{r['id']}"))} for r in rows])
+
+    PERIODS = ("day", "week", "month", "year", "other")
+
+    def plan_out(p):
+        try:
+            items = json.loads(p["items"] or "[]")
+        except ValueError:
+            items = []
+        return {"id": p["id"], "period": p["period"], "title": p["title"], "items": items, "target": p["target"],
+                "done": sum(1 for i in items if i.get("done")), "total": len(items), "created_at": p["created_at"]}
+
+    def clean_items(raw) -> str:
+        out = []
+        for it in (raw or [])[:60]:
+            text, done = (it.get("text"), bool(it.get("done"))) if isinstance(it, dict) else (it, False)
+            text = " ".join(str(text or "").split())[:300]
+            if text:
+                out.append({"text": text, "done": done})
+        return json.dumps(out, ensure_ascii=False)
+
+    async def h_plans(request):
+        return json_ok([plan_out(p) for p in await app.store.list_plans()])
+
+    async def h_plan_add(request):
+        d = await body(request)
+        title = " ".join(str(d.get("title", "")).split())[:200]
+        period = d.get("period") if d.get("period") in PERIODS else "day"
+        if not title:
+            raise web.HTTPBadRequest(reason="reja nomini yozing")
+        pid = await app.store.add_plan(period, title, clean_items(d.get("items")), str(d.get("target") or "")[:10] or None)
+        return json_ok(plan_out(await app.store.get_plan(pid)))
+
+    async def h_plan_update(request):
+        pid = int(request.match_info["id"])
+        if not await app.store.get_plan(pid):
+            raise web.HTTPNotFound(reason="reja topilmadi")
+        d = await body(request)
+        fields = {}
+        if "title" in d:
+            t = " ".join(str(d["title"]).split())[:200]
+            if not t:
+                raise web.HTTPBadRequest(reason="reja nomi bo'sh bo'lmasin")
+            fields["title"] = t
+        if d.get("period") in PERIODS:
+            fields["period"] = d["period"]
+        if "items" in d:
+            fields["items"] = clean_items(d["items"])
+        if "target" in d:
+            fields["target"] = str(d["target"] or "")[:10] or None
+        if fields:
+            await app.store.update_plan(pid, **fields)
+        return json_ok(plan_out(await app.store.get_plan(pid)))
+
+    async def h_plan_delete(request):
+        if not await app.store.delete_plan(int(request.match_info["id"])):
+            raise web.HTTPNotFound(reason="reja topilmadi")
+        return json_ok({"ok": True})
 
     async def h_reminder_add(request):
         from . import reminders
@@ -866,7 +924,7 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),
-        web.get("/api/reminders", h_reminders), web.post("/api/reminders", h_reminder_add),
+        web.get("/api/reminders", h_reminders), web.get("/api/plans", h_plans), web.post("/api/plans", h_plan_add), web.post(r"/api/plans/{id:\d+}", h_plan_update), web.delete(r"/api/plans/{id:\d+}", h_plan_delete), web.post("/api/reminders", h_reminder_add),
         web.delete(r"/api/reminders/{id:\d+}", h_reminder_cancel), web.get("/api/spend", h_agent_spend),
         web.get("/api/widget", h_widget), web.get("/health", h_health), web.get("/healthz", h_health),
     ])

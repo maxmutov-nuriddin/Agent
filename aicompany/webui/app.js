@@ -5,13 +5,14 @@ const IC = {
   team: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17.5" cy="9" r="2.4"/><path d="M16.5 14.2A5 5 0 0 1 21 19"/></svg>',
   cards: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="3.5"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
   tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>',
+  plans: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4M16 3v4M4 10h16M9 15l2 2 4-4"/></svg>',
   stats: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20V11M12 20V4M19 20v-6"/></svg>',
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-n";
+const PANEL_V = "2026.10.09-o";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
-const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
+const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
   limit: ["Limit tugadi", "amber"], paused: ["Pauza", "amber"], interrupted: ["Uzildi (dastur qayta yoqilgan)", "amber"], stopped: ["To'xtatilgan", "amber"] };
 const CAN_RESUME = new Set(["interrupted", "paused", "cancelled", "limit", "failed", "stopped"]);  // to'xtagan: «Davom ettirish» tugmasi
@@ -122,7 +123,7 @@ function saveCache() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { try { localStorage.setItem("aij_cache", JSON.stringify({ ...S.cache, _chat: S.chat.slice(-60) })); } catch { /* joy tugasa */ } }, 500);
 }
-const S = { cache: loadCache(), token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, view: "active" };
+const S = { cache: loadCache(), token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, view: "active", planTab: "rems", planFilter: "all" };
 
 // ---------- yordamchilar ----------
 function h(tag, attrs, ...kids) {
@@ -274,7 +275,7 @@ async function prefetch() {  // boshqa tablarni oldindan yuklab qo'yamiz: birinc
 }
 
 // ---------- ko'rinishlar: har biri ma'lumot oladi va chizadi; o'zgarmasa qayta chizilmaydi ----------
-const VIEWS = { team: [() => (isDesk() ? loadOverview() : loadTeam()), (d) => (d.overview ? drawOverview(d) : drawTeam(d))], cards: [loadCards, drawCards], tasks: [loadTasks, drawTasks], stats: [loadStats, drawStats] };
+const VIEWS = { team: [() => (isDesk() ? loadOverview() : loadTeam()), (d) => (d.overview ? drawOverview(d) : drawTeam(d))], cards: [loadCards, drawCards], tasks: [loadTasks, drawTasks], plans: [loadPlans, drawPlans], stats: [loadStats, drawStats] };
 async function refresh(force) {
   const [load, draw] = VIEWS[S.tab];
   try {
@@ -684,6 +685,68 @@ async function download(id, path) {
 }
 
 // --- Hisob ---
+// --- Eslatmalar va rejalar (egasining o'z rejalari; AI vazifa rejalari bu yerga tushmaydi, ular vazifaning ichida) ---
+const PERIODS = [["day", "Kunlik"], ["week", "Haftalik"], ["month", "Oylik"], ["year", "Yillik"], ["other", "Boshqa"]];
+async function loadPlans() {
+  const [state, rems, plans] = await Promise.all([api("/state"), api("/reminders?all=1"), api("/plans")]);
+  S.state = state; renderTabs(); return { rems, plans };
+}
+function planSheet(plan) {
+  let period = plan ? plan.period : "day";
+  const title = h("input", { placeholder: "Reja nomi (masalan: Bugungi ishlar)", value: plan ? plan.title : "" });
+  const target = h("input", { type: "date", value: plan && plan.target ? plan.target : "" });
+  const items = h("textarea", { rows: "7", placeholder: "Har qatorga bitta band:\nBozorga borish\nAliga qo'ng'iroq\nHisobotni yozish" }, plan ? plan.items.map((i) => i.text).join("\n") : "");
+  const seg = h("div", { class: "seg" });
+  const drawSeg = () => seg.replaceChildren(...PERIODS.map(([k, l]) => h("button", { type: "button", class: period === k ? "on" : "", onclick: () => { period = k; drawSeg(); } }, l)));
+  drawSeg();
+  const btn = h("button", { class: "btn lime full" }, plan ? "Saqlash" : "Reja qo'shish");
+  btn.addEventListener("click", async () => {
+    const old = new Map((plan ? plan.items : []).map((i) => [i.text, i.done]));
+    const list = items.value.split("\n").map((t) => t.trim()).filter(Boolean).map((t) => ({ text: t, done: old.get(t) || false }));
+    try { await post(plan ? "/plans/" + plan.id : "/plans", { period, title: title.value, items: list, target: target.value }); closeSheet(); toast("Saqlandi"); refresh(true); } catch (e) { toast(e.message); }
+  });
+  openSheet(h("h2", {}, plan ? "Rejani tahrirlash" : "Yangi reja"), h("label", {}, "Davr"), seg, h("label", {}, "Nomi"), title,
+    h("label", {}, "Sana (ixtiyoriy)"), target, h("label", {}, "Bandlar"), items, h("div", { class: "label" }), btn);
+}
+function drawPlans({ rems, plans }) {
+  const tab = S.planTab, filter = S.planFilter;
+  const seg = h("div", { class: "seg plans-seg" }, [["rems", "Eslatmalar"], ["plans", "Rejalar"]].map(([k, l]) =>
+    h("button", { class: tab === k ? "on" : "", onclick: () => { S.planTab = k; refresh(true); } }, l)));
+  // --- eslatmalar ---
+  const pending = rems.filter((r) => r.status === "pending"), past = rems.filter((r) => r.status !== "pending");
+  const STAT = { sent: "yuborildi", cancelled: "bekor", failed: "xato" };
+  const remRow = (r, isPast) => h("div", { class: "prow" + (isPast ? " past" : "") }, h("span", { class: "bul " + (isPast ? "" : "amber") }),
+    h("div", { class: "grow" }, h("b", {}, r.text), r.call && !isPast ? h("p", { class: "muted xs" }, "📞 qo'ng'iroq bilan") : null),
+    h("span", { class: "tag-s " + (isPast ? "" : "warn") }, isPast ? (STAT[r.status] || r.status) + " · " + r.local : r.local),
+    isPast ? null : h("button", { class: "x", "aria-label": "Bekor qilish", onclick: async () => { try { await api("/reminders/" + r.id, { method: "DELETE" }); toast("Bekor qilindi"); refresh(true); } catch (e) { toast(e.message); } } }, "✕"));
+  const remSec = h("section", { class: "plans-sec" + (tab === "rems" ? " on" : "") },
+    h("div", { class: "row-b" }, h("p", { class: "kick" }, "Eslatmalar"), h("button", { class: "btn lime sm", onclick: reminderAdd }, "+ Eslatma")),
+    pending.length ? pending.map((r) => remRow(r, false)) : h("p", { class: "muted sm" }, "Kutilayotgan eslatma yo'q. Chatda «ertaga 9 da … eslat» yoki «tel qilib eslat» deb yozing."),
+    past.length ? h("p", { class: "kick sub" }, "Oldingilar") : null, past.slice(0, 10).map((r) => remRow(r, true)));
+  // --- rejalar ---
+  const chips = h("div", { class: "seg sm plans-filter" }, [["all", "Hammasi"], ...PERIODS].map(([k, l]) =>
+    h("button", { class: filter === k ? "on" : "", onclick: () => { S.planFilter = k; refresh(true); } }, l)));
+  const shown = plans.filter((p) => filter === "all" || p.period === filter);
+  const toggle = async (p, idx) => {
+    const items = p.items.map((it, i) => (i === idx ? { ...it, done: !it.done } : it));
+    try { await post("/plans/" + p.id, { items }); refresh(true); } catch (e) { toast(e.message); }
+  };
+  const card = (p) => {
+    const pct = p.total ? Math.round((p.done / p.total) * 100) : 0, fill = h("i"); fill.style.width = pct + "%";
+    const per = (PERIODS.find((x) => x[0] === p.period) || [0, "Boshqa"])[1];
+    return h("div", { class: "card plan" + (p.total && p.done === p.total ? " fin" : "") },
+      h("div", { class: "row-b" }, h("div", { class: "grow" }, h("p", { class: "kick" }, per + (p.target ? " · " + p.target : "")), h("b", { class: "ptitle" }, p.title)),
+        h("div", { class: "acts-i" }, h("button", { class: "linkbtn", onclick: () => planSheet(p) }, "✏️"),
+          h("button", { class: "linkbtn", onclick: async () => { if (!confirm("Reja o'chirilsinmi?")) return; try { await api("/plans/" + p.id, { method: "DELETE" }); toast("O'chirildi"); refresh(true); } catch (e) { toast(e.message); } } }, "🗑"))),
+      p.total ? h("div", { class: "bar" }, fill) : null,
+      p.total ? h("p", { class: "muted xs" }, `${p.done}/${p.total} bajarildi`) : h("p", { class: "muted sm" }, "Bandlar yo'q. ✏️ bilan qo'shing."),
+      p.items.map((it, i) => h("button", { class: "chk" + (it.done ? " done" : ""), onclick: () => toggle(p, i) }, h("i", {}, it.done ? "✓" : ""), h("span", {}, it.text))));
+  };
+  const planSec = h("section", { class: "plans-sec" + (tab === "plans" ? " on" : "") },
+    h("div", { class: "row-b" }, h("p", { class: "kick" }, "Rejalar"), h("button", { class: "btn lime sm", onclick: () => planSheet() }, "+ Reja")), chips,
+    shown.length ? shown.map(card) : h("p", { class: "muted sm" }, "Reja yo'q. «+ Reja» bilan qo'shing yoki chatda «bugungi rejam: …» deb yozing. Bu sizning shaxsiy rejalaringiz; AI vazifalarining rejasi esa vazifaning ichida ko'rinadi."));
+  return [head("Eslatma va rejalar", liveTag()), seg, h("div", { class: "plans-wrap" }, remSec, planSec)];
+}
 async function loadStats() {
   const [state, spend, mem, integ, loc, rems] = await Promise.all([api("/state"), api("/spend"), api("/memory"), api("/integrations"), api("/location"), api("/reminders")]);
   S.state = state; renderTabs(); return { state, spend, mem, integ, loc, rems };
