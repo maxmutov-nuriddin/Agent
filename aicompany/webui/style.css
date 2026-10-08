@@ -223,3 +223,12 @@ input, textarea { font: inherit; color: var(--text); }
 .chat-top .btn { padding: 9px 14px; font-size: 14px; }
 .hint { color: var(--muted); font-size: 14px; padding: 6px 2px; }
 textarea.big { min-height: 140px; }
+
+/* Mikrofon va asosiy AI tanlovi */
+.mic { width: 48px; height: 48px; border-radius: 50%; background: var(--s2); display: grid; place-items: center; flex: none; color: var(--text); }
+.mic svg { width: 22px; height: 22px; }
+.mic.rec { background: var(--red); color: #fff; animation: recpulse 1.2s ease-in-out infinite; }
+.mic[disabled] { opacity: .5; }
+@keyframes recpulse { 50% { box-shadow: 0 0 0 8px rgba(255,90,82,.25); } }
+@media (prefers-reduced-motion: reduce) { .mic.rec { animation: none; } }
+@media (max-height: 500px) { .mic { width: 42px; height: 42px; } }

@@ -322,3 +322,56 @@ async def test_archived_tasks_hidden_from_widget_and_telegram_lists(web):
     r = await c.get("/api/widget?token=widget-secret")
     assert (await r.json())["last_task"] is None
     assert await app.store.list_tasks() == []
+
+
+# ---------- asosiy AI va ovoz ----------
+@pytest.fixture
+async def web2(make_app):
+    app, provs = await make_app(front(), names=("anthropic", "gemini"), audio="Kofexona uchun reja tuz", OWNER_TELEGRAM_ID="1")
+    app.settings = dataclasses.replace(app.settings, web_token="web-secret", widget_token="widget-secret")
+    client = TestClient(TestServer(make_web_app(app)))
+    await client.start_server()
+    yield client, app, provs
+    await client.close()
+
+
+async def test_provider_switch_via_web(web2):
+    c, app, provs = web2
+    _, st = await get(c, "/api/state")
+    assert st["providers"] == ["anthropic", "gemini"] and st["primary"] == "auto"
+    assert (await post(c, "/api/provider", {"primary": "gemini"}))[0] == 200
+    assert (await get(c, "/api/state"))[1]["primary"] == "gemini"
+    assert (await app.router.call("cheap", "You are 'x'", [{"role": "user", "content": "hi"}])).provider == "gemini"
+    assert (await post(c, "/api/provider", {"primary": "openai"}))[0] == 400   # kalit yo'q
+    assert (await post(c, "/api/provider", {"primary": "auto"}))[0] == 200
+    assert (await c.post("/api/provider", data="{}")).status == 401
+
+
+async def test_voice_endpoint(web2):
+    c, app, provs = web2
+    audio = b"OggS" + b"\x00" * 500
+    r = await c.post("/api/voice", headers={**TOK, "Content-Type": "audio/webm;codecs=opus"}, data=audio)
+    assert r.status == 200 and (await r.json()) == {"text": "Kofexona uchun reja tuz"}
+    assert provs["gemini"].audio_calls[0][1] == "audio/webm"                 # codec qismi olib tashlandi
+    r = await c.post("/api/voice", headers={**TOK, "Content-Type": "text/plain"}, data=audio)
+    assert r.status == 400
+    r = await c.post("/api/voice", headers={**TOK, "Content-Type": "audio/ogg"}, data=b"x")
+    assert r.status == 400
+    assert (await c.post("/api/voice", headers={"Content-Type": "audio/ogg"}, data=audio)).status == 401
+    provs["gemini"].audio_text = "[no speech]"
+    r = await c.post("/api/voice", headers={**TOK, "Content-Type": "audio/ogg"}, data=audio)
+    assert r.status == 422 and "topilmadi" in (await r.json())["error"]
+
+
+async def test_voice_endpoint_without_gemini_key(web):
+    c, app = web  # faqat Claude
+    r = await c.post("/api/voice", headers={**TOK, "Content-Type": "audio/ogg"}, data=b"x" * 600)
+    assert r.status == 503 and "GEMINI_API_KEY" in (await r.json())["error"]
+    _, st = await get(c, "/api/state")
+    assert st["providers"] == ["anthropic"]
+
+
+def test_frontend_has_voice_and_provider_controls():
+    root = Path(__file__).parent.parent / "aicompany/webui"
+    js, html = (root / "app.js").read_text(), (root / "index.html").read_text()
+    assert "chat-mic" in html and "/api/voice" in js and "/provider" in js and "MediaRecorder" in js

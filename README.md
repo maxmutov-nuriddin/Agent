@@ -56,6 +56,14 @@ Rollarga guruhlar biriktirilgan (masalan faqat dasturchida `shell` bor). HR yang
 - Har 10-vazifadan keyin (yoki `/review`) HR-yollagan va oxirgi 10 vazifada ishlamagan xodimlarni bo'shatadi. Asosiy xodimlar (ceo/hr/qa/generalist) va siz yollaganlar avtomatik bo'shatilmaydi.
 - Rahbar har qadamga model darajasini (cheap/mid/strong) o'zi belgilaydi, noaniq bo'lsa arzonini tanlaydi.
 
+## Bir nechta AI (Claude / Gemini / ChatGPT)
+Kalitlari `.env` da bor provayderlar avtomatik ishlatiladi, kaliti yo'qlari o'tkazib yuboriladi: faqat `ANTHROPIC_API_KEY` bo'lsa faqat Claude, faqat `GEMINI_API_KEY` bo'lsa faqat Gemini, ikkalasi bo'lsa birgalikda.
+- **Asosiy AI:** `PRIMARY_PROVIDER` (`auto` = eng arzoni) yoki panelda Hisob → Asosiy AI, yoki Telegramda `/ai gemini`. Tanlangani birinchi ishlaydi, ikkinchisi zaxira (xato yoki limit tugasa).
+- **Daraja bo'yicha:** `PROVIDER_BY_TIER=cheap:gemini,strong:anthropic`.
+- **Bitta ish = bitta provayder:** agentning asbob sikli boshdan oxirigacha bitta provayderda bajariladi. U o'rtada yiqilsa, ish boshqasida qayta boshlanadi.
+- **Ovozli xabarlar:** Telegramda ovoz yuborsangiz yoki panelda mikrofon tugmasini bossangiz, Gemini uni matnga aylantiradi (asosiy AI Claude bo'lsa ham). `GEMINI_API_KEY` kerak. Panelda mikrofon faqat HTTPS (yoki localhost) orqali ishlaydi.
+- **Gemini bepul tarifi:** sinov uchun yaxshi, lekin so'rov tezligi cheklangan va Google bepul tarifdagi ma'lumotlardan foydalanishi mumkin. Maxfiy ma'lumot yubormang.
+
 ## Tejamkorlik
 Router vazifa darajasiga (cheap/mid/strong) qarab eng arzon provayderni tanlaydi, xato bo'lsa keyingisiga o'tadi. Claude uchun prompt caching va past `effort` yoqilgan. Limit tugagan provayder o'tkazib yuboriladi. Bitta vazifa uchun `MAX_TASK_USD` chegarasi bor. 80% da Telegramga ogohlantirish keladi. Limitni oshirish: `.env` dagi `BUDGET_USD_*`.
 

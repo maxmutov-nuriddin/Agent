@@ -6,8 +6,10 @@ const IC = {
   cards: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="3.5"/><path d="M8.5 12l2.5 2.5 4.5-5"/></svg>',
   tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>',
   stats: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 20V11M12 20V4M19 20v-6"/></svg>',
+  mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
+const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], stopped: ["To'xtatildi", "amber"],
   paused: ["Pauza", "amber"], interrupted: ["Uzildi", "amber"] };
@@ -232,13 +234,21 @@ function drawStats({ state, spend, mem }) {
   const provs = on.map((b) => {
     const pct = b.budget ? Math.min(100, (b.spent / b.budget) * 100) : 0;
     const fill = h("i"); fill.style.width = pct + "%";
-    return h("div", { class: "prov" }, h("div", { class: "row" }, h("span", {}, b.provider), h("small", {}, `${usd(b.spent)} / ${usd(b.budget)}`)),
+    return h("div", { class: "prov" }, h("div", { class: "row" }, h("span", {}, PROV[b.provider] || b.provider), h("small", {}, `${usd(b.spent)} / ${usd(b.budget)}`)),
       h("div", { class: "bar " + (pct > 90 ? "bad" : pct > 70 ? "warn" : "") }, fill));
   });
   const pause = h("button", { class: "btn full " + (state.paused ? "lime" : "red"), onclick: async () => { await post(state.paused ? "/resume" : "/pause"); refresh(true); } },
     state.paused ? "▶ Davom ettirish" : "⏸ Hammasini to'xtatish");
+  const choices = state.providers.length > 1 ? ["auto", ...state.providers] : [];
+  const setPrimary = async (v) => { try { await post("/provider", { primary: v }); toast("Asosiy AI: " + PROV[v]); refresh(true); } catch (e) { toast(e.message); } };
+  const primary = h("div", {}, h("div", { class: "label" }, "Asosiy AI"),
+    choices.length
+      ? h("div", { class: "seg" }, choices.map((c) => h("button", { class: (state.primary || "auto") === c ? "on" : "", onclick: () => setPrimary(c) }, PROV[c] || c)))
+      : h("p", { class: "hint" }, (PROV[state.providers[0]] || "Hech biri") + " ulangan. Ikkinchisini qo'shish uchun .env ga kalit qo'ying."),
+    choices.length ? h("p", { class: "hint" }, "Avto = eng arzonidan boshlaydi. Tanlangan AI birinchi ishlaydi, ikkinchisi zaxira.") : null);
   return [head("Hisob", liveTag()),
     h("div", { class: "money" }, h("b", {}, usd(left)), h("span", {}, `qolgan byudjet · bugun ${usd(state.today)}`)), ...provs,
+    primary,
     spend.length ? h("div", { class: "label" }, "Agentlar sarfi") : null,
     ...spend.slice(0, 6).map((r) => h("div", { class: "item" }, h("div", { class: "grow" }, h("h3", {}, r.agent)), h("span", { class: "muted" }, usd(r.cost)))),
     mem.length ? h("div", { class: "label" }, "Xotira") : null,
@@ -300,6 +310,32 @@ async function sendChat() {
     await pollChat();
   } catch (e) { toast(e.message); ta.value = text; }
 }
+let rec = null;
+function micState(on) { const b = $("chat-mic"); b.classList.toggle("rec", on); b.setAttribute("aria-label", on ? "To'xtatish" : "Ovozli xabar"); }
+async function toggleMic() {
+  if (rec) { rec.stop(); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return toast("Mikrofon uchun HTTPS kerak (Tailscale yoki Tunnel)");
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { return toast("Mikrofonga ruxsat berilmadi"); }
+  const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
+  const chunks = [];
+  rec = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
+  rec.ondataavailable = (e) => chunks.push(e.data);
+  rec.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    const type = (rec && rec.mimeType) || mime || "audio/webm"; rec = null; micState(false);
+    const btn = $("chat-mic"); btn.disabled = true; toast("Matnga aylantirilmoqda…");
+    try {
+      const r = await fetch("/api/voice", { method: "POST", headers: { Authorization: "Bearer " + S.token, "Content-Type": type }, body: new Blob(chunks, { type }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "Xatolik " + r.status);
+      const ta = $("chat-input"); ta.value = (ta.value ? ta.value + " " : "") + d.text; ta.dispatchEvent(new Event("input")); ta.focus();
+    } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+  };
+  rec.start(); micState(true);
+}
+$("chat-mic").append(svg(IC.mic));
+$("chat-mic").addEventListener("click", toggleMic);
 $("chat-back").addEventListener("click", closeChat);
 $("chat-task").addEventListener("click", taskSheet);
 $("chat-send").append(svg(IC.send));

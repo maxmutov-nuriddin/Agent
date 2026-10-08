@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -51,6 +51,18 @@ class Settings:
     web_token: str | None = None
     widget_token: str | None = None
     web_public_url: str | None = None
+    primary_provider: str = "auto"
+    tier_providers: dict = field(default_factory=dict)
+
+
+def parse_tier_providers(raw: str) -> dict:
+    """'cheap:gemini,strong:anthropic' -> {'cheap': 'gemini', 'strong': 'anthropic'}"""
+    out = {}
+    for part in (raw or "").split(","):
+        tier, _, prov = part.partition(":")
+        if tier.strip() in TIERS and prov.strip():
+            out[tier.strip()] = prov.strip().lower()
+    return out
 
 
 def load_settings(env: dict | None = None, models_path: Path | None = None) -> Settings:
@@ -94,6 +106,8 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
         web_token=env.get("WEB_TOKEN") or None,
         widget_token=env.get("WIDGET_TOKEN") or None,
         web_public_url=(env.get("WEB_PUBLIC_URL") or "").rstrip("/") or None,
+        primary_provider=(env.get("PRIMARY_PROVIDER") or "auto").strip().lower(),
+        tier_providers=parse_tier_providers(env.get("PROVIDER_BY_TIER", "")),
     )
 
 

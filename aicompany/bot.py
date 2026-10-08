@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -10,12 +11,14 @@ from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile, Inline
                            InlineKeyboardMarkup, Message)
 
 from .app import App
+from .providers import VoiceError, VoiceUnavailable
 from .report import build_report, daily_report_loop
 
 log = logging.getLogger("bot")
 MAX_UPLOAD = 10_000_000
+NAMES = {"anthropic": "Claude", "gemini": "Gemini", "openai": "ChatGPT", "auto": "Avto (eng arzoni)"}
 HELP = (
-    "Men AI kompaniya rahbariman. Menga oddiy yozing: gaplashishingiz, savol berishingiz yoki vazifa topshirishingiz mumkin. Qaysi biri ekanini o'zim tushunaman, kerak bo'lsa aniqlashtiraman. Fayl ham yuborishingiz mumkin.\n\n"
+    "Men AI kompaniya rahbariman. Menga oddiy yozing: gaplashishingiz, savol berishingiz yoki vazifa topshirishingiz mumkin. Qaysi biri ekanini o'zim tushunaman, kerak bo'lsa aniqlashtiraman. Fayl yoki ovozli xabar ham yuborishingiz mumkin.\n\n"
     "/team — jamoa\n/tasks — oxirgi vazifalar\n/task <id> — vazifa natijasi\n"
     "/budget — sarf\n/report — hisobot\n/memory — xotira\n"
     "/hire <nom> <nima uchun> — xodim olish\n/fire <nom> — ishdan bo'shatish\n/review — HR tahlili\n"
@@ -105,6 +108,21 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
         rows = await app.store.recent_memories(15)
         await m.answer("🧠 Xotira:\n" + "\n".join(f"• {r['text']}" for r in rows) if rows else "Xotira hozircha bo'sh")
 
+    @dp.message(Command("ai"))
+    async def _ai(m: Message, command: CommandObject):
+        enabled = sorted(app.router.providers)
+        arg = (command.args or "").strip().lower()
+        alias = {"claude": "anthropic", "chatgpt": "openai", "gpt": "openai"}
+        arg = alias.get(arg, arg)
+        if arg:
+            if arg != "auto" and arg not in enabled:
+                return await m.answer(f"❌ '{arg}' ulanmagan. Ulangan: {', '.join(NAMES[e] for e in enabled) or 'yo`q'}")
+            await app.store.set_kv("primary_provider", arg)
+        cur = await app.router.primary()
+        options = ", ".join(["auto"] + enabled)
+        await m.answer(f"🤖 Asosiy AI: {NAMES.get(cur, cur)}\nUlangan: {', '.join(NAMES[e] for e in enabled) or 'yo`q'}\n"
+                       f"O'zgartirish: /ai <{options}>")
+
     @dp.message(Command("stop"))
     async def _stop(m: Message, command: CommandObject):
         try:
@@ -191,6 +209,22 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
         dest = inbox / f"{m.message_id}_{(d.file_name or 'file').replace('/', '_')}"
         await bot.download(d, destination=dest)
         spawn(run(m.chat.id, m.caption or "Ilova qilingan fayl bilan ishlang.", [dest]))
+
+    @dp.message(F.voice | F.audio)
+    async def _voice(m: Message):
+        media = m.voice or m.audio
+        if media.file_size and media.file_size > 10_000_000:
+            return await m.answer("Ovoz fayli juda katta (10MB limit)")
+        buf = io.BytesIO()
+        await bot.download(media, destination=buf)
+        try:
+            text = await app.router.transcribe(buf.getvalue(), media.mime_type or "audio/ogg")
+        except VoiceUnavailable as e:
+            return await m.answer(f"🎤 {e}. Matn yozing yoki .env ga Gemini kalitini qo'shing.")
+        except VoiceError as e:
+            return await m.answer(f"🎤 {e}")
+        await m.answer(f"🎤 Eshitdim: {text}")
+        spawn(run(m.chat.id, text))
 
     @dp.message(F.text & ~F.text.startswith("/"))
     async def _text(m: Message):

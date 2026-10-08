@@ -14,6 +14,7 @@ from aiohttp import web
 
 from .app import App
 from .report import day_start_utc
+from .providers import VoiceError, VoiceUnavailable
 from .team import CORE
 from .util import clip
 
@@ -132,6 +133,8 @@ def make_web_app(app: App) -> web.Application:
             "done_today": done_today,
             "running_tasks": [{"id": t["id"], "request": t["request"][:100]} for t in running],
             "pending": len(app.center.list()) if app.center else 0,
+            "primary": await app.router.primary(),
+            "providers": sorted(app.router.providers),
         }
 
     async def h_state(request):
@@ -300,6 +303,29 @@ def make_web_app(app: App) -> web.Application:
         await app.store.delete_task(t["id"])
         return json_ok({"ok": True})
 
+    async def h_provider(request):
+        """Asosiy AI: 'auto' (eng arzoni) yoki ulangan provayderlardan biri. Qayta ishga tushirish shart emas."""
+        value = str((await body(request)).get("primary", "")).strip().lower()
+        if value != "auto" and value not in app.router.providers:
+            raise web.HTTPBadRequest(reason="bunday provayder ulanmagan (kalit yo'q)")
+        await app.store.set_kv("primary_provider", value)
+        return json_ok({"primary": value})
+
+    async def h_voice(request):
+        """Ovozli xabar -> matn (Gemini). Tana: audio baytlari, Content-Type: audio/*"""
+        mime = request.headers.get("Content-Type", "audio/ogg").split(";")[0].strip()
+        if not mime.startswith(("audio/", "video/webm", "video/mp4")):
+            raise web.HTTPBadRequest(reason="audio fayl kerak")
+        data = await request.read()
+        if len(data) < 200:
+            raise web.HTTPBadRequest(reason="ovoz juda qisqa")
+        try:
+            return json_ok({"text": await app.router.transcribe(data, mime)})
+        except VoiceUnavailable as e:
+            raise web.HTTPServiceUnavailable(reason=str(e))
+        except VoiceError as e:
+            raise web.HTTPUnprocessableEntity(reason=str(e))
+
     async def h_pause(request):
         await app.store.set_kv("paused", "1")
         return json_ok({"paused": True})
@@ -324,7 +350,7 @@ def make_web_app(app: App) -> web.Application:
                         "last_task": ({"id": tasks[0]["id"], "status": tasks[0]["status"],
                                        "request": tasks[0]["request"][:60]} if tasks else None)})
 
-    a = web.Application(middlewares=[guard], client_max_size=1_000_000)
+    a = web.Application(middlewares=[guard], client_max_size=16_000_000)
     for path in STATIC_FILES:
         a.router.add_get(path, static)
     a.add_routes([
@@ -338,6 +364,7 @@ def make_web_app(app: App) -> web.Application:
         web.post(r"/api/tasks/{id:\d+}/stop", h_task_stop), web.post(r"/api/tasks/{id:\d+}/archive", h_task_archive),
         web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
         web.post("/api/pause", h_pause), web.post("/api/resume", h_resume),
+        web.post("/api/provider", h_provider), web.post("/api/voice", h_voice),
         web.get("/api/memory", h_memory), web.get("/api/spend", h_agent_spend),
         web.get("/api/widget", h_widget),
     ])

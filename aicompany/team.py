@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from .db import Store
-from .router import Router
+from .router import BudgetExhausted, PinnedUnavailable, Router
 from .tools import GROUPS, ToolEnv, ToolError, tool_defs, tools_for
 from .util import clip, extract_json, slug
 
@@ -49,19 +49,26 @@ class Team:
                         tier=None, env: ToolEnv | None = None) -> str:
         agent = await self.store.get_agent(name) or await self.store.get_agent("generalist")
         content = instruction if not context else f"{instruction}\n\n# Context from teammates\n{context}"
-        messages = [{"role": "user", "content": content}]
         tools = tools_for(agent["tools"]) if env else []
         defs = tool_defs(tools) or None
         by_name = {t.name: t for t in tools}
         system = agent["system_prompt"] + (TOOL_RULES if defs else "")
         if env:
             env.agent = agent["name"]
-        text = ""
         b = self.busy.setdefault(agent["name"], {"count": 0, "task_id": task_id})
         b["count"] += 1
         b["task_id"] = task_id
+        excluded: set[str] = set()
         try:
-            text = await self._loop(agent, tier, system, messages, defs, by_name, env, task_id)
+            while True:
+                try:  # asbob sikli bitta provayderda boshdan oxirigacha; u yiqilsa, ish boshqasida qayta boshlanadi
+                    text = await self._loop(agent, tier, system, content, defs, by_name, env, task_id, frozenset(excluded))
+                    break
+                except PinnedUnavailable as e:
+                    excluded.add(e.provider)
+                    await self.store.audit("team", "provider_switch", f"{agent['name']}: {e}"[:300])
+                    if len(excluded) >= len(self.router.providers):
+                        raise BudgetExhausted(str(e)) from e
         finally:
             b["count"] -= 1
             if b["count"] <= 0:
@@ -70,15 +77,17 @@ class Team:
             await self.store.add_message(task_id, agent["name"], text)
         return text
 
-    async def _loop(self, agent, tier, system, messages, defs, by_name, env, task_id) -> str:
-        text = ""
+    async def _loop(self, agent, tier, system, content, defs, by_name, env, task_id, exclude) -> str:
+        messages = [{"role": "user", "content": content}]
+        text, pin = "", None
         for turn in range(self.max_tool_turns + 1):
-            res = await self.router.call(tier or agent["tier"], system, messages,
-                                         task_id=task_id, agent=agent["name"], tools=defs)
+            res = await self.router.call(tier or agent["tier"], system, messages, task_id=task_id,
+                                         agent=agent["name"], tools=defs, only=pin, exclude=exclude)
             text = res.text
             if not res.tool_calls or turn == self.max_tool_turns:
                 text = text or "(asbob limiti tugadi, to'liq javob olinmadi)"
                 break
+            pin = res.provider  # xabar formati provayderga xos: shu ish oxirigacha o'sha provayderda
             messages.append({"role": "assistant", "content": res.raw_content})
             results = []
             for call in res.tool_calls:
