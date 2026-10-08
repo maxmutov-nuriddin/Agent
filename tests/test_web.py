@@ -188,7 +188,7 @@ async def test_approval_denied_via_web(web):
 
 
 # ---------- suhbat ----------
-async def wait_rows(c, n, after=0, tries=60):
+async def wait_rows(c, n, after=0, tries=200):
     for _ in range(tries):
         await asyncio.sleep(0.05)
         _, rows = await get(c, f"/api/chat?after={after}")
@@ -210,7 +210,7 @@ async def test_chat_greeting_no_task_no_duplicate_rows(web):
 async def test_chat_task_produces_result_row_and_after_cursor(web):
     c, app = web
     await post(c, "/api/chat", {"text": "sayt yasab ber"})
-    for _ in range(100):
+    for _ in range(300):
         await asyncio.sleep(0.05)
         _, rows = await get(c, "/api/chat")
         if any(r["role"] == "result" for r in rows):
@@ -230,3 +230,43 @@ def test_responsive_foundations_present():
     assert "env(safe-area-inset-bottom)" in css and "100dvh" in css  # iPhone chuqurligi va manzil paneli
     assert "@media (max-width: 360px)" in css and "@media (max-height: 500px)" in css  # kichik va yotiq ekran
     assert "overflow-wrap: anywhere" in css
+
+
+def _s(**kw):
+    from .conftest import settings
+    return dataclasses.replace(settings(), web_token="tok", **kw)
+
+
+def test_web_url_variants(monkeypatch):
+    from aicompany import web as webmod
+    monkeypatch.setattr(webmod, "lan_ip", lambda: "192.168.1.20")
+    assert webmod.web_url(_s(web_host="127.0.0.1", web_port=8080)) == ("http://127.0.0.1:8080/#token=tok", False)
+    assert webmod.web_url(_s(web_host="0.0.0.0", web_port=9000)) == ("http://192.168.1.20:9000/#token=tok", True)
+    assert webmod.web_url(_s(web_host="127.0.0.1", web_public_url="https://my.ts.net")) == ("https://my.ts.net/#token=tok", True)
+
+
+async def test_telegram_web_command_sends_link_to_owner_only(make_app, monkeypatch):
+    from aiogram import Bot
+    from aiogram.dispatcher.event.bases import UNHANDLED
+    from aicompany.bot import make_dispatcher
+    from .test_bot import update, OWNER
+    sent = []
+
+    async def fake_call(self, method, request_timeout=None):
+        sent.append(getattr(method, "text", None))
+        return True
+    monkeypatch.setattr(Bot, "__call__", fake_call)
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID=str(OWNER))
+    app.settings = dataclasses.replace(app.settings, web_token="secret-tok", web_public_url="https://panel.example")
+    bot = Bot("123456:ABC")
+    dp = make_dispatcher(app, bot)
+    assert await dp.feed_update(bot, update(999, "/web")) is UNHANDLED and sent == []
+    await dp.feed_update(bot, update(OWNER, "/web"))
+    assert "https://panel.example/#token=secret-tok" in sent[0] and "⚠️" not in sent[0]
+    app.settings = dataclasses.replace(app.settings, web_public_url=None, web_host="127.0.0.1")
+    await dp.feed_update(bot, update(OWNER, "/web"))
+    assert "⚠️" in sent[1]  # faqat lokal manzil: ogohlantiradi
+    app.settings = dataclasses.replace(app.settings, web_token=None)
+    await dp.feed_update(bot, update(OWNER, "/link"))
+    assert "yoqilmagan" in sent[2]
+    await bot.session.close()

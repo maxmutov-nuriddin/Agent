@@ -105,6 +105,18 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
         rows = await app.store.recent_memories(15)
         await m.answer("🧠 Xotira:\n" + "\n".join(f"• {r['text']}" for r in rows) if rows else "Xotira hozircha bo'sh")
 
+    @dp.message(Command("web", "link"))
+    async def _web(m: Message):
+        from .web import web_url
+        if not app.settings.web_token:
+            return await m.answer("Veb-panel yoqilmagan (WEB_TOKEN yo'q). `python -m aicompany run` ni qayta ishga tushiring.")
+        url, reachable = web_url(app.settings)
+        text = f"🌐 Veb-panel:\n{url}\n\nHavolada maxfiy kalit bor: hech kimga yubormang."
+        if not reachable:
+            text += ("\n\n⚠️ Bu manzil faqat kompyuterning o'zida ishlaydi. Telefondan ochish uchun .env ga "
+                     "WEB_HOST=0.0.0.0 (WiFi) yoki WEB_PUBLIC_URL (Tailscale/Tunnel) qo'ying.")
+        await m.answer(text, disable_web_page_preview=True)
+
     @dp.message(Command("clear"))
     async def _clear(m: Message):
         await app.store.clear_chat(m.chat.id)

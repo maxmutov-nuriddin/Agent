@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import socket
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -25,6 +26,26 @@ CTYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; "
        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; manifest-src 'self'; worker-src 'self'")
 MAX_FAILS, FAIL_WINDOW = 8, 60
+
+
+def lan_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+            sk.connect(("10.255.255.255", 1))  # paket yuborilmaydi, faqat yo'nalish aniqlanadi
+            return sk.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def web_url(s) -> tuple[str, bool]:
+    """(kirish havolasi, telefondan ochilishi mumkinmi). WEB_PUBLIC_URL berilsa shu ishlatiladi."""
+    if s.web_public_url:
+        base, reachable = s.web_public_url, True
+    else:
+        loopback = s.web_host in ("127.0.0.1", "localhost", "::1")
+        host = "127.0.0.1" if loopback else lan_ip() if s.web_host in ("0.0.0.0", "::") else s.web_host
+        base, reachable = f"http://{host}:{s.web_port}", not loopback
+    return f"{base}/#token={s.web_token}", reachable
 
 
 def json_ok(data, status=200):

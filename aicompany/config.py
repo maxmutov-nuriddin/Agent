@@ -50,6 +50,7 @@ class Settings:
     web_port: int = 8080
     web_token: str | None = None
     widget_token: str | None = None
+    web_public_url: str | None = None
 
 
 def load_settings(env: dict | None = None, models_path: Path | None = None) -> Settings:
@@ -92,6 +93,7 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
         web_port=int(env.get("WEB_PORT", 8080)),
         web_token=env.get("WEB_TOKEN") or None,
         widget_token=env.get("WIDGET_TOKEN") or None,
+        web_public_url=(env.get("WEB_PUBLIC_URL") or "").rstrip("/") or None,
     )
 
 
