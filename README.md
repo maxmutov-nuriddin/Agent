@@ -58,6 +58,10 @@ Yangi xodim **assistant** shu imkoniyatlarga ega.
 3. Boshlanishda `TG_MODE=read` (faqat o'qish va javob loyihasi). Yuborish uchun `TG_MODE=write`: **har bir xabar** Kartalar/Telegram tugmalarida sizga kimga va qanday matn bilan ketishi ko'rsatilib, tasdig'ingizdan keyingina yuboriladi. Soatiga `TG_MAX_SENDS_PER_HOUR` dan ko'p yuborilmaydi, `TG_ALLOWED` bilan faqat ma'lum kontaktlarga cheklash mumkin.
 4. Asboblar: `tg_chats` (o'qilmaganlar xulosasi bilan), `tg_contacts` (kontaktlardan qidirish), `tg_read`, `tg_send` (yozishmasi yo'q kontaktga ham). Chatdagi xabarlar «ishonchsiz matn» deb belgilanadi: ularda «pul o'tkaz» kabi ko'rsatma bo'lsa bajarilmaydi.
 
+**Agent akkaunti bot o'rnida:** asosiy akkauntingizdan agent akkauntiga yozsangiz, u botdagidek javob beradi (suhbat, vazifa, ovozli xabar, fayl, natija fayllari). Faqat panelda ko'rsatilgan chat ID'lardan (bo'sh bo'lsa `OWNER_TELEGRAM_ID`) kelgan shaxsiy xabarlarga javob beradi; boshqa odamlar va guruhlarga umuman javob bermaydi. Yoqish/o'chirish va ID'lar: Hisob → Telegram akkaunt.
+
+**Ruxsat rejimlari** (Hisob → Telegram akkaunt): «Faqat o'qish», «Tasdiq bilan» (har amal sizdan so'raladi), «Cheklovsiz» (tasdiqsiz, limitsiz). Qo'shimcha asboblar: `tg_create_group` (guruh/kanal), `tg_add_members`, `tg_join`, `tg_leave`, `tg_forward`, `tg_delete_messages`, `tg_send_file`, `tg_mark_read`.
+
 **Xavfsizlik va maxfiylik (muhim):**
 - `data/tg.session` fayli akkauntingizga **to'liq kirish** beradi: git'ga tushmaydi, 600 ruxsat bilan turadi, hech kimga bermang. Chiqarish: Telegram → Sozlamalar → Qurilmalar.
 - Shaxsiy yozishmalar matni AI xizmatiga yuboriladi. **Bepul Gemini kaliti ma'lumotni o'qitishda ishlatishi mumkin**, shuning uchun `PRIVATE_PROVIDERS=anthropic` kabi qilib shaxsiy chat faqat ishonchli provayderga yuborilsin (aks holda hamma ulangan AI'ga ketadi).

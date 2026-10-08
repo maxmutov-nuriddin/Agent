@@ -441,6 +441,7 @@ async def test_telegram_approval_card_has_its_own_kind(web):
 async def test_integrations_overview(web2):
     c, app, provs = web2
     d = (await get(c, "/api/integrations"))[1]
+    assert d["telegram_account"].pop("listen")["active"] is False
     assert d["telegram_account"] == {"configured": False, "keys": False, "pending": False, "proxy": False, "login": {}, "me": "", "mode": "read", "allowed": [],
                                      "private_providers": []}
     assert d["voice"] is True and d["maps"] == "osm" and d["search"] == "duckduckgo" and d["primary"] == "auto"

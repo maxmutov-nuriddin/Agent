@@ -270,7 +270,7 @@ async def tg_read(env, a):
         who = "Siz" if getattr(m, "out", False) else tg.name_of(getattr(m, "sender", None))
         body = (getattr(m, "message", "") or "").strip() or ("[" + ("media" if getattr(m, "media", None) else "bo'sh") + "]")
         when = m.date.strftime("%d.%m %H:%M") if getattr(m, "date", None) else ""
-        lines.append(f"[{when}] {who}: {body[:500]}")
+        lines.append(f"[#{getattr(m, 'id', '?')} {when}] {who}: {body[:500]}")
     return untrusted("\n".join(lines) or "xabar yo'q")
 
 
@@ -331,6 +331,136 @@ async def tg_mark_read(env, a):
     return f"o'qilgan deb belgilandi: {tg.name_of(ent)}"
 
 
+# ---------- guruh, kanal, forward, o'chirish ----------
+async def _tg_act(env, what: str):
+    """Rejimga qarab: o'qish -> taqiq; tasdiq -> egasidan so'raydi; cheklovsiz -> darhol (jurnalga yoziladi)."""
+    tg = _tg(env)
+    access = await tg.access(env.store, env.settings)
+    if access == "read":
+        raise ToolError("Telegramda o'zgartirish o'chirilgan (faqat o'qish). Egasi panelda Hisob -> Telegram akkaunt dan yoqishi kerak")
+    if access == "ask":
+        await confirm(env, what, "telegram", "audit-tg_action",
+                      ("✅ Telegram amaliga ruxsat berildi", "✕ Siz Telegram amalini rad etdingiz", "⏱ Telegram amaliga javob berilmadi"),
+                      "amal")
+    else:
+        await env.store.audit(env.agent, "tg_action", what[:300])
+    return tg, await tg.client()
+
+
+async def _resolve_many(tg, names) -> list:
+    if isinstance(names, str):
+        names = [n for n in re.split(r"[,\n]+", names) if n.strip()]
+    out = []
+    for n in (names or [])[:50]:
+        try:
+            out.append(await tg.resolve(str(n)))
+        except TgError as e:
+            raise _tg_err(e) from e
+    return out
+
+
+def _ids(raw) -> list[int]:
+    vals = raw if isinstance(raw, list) else re.split(r"[,\s]+", str(raw or ""))
+    ids = [int(str(v).lstrip("#")) for v in vals if str(v).lstrip("#").isdigit()]
+    if not ids:
+        raise ToolError("xabar raqamlari (id) kerak: tg_read natijasidagi #123 kabi")
+    return ids[:100]
+
+
+async def _invite_link(client, chat) -> str:
+    from telethon.tl.functions.messages import ExportChatInviteRequest
+    try:
+        return getattr(await client(ExportChatInviteRequest(chat)), "link", "") or ""
+    except Exception:  # noqa: BLE001 — havola olinmasa ham guruh yaratilgan
+        return ""
+
+
+async def tg_create_group(env, a):
+    from telethon.tl.functions.channels import CreateChannelRequest, InviteToChannelRequest
+    title = str(a.get("title", "")).strip()[:128]
+    if not title:
+        raise ToolError("guruh nomi kerak")
+    kind = "kanal" if a.get("channel") else "guruh"
+    members = a.get("members") or []
+    tg, client = await _tg_act(env, f"Telegramda {kind} yaratish: «{title}»" + (f", a'zolar: {', '.join(map(str, members))}" if members else ""))
+    users = await _resolve_many(tg, members)
+    res = await client(CreateChannelRequest(title=title, about=str(a.get("about", ""))[:255],
+                                            megagroup=not a.get("channel"), broadcast=bool(a.get("channel"))))
+    chat = res.chats[0]
+    if users:
+        await client(InviteToChannelRequest(chat, users))
+    link = await _invite_link(client, chat)
+    return f"{kind} yaratildi: {title} (id {chat.id})" + (f", {len(users)} a'zo qo'shildi" if users else "") + (f"\nHavola: {link}" if link else "")
+
+
+async def tg_add_members(env, a):
+    from telethon.tl.functions.channels import InviteToChannelRequest
+    tg, client = await _tg_act(env, f"«{a['chat']}» ga a'zo qo'shish: {a.get('members')}")
+    try:
+        chat = await tg.resolve(a["chat"])
+    except TgError as e:
+        raise _tg_err(e) from e
+    users = await _resolve_many(tg, a.get("members"))
+    if not users:
+        raise ToolError("qo'shiladigan odamlar ro'yxati bo'sh")
+    await client(InviteToChannelRequest(chat, users))
+    return f"{len(users)} kishi qo'shildi: {tg.name_of(chat)}"
+
+
+async def tg_join(env, a):
+    from telethon.tl.functions.channels import JoinChannelRequest
+    from telethon.tl.functions.messages import ImportChatInviteRequest
+    ref = str(a.get("link", "")).strip()
+    if not ref:
+        raise ToolError("guruh/kanal havolasi yoki @username kerak")
+    tg, client = await _tg_act(env, f"Telegram guruh/kanalga qo'shilish: {ref}")
+    m = re.search(r"(?:t\.me/\+|t\.me/joinchat/|tg://join\?invite=)([\w-]+)", ref)
+    if m:  # yopiq taklif havolasi
+        res = await client(ImportChatInviteRequest(m.group(1)))
+        chats = getattr(res, "chats", None) or []
+        return "qo'shildi: " + (tg.name_of(chats[0]) if chats else ref)
+    m = re.search(r"t\.me/([\w]+)", ref)
+    try:
+        ent = await tg.resolve("@" + (m.group(1) if m else ref.lstrip("@")))
+    except TgError as e:
+        raise _tg_err(e) from e
+    await client(JoinChannelRequest(ent))
+    return f"qo'shildi: {tg.name_of(ent)}"
+
+
+async def tg_leave(env, a):
+    tg, client = await _tg_act(env, f"Telegram guruh/kanaldan chiqish: {a['chat']}")
+    try:
+        ent = await tg.resolve(a["chat"])
+    except TgError as e:
+        raise _tg_err(e) from e
+    await client.delete_dialog(ent)
+    return f"chiqildi: {tg.name_of(ent)}"
+
+
+async def tg_forward(env, a):
+    ids = _ids(a.get("message_ids"))
+    tg, client = await _tg_act(env, f"Forward: «{a['from_chat']}» dagi {ids} -> «{a['to_chat']}»")
+    try:
+        src, dst = await tg.resolve(a["from_chat"]), await tg.resolve(a["to_chat"])
+    except TgError as e:
+        raise _tg_err(e) from e
+    await client.forward_messages(dst, ids, src)
+    return f"{len(ids)} ta xabar forward qilindi: {tg.name_of(src)} -> {tg.name_of(dst)}"
+
+
+async def tg_delete_messages(env, a):
+    ids = _ids(a.get("message_ids"))
+    everyone = a.get("for_everyone", True) is not False
+    tg, client = await _tg_act(env, f"O'chirish: «{a['chat']}» dagi {ids}" + (" (hamma uchun)" if everyone else " (faqat o'zimda)"))
+    try:
+        ent = await tg.resolve(a["chat"])
+    except TgError as e:
+        raise _tg_err(e) from e
+    await client.delete_messages(ent, ids, revoke=everyone)
+    return f"{len(ids)} ta xabar o'chirildi: {tg.name_of(ent)}"
+
+
 # ---------- eslatmalar ----------
 async def set_reminder(env, a):
     from . import reminders
@@ -384,4 +514,19 @@ TOOLS.update({t.name: t for t in [
     Tool("tg_send_file", "telegram", "Send a workspace file (document, image, ...) to a Telegram chat. Only in full-access mode.",
          _obj({"chat": {"type": "string"}, "path": {"type": "string"}, "caption": {"type": "string"}}, ["chat", "path"]), tg_send_file, "tg"),
     Tool("tg_mark_read", "telegram", "Mark a Telegram chat as read.", _obj({"chat": {"type": "string"}}, ["chat"]), tg_mark_read, "tg"),
+    Tool("tg_create_group", "telegram", "Create a Telegram group (or a channel with channel=true), optionally adding members "
+         "(names/@usernames from chats or contacts). Returns the invite link.",
+         _obj({"title": {"type": "string"}, "about": {"type": "string"}, "channel": {"type": "boolean"},
+               "members": {"type": "array", "items": {"type": "string"}}}, ["title"]), tg_create_group, "tg"),
+    Tool("tg_add_members", "telegram", "Add people to an existing Telegram group/channel the owner administers.",
+         _obj({"chat": {"type": "string"}, "members": {"type": "array", "items": {"type": "string"}}}, ["chat", "members"]), tg_add_members, "tg"),
+    Tool("tg_join", "telegram", "Join a Telegram group/channel by public @username, t.me link or private invite link.",
+         _obj({"link": {"type": "string"}}, ["link"]), tg_join, "tg"),
+    Tool("tg_leave", "telegram", "Leave a Telegram group/channel (or delete a private chat).", _obj({"chat": {"type": "string"}}, ["chat"]), tg_leave, "tg"),
+    Tool("tg_forward", "telegram", "Forward messages (ids from tg_read, shown as #123) from one chat to another.",
+         _obj({"from_chat": {"type": "string"}, "to_chat": {"type": "string"},
+               "message_ids": {"type": "array", "items": {"type": "integer"}}}, ["from_chat", "to_chat", "message_ids"]), tg_forward, "tg"),
+    Tool("tg_delete_messages", "telegram", "Delete messages (ids from tg_read) in a chat; for_everyone=false deletes only for the owner.",
+         _obj({"chat": {"type": "string"}, "message_ids": {"type": "array", "items": {"type": "integer"}},
+               "for_everyone": {"type": "boolean"}}, ["chat", "message_ids"]), tg_delete_messages, "tg"),
 ]})

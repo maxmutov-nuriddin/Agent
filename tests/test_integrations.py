@@ -371,3 +371,62 @@ async def test_tg_send_file_and_mark_read_only_full(tgenv, tmp_path):
     with pytest.raises(ToolError):
         await run(env, "tg_send_file", chat="@ali_x", path="../tashqari.txt")         # workspace'dan chiqib bo'lmaydi
     assert "o'qilgan" in await run(env, "tg_mark_read", chat="@ali_x") and fake.read == [1]
+
+
+async def test_tg_group_tools_respect_access_and_call_telegram(tgenv):
+    env, fake = tgenv
+    from telethon.tl.functions.channels import CreateChannelRequest, InviteToChannelRequest, JoinChannelRequest
+    from telethon.tl.functions.messages import ExportChatInviteRequest, ImportChatInviteRequest
+    calls, fake.forwarded, fake.deleted, fake.left = [], [], [], []
+
+    async def call(req):
+        calls.append(req)
+        if isinstance(req, CreateChannelRequest):
+            return NS(chats=[FakeEntity(500, req.title)])
+        if isinstance(req, ExportChatInviteRequest):
+            return NS(link="https://t.me/+abc")
+        if isinstance(req, ImportChatInviteRequest):
+            return NS(chats=[FakeEntity(600, "Yopiq guruh")])
+        return NS()
+
+    async def forward_messages(dst, ids, src):
+        fake.forwarded.append((src.id, dst.id, ids))
+
+    async def delete_messages(ent, ids, revoke=True):
+        fake.deleted.append((ent.id, ids, revoke))
+
+    async def delete_dialog(ent):
+        fake.left.append(ent.id)
+    fake.__class__.__call__ = lambda self, req: call(req)
+    fake.forward_messages, fake.delete_messages, fake.delete_dialog = forward_messages, delete_messages, delete_dialog
+
+    env.settings = dataclasses.replace(env.settings, tg_mode="read")
+    with pytest.raises(ToolError, match="faqat o'qish"):
+        await run(env, "tg_create_group", title="Jamoa")
+    await env.store.set_kv("tg_access", "ask")
+    env.approver = AutoApprover(False)
+    with pytest.raises(ToolError, match="rad etdi"):
+        await run(env, "tg_leave", chat="@ali_x")
+    assert fake.left == [] and "chiqish" in env.approver.asked[-1]
+
+    await env.store.set_kv("tg_access", "full")
+    out = await run(env, "tg_create_group", title="Loyiha", about="ish", members=["@ali_x", "Vali Karimov"])
+    assert "guruh yaratildi: Loyiha (id 500), 2 a'zo qo'shildi" in out and "https://t.me/+abc" in out
+    create = next(r for r in calls if isinstance(r, CreateChannelRequest))
+    assert create.megagroup and not create.broadcast
+    assert [u.id for u in next(r for r in calls if isinstance(r, InviteToChannelRequest)).users] == [1, 2]
+    assert "kanal yaratildi" in await run(env, "tg_create_group", title="Yangiliklar", channel=True)
+    assert "Yopiq guruh" in await run(env, "tg_join", link="https://t.me/+XyZ123")
+    assert next(r for r in calls if isinstance(r, ImportChatInviteRequest)).hash == "XyZ123"
+    assert "qo'shildi: Ali" in await run(env, "tg_join", link="https://t.me/ali_x")
+    assert any(isinstance(r, JoinChannelRequest) for r in calls)
+    assert "2 ta xabar forward" in await run(env, "tg_forward", from_chat="@ali_x", to_chat="Vali Karimov", message_ids=[5, "#6"])
+    assert fake.forwarded == [(1, 2, [5, 6])]
+    assert "o'chirildi" in await run(env, "tg_delete_messages", chat="@ali_x", message_ids=[7], for_everyone=False)
+    assert fake.deleted == [(1, [7], False)]
+    with pytest.raises(ToolError, match="xabar raqamlari"):
+        await run(env, "tg_delete_messages", chat="@ali_x", message_ids=[])
+    assert "chiqildi: Ali" in await run(env, "tg_leave", chat="@ali_x")
+    import sqlalchemy as sa
+    n = (await env.store._all(sa.text("select count(*) c from audit_log where action='tg_action'")))[0]["c"]
+    assert n >= 7                                                                   # har amal jurnalda

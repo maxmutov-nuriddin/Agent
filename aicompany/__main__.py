@@ -128,15 +128,21 @@ async def amain():
             from .web import start_web
             await start_web(app)
             print_web_info(app.settings)
-            await reminder_loop(app, [panel_sender(app)])
+            listen = asyncio.create_task(app.listener.supervise())
+            try:
+                await reminder_loop(app, [panel_sender(app)])
+            finally:
+                listen.cancel()
         else:
             from .bot import run_bot
             from .web import start_web
             runner = await start_web(app)
             print_web_info(app.settings)
+            listen = asyncio.create_task(app.listener.supervise())
             try:
                 await run_bot(app, extra_senders=[panel_sender(app)])
             finally:
+                listen.cancel()
                 await runner.cleanup()
     finally:
         await app.store.close()

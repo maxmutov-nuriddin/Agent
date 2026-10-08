@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-u";
+const PANEL_V = "2026.10.08-v";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -358,15 +358,29 @@ async function tgSheet() {
       who.textContent = r.me || "noma'lum";
     }).catch((e) => { who.textContent = "aniqlab bo'lmadi (" + e.message + ")"; });
     const MODES = [["read", "Faqat o'qish", "Chatlarni o'qiydi, qidiradi. Hech narsa yubormaydi."],
-                   ["ask", "Tasdiq bilan", "Yuborishdan oldin har bir xabarni sizdan so'raydi (Kartalar/bot). Soatiga limit va ruxsat ro'yxati amal qiladi."],
-                   ["full", "Cheklovsiz", "Tasdiqsiz, limitsiz yuboradi (xabar, fayl). Hamma amal jurnalga yoziladi."]];
+                   ["ask", "Tasdiq bilan", "Har bir xabar va amalni (guruh yaratish, o'chirish...) avval sizdan so'raydi (Kartalar/bot). Soatiga limit va ruxsat ro'yxati amal qiladi."],
+                   ["full", "Cheklovsiz", "Tasdiqsiz, limitsiz: xabar/fayl yuborish, guruh/kanal yaratish, qo'shilish/chiqish, forward, o'chirish. Hamma amal jurnalga yoziladi."]];
     const setMode = async (m) => {
       if (m === "full" && !confirm("Cheklovsiz rejim: agent so'ralganda xabarlarni sizdan so'ramasdan yuboradi. Chatda kimdir yozgan matn orqali agentni aldab xabar yubortirishi ehtimoli bor. Yoqilsinmi?")) return;
       try { await post("/tg/access", { mode: m }); toast("Rejim: " + MODES.find((x) => x[0] === m)[1]); tgSheet(); refresh(true); } catch (e) { toast(e.message); }
     };
     const seg = h("div", { class: "seg" }, MODES.map(([k, name]) => h("button", { class: t.mode === k ? "on" : "", onclick: () => setMode(k) }, name)));
     const note = MODES.find((x) => x[0] === t.mode) || MODES[0];
+    const L = t.listen || { enabled: false, owners: [], active: false, error: "" };
+    const owners = h("input", { value: (L.owners || []).join(", "), placeholder: "masalan 8207311790", inputmode: "numeric", autocomplete: "off" });
+    const saveL = async (data) => {
+      try { await post("/tg/listen", data); toast("Saqlandi"); setTimeout(tgSheet, 1500); } catch (e) { toast(e.message); }
+    };
+    const lseg = h("div", { class: "seg" },
+      h("button", { class: L.enabled ? "on" : "", onclick: () => saveL({ enabled: true }) }, "Yoqilgan"),
+      h("button", { class: L.enabled ? "" : "on", onclick: () => saveL({ enabled: false }) }, "O'chiq"));
+    const lstate = !L.enabled ? "O'chiq: agent akkaunti hech kimga javob bermaydi." :
+      L.error ? "⚠️ " + L.error : L.active ? "✅ Ishlayapti: shu ID'lardan yozsangiz, bot kabi javob beradi." : "Ishga tushmoqda… (30 soniyagacha)";
     return openSheet(h("h2", {}, "Telegram akkaunt"), h("p", { class: "muted" }, "✅ Ulangan: ", who),
+      h("div", { class: "label" }, "Bot o'rnida javob berish"), lseg, h("p", { class: "hint" }, lstate),
+      h("label", {}, "Faqat shu chat ID'lardan yozilsa javob beradi"), owners,
+      h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: () => saveL({ owners: owners.value }) }, "ID'larni saqlash")),
+      h("p", { class: "hint" }, "Boshqa odam yoki guruh yozsa, umuman javob bermaydi. Bo'sh qoldirsangiz .env dagi OWNER_TELEGRAM_ID (sizning asosiy akkauntingiz) ishlatiladi."),
       h("div", { class: "label" }, "Agentga ruxsat"), seg, h("p", { class: "hint" }, note[2]),
       h("p", { class: "hint" }, "Kirishni to'xtatish: Telegram → Sozlamalar → Qurilmalar."), h("div", { class: "label" }), out);
   }

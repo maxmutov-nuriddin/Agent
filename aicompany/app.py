@@ -24,6 +24,7 @@ class App:
     orch: Orchestrator
     center: ApprovalCenter | None = None
     tg: TgUser | None = None
+    listener: object | None = None  # TgListener: agent akkaunti egasiga bot kabi javob beradi
 
 
 def clean_inbox(workspace: Path, days: int = 7) -> int:
@@ -59,4 +60,7 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     tg.proxy = await store.get_kv("tg_proxy") or tg.proxy
     tg.me = await store.get_kv("tg_me") or ""
     orch = Orchestrator(store, team, settings, settings.max_revisions, approver or center, tg)
-    return App(settings, store, router, team, orch, center, tg)
+    app = App(settings, store, router, team, orch, center, tg)
+    from .tglisten import TgListener
+    app.listener = TgListener(app)
+    return app
