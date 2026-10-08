@@ -413,6 +413,10 @@ class Store:
     async def add_memory(self, text, source="agent"):
         await self._exec(sa.insert(memories).values(text=text.strip()[:1000], source=source, created_at=now()))
 
+    async def owner_prefs(self, limit=12):
+        """Egasining doimiy qoidalari/tuzatishlari (har doim hisobga olinadi)."""
+        return await self._all(sa.select(memories).where(memories.c.source == "owner-pref").order_by(memories.c.id.desc()).limit(limit))
+
     async def recent_memories(self, limit=500):
         return await self._all(sa.select(memories).order_by(memories.c.id.desc()).limit(limit))
 

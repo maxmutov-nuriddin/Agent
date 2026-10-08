@@ -43,13 +43,15 @@ def local_text(due_iso: str, tz: str) -> str:
     return datetime.fromisoformat(due_iso).astimezone(ZoneInfo(tz)).strftime("%d.%m %H:%M")
 
 
-async def create(store, settings, chat_id: int, text: str, when: str) -> dict:
+async def create(store, settings, chat_id: int, text: str, when: str, call: bool = False) -> dict:
     text = (text or "").strip()
     if not text or len(text) > 500:
         raise ValueError("eslatma matni 1-500 belgi bo'lsin")
     due = parse_when(when, settings.report_tz)
     rid = await store.add_reminder(chat_id, text, due.isoformat())
-    return {"id": rid, "text": text, "due_at": due.isoformat(), "local": local_text(due.isoformat(), settings.report_tz)}
+    if call:
+        await store.set_kv(f"rcall:{rid}", "1")  # vaqti kelganda egasiga qo'ng'iroq ham qilinadi
+    return {"id": rid, "text": text, "due_at": due.isoformat(), "local": local_text(due.isoformat(), settings.report_tz), "call": call}
 
 
 async def deliver_due(app, senders) -> int:
@@ -64,6 +66,12 @@ async def deliver_due(app, senders) -> int:
             except Exception:  # noqa: BLE001 — bitta kanal ishlamasa boshqasi yetkazadi
                 log.exception("eslatma yuborilmadi")
         await app.store.mark_reminder(r["id"], "sent" if ok else "failed")
+        if await app.store.get_kv(f"rcall:{r['id']}") and getattr(app.orch, "call_owner", None):
+            try:
+                await app.orch.call_owner(f"Eslatma. {r['text']}")
+            except Exception:  # noqa: BLE001 — qo'ng'iroq bo'lmasa ham matn yuborilgan
+                log.exception("eslatma qo'ng'irog'i")
+            await app.store.delete_kv(f"rcall:{r['id']}")
         n += ok
     return n
 

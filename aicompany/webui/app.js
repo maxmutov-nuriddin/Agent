@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-k";
+const PANEL_V = "2026.10.09-l";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -421,7 +421,9 @@ function drawOverview(d) {
   const ask = h("form", { class: "ov-ask", onsubmit: (e) => {
     e.preventDefault(); const t = input.value.trim(); if (!t) return;
     openChat(false); $("chat-input").value = t; sendChat();
-  } }, input, h("button", { class: "send", type: "submit", "aria-label": "Yuborish" }, svg(IC.send)));
+  } }, input, h("button", { class: "mic mic-btn", type: "button", "aria-label": "Ovozli xabar",
+    onclick: (e) => voiceCapture(e.currentTarget, (text) => { openChat(false); $("chat-input").value = text; sendChat(); }) }, svg(IC.mic)),
+  h("button", { class: "send", type: "submit", "aria-label": "Yuborish" }, svg(IC.send)));
   const mini = (n, l, cls, onclick) => h(onclick ? "button" : "div", { class: "m " + (cls || ""), onclick }, h("b", {}, n), h("span", {}, l));
   const left = h("section", { class: "ov-col" },
     h("div", { class: "card ov-today" },
@@ -454,13 +456,19 @@ function drawOverview(d) {
   const chartBox = h("div", { class: "chart-box" });
   const total = h("b", { class: "big" });
   const paintChart = () => {
-    chartBox.replaceChildren(areaChart(mode === "cost" ? cost14 : done14, { w: 760, h: 230, labels }));
+    const bw = chartBox.clientWidth, bh = chartBox.clientHeight;   // skrolsiz ko'rinishda grafik berilgan joyga sig'adi
+    chartBox.replaceChildren(areaChart(mode === "cost" ? cost14 : done14, { w: bw > 200 ? bw : 760, h: bh > 40 ? bh : 230, labels }));
     total.textContent = mode === "cost" ? usd(sum(cost14)) : sum(done14) + " ta vazifa";
   };
   const seg = h("div", { class: "seg sm" }, [["cost", "Sarf"], ["done", "Vazifalar"]].map(([k, l]) => h("button", { class: mode === k ? "on" : "", onclick: (e) => {
     S.ovMode = mode = k; [...seg.children].forEach((b) => b.classList.toggle("on", b === e.currentTarget)); paintChart();
   } }, l)));
   paintChart();
+  if (window.ResizeObserver) {
+    let last = "";
+    const ro = new ResizeObserver(() => { const k = chartBox.clientWidth + "x" + chartBox.clientHeight; if (k !== last && chartBox.clientWidth > 0) { last = k; paintChart(); } });
+    ro.observe(chartBox);
+  }
   const chips = h("div", { class: "chips" }, h("span", { class: "chip run" }, `${d.counts.running} ishlayapti`),
     h("span", { class: "chip warn" }, `${st.pending} kutmoqda`), h("span", { class: "chip bad" }, `${d.counts.failed} xato`));
   const tgrid = h("div", { class: "tgrid" }, d.tasks.map((t) => {
@@ -473,8 +481,8 @@ function drawOverview(d) {
   const middle = h("section", { class: "ov-col" },
     h("div", { class: "row-b" }, h("p", { class: "kick" }, "Ko'rsatkichlar"), chips),
     kpis,
-    h("div", { class: "card" }, h("div", { class: "row-b" }, h("div", {}, h("p", { class: "kick" }, "Dinamika · 14 kun"), total), seg), chartBox),
-    h("div", { class: "card" },
+    h("div", { class: "card ov-chart" }, h("div", { class: "row-b" }, h("div", {}, h("p", { class: "kick" }, "Dinamika · 14 kun"), total), seg), chartBox),
+    h("div", { class: "card ov-tasks" },
       h("div", { class: "row-b" }, h("div", {}, h("p", { class: "kick" }, "Vazifalar"), h("b", { class: "big" }, `${d.tasks.length} ta so'nggi`)),
         h("div", { class: "acts-i" }, h("button", { class: "linkbtn", onclick: () => go("tasks") }, "Hammasi →"),
           h("button", { class: "btn lime sm", onclick: () => taskSheet() }, "+ Vazifa"))),
@@ -491,7 +499,7 @@ function drawOverview(d) {
       notes.length ? notes.slice(0, 6).map((n) => h("button", { class: "ov-row", onclick: n.open }, h("span", { class: "bul " + n.tone }),
         h("div", { class: "grow" }, h("b", {}, n.title), h("p", { class: "muted sm clamp" }, n.text))))
         : h("p", { class: "muted sm" }, "✓ Hech narsa sizni kutmayapti.")),
-    h("div", { class: "card" }, h("div", { class: "row-b" }, h("p", { class: "kick" }, "Jamoa harakati"), h("button", { class: "linkbtn", onclick: hireSheet }, "+ Yollash")),
+    h("div", { class: "card ov-agents" }, h("div", { class: "row-b" }, h("p", { class: "kick" }, "Jamoa harakati"), h("button", { class: "linkbtn", onclick: hireSheet }, "+ Yollash")),
       [...d.team].sort((a, b) => b.busy - a.busy || b.steps - a.steps).map((a) => h("button", { class: "ov-agent", onclick: () => agentSheet(a) },
         h("i", { class: "av-c" + (a.busy ? " on" : "") }, agentName(a.name)[0].toUpperCase()),
         h("div", { class: "grow" }, h("b", {}, agentName(a.name)), h("p", { class: "muted sm clamp1" }, a.busy ? `vazifa #${a.task_id} ustida` : a.role)),
@@ -1095,8 +1103,9 @@ async function sendChat() {
   } catch (e) { toast(e.message); ta.value = text; }
 }
 let rec = null;
-function micState(on) { const b = $("chat-mic"); b.classList.toggle("rec", on); b.setAttribute("aria-label", on ? "To'xtatish" : "Ovozli xabar"); }
-async function toggleMic() {
+function micState(on) { document.querySelectorAll(".mic-btn").forEach((b) => { b.classList.toggle("rec", on); b.setAttribute("aria-label", on ? "To'xtatish" : "Ovozli xabar"); }); }
+// Ovoz yozadi, serverda matnga aylantiradi va onText(text) ni chaqiradi. Ikkinchi bosish yozuvni to'xtatadi.
+async function voiceCapture(btn, onText) {
   if (rec) { rec.stop(); return; }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) return toast("Mikrofon uchun HTTPS kerak (Tailscale yoki Tunnel)");
   let stream;
@@ -1108,16 +1117,20 @@ async function toggleMic() {
   rec.onstop = async () => {
     stream.getTracks().forEach((t) => t.stop());
     const type = (rec && rec.mimeType) || mime || "audio/webm"; rec = null; micState(false);
-    const btn = $("chat-mic"); btn.disabled = true; toast("Matnga aylantirilmoqda…");
+    btn.disabled = true; toast("Matnga aylantirilmoqda…");
     try {
       const r = await fetch("/api/voice", { method: "POST", headers: { Authorization: "Bearer " + S.token, "Content-Type": type }, body: new Blob(chunks, { type }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || "Xatolik " + r.status);
-      const ta = $("chat-input"); ta.value = (ta.value ? ta.value + " " : "") + d.text; ta.dispatchEvent(new Event("input")); ta.focus();
+      onText(d.text);
     } catch (e) { toast(e.message); } finally { btn.disabled = false; }
   };
   rec.start(); micState(true);
 }
+function toggleMic() {
+  voiceCapture($("chat-mic"), (text) => { const ta = $("chat-input"); ta.value = (ta.value ? ta.value + " " : "") + text; ta.dispatchEvent(new Event("input")); ta.focus(); });
+}
+$("chat-mic").classList.add("mic-btn");
 $("chat-mic").append(svg(IC.mic));
 $("chat-mic").addEventListener("click", toggleMic);
 $("chat-back").addEventListener("click", closeChat);

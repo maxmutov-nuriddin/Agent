@@ -88,6 +88,8 @@ class Orchestrator:
         self.sem = asyncio.Semaphore(getattr(settings, "max_parallel", 2))
         self.running: dict[int, asyncio.Task] = {}
         self._stopping: set[int] = set()
+        self.on_done = None
+        self.call_owner = None   # app.py ulaydi: egasiga qo'ng'iroq qilish (ovozli modul bo'lsa)
 
     async def _check_pause(self):
         if await self.store.get_kv("paused") == "1":
@@ -121,6 +123,16 @@ class Orchestrator:
         "Reply in the language the owner uses (Uzbek, Russian or English).")
 
 
+    EXTRA_FIELDS = (
+        "\n\nOPTIONAL FIELDS (add to the JSON only when they apply):\n"
+        "- \"remember\": a short imperative sentence in the owner's language when the owner states a STANDING preference, rule or "
+        "correction about how you or the team should behave or work (e.g. 'don't bring up old problems unless I ask', "
+        "'this was done wrong, next time do X', 'always answer briefly'). It is saved and applied to all future chats and tasks. "
+        "Briefly confirm it in the reply.\n"
+        "- \"call\": text to SPEAK when the owner asks you to phone/call them right now (e.g. 'menga qo'ng'iroq qil, natijani ayt'). "
+        "You can only call the owner, nobody else; if asked to call someone else, say you cannot.\n"
+        "- inside \"reminder\": \"call\": true when the owner wants the reminder delivered as a phone call ('tel qilib eslat').")
+
     TALK_STYLE = (
         "\n\nCONVERSATION STYLE: the owner may just want to talk (feelings, ideas, life, plans). Then be a warm, "
         "attentive companion: answer what they actually said, in a natural human tone, a few sentences, no lists or "
@@ -153,10 +165,15 @@ class Orchestrator:
         if decision.get("reminder"):
             from . import reminders
             try:
-                r = await reminders.create(self.store, self.settings, chat_id, decision["reminder"]["text"], decision["reminder"]["when"])
-                decision["reply"] = f"⏰ Eslatma qo'yildi: {r['local']} — {r['text']}"
+                r = await reminders.create(self.store, self.settings, chat_id, decision["reminder"]["text"], decision["reminder"]["when"],
+                                           call=bool(decision["reminder"].get("call")) and self.call_owner is not None)
+                decision["reply"] = f"⏰ Eslatma qo'yildi: {r['local']} — {r['text']}" + (" (qo'ng'iroq qilib aytaman)" if r.get("call") else "")
             except ValueError as e:
                 decision["reply"] = f"Eslatmani qo'ya olmadim: {e}. Vaqtni aniqroq yozing (masalan: ertaga 9:00)."
+        if decision.get("call"):
+            ok = bool(self.call_owner) and await self.call_owner(decision["call"])
+            decision["reply"] = (decision["reply"] or "Qo'ng'iroq qilyapman.") if ok else \
+                "Qo'ng'iroq qila olmadim: qo'ng'iroq moduli yoqilmagan yoki akkaunt ulanmagan (Hisob → Telegram akkaunt → Ovozli qo'ng'iroq)."
         if decision["mode"] == "chat":
             await self.store.add_chat(chat_id, "ceo", decision["reply"])
             await notify(decision["reply"])
@@ -237,21 +254,27 @@ class Orchestrator:
         hist = "\n".join(f"{'Owner' if h['role'] == 'owner' else 'CEO'}: {clip(h['text'], 600)}" for h in history)
         mems = await self.store.search_memories(text, 5)
         memo = "\n".join(f"- {m['text']}" for m in mems)
+        prefs = "\n".join(f"- {m['text']}" for m in await self.store.owner_prefs())
         roster = await self.team.roster()
         from datetime import datetime as _dt
         from zoneinfo import ZoneInfo
         now_local = _dt.now(ZoneInfo(self.settings.report_tz)).strftime("%Y-%m-%d %H:%M (%A)")
         prompt = (f"# Now\n{now_local}, {self.settings.report_tz}\n\n# Team\n{roster}\n\n" + (f"# Memory\n{memo}\n\n" if memo else "") +
+                  (f"# Owner's standing preferences (ALWAYS follow)\n{prefs}\n\n" if prefs else "") +
                   (f"# Recent conversation\n{hist}\n\n" if hist else "") + f"# Latest owner message\n{text}")
-        res = await self.team.router.call("cheap", (self.FRONT_DESK if allow_tasks else self.CHAT_ONLY) + self.TALK_STYLE,
+        res = await self.team.router.call("cheap", (self.FRONT_DESK if allow_tasks else self.CHAT_ONLY) + self.EXTRA_FIELDS + self.TALK_STYLE,
                                           [{"role": "user", "content": prompt}], agent="ceo-chat")
         try:
             d = extract_json(res.text)
             reply = str(d.get("reply", "")).strip()
             based_on = await self._valid_task_id(d.get("based_on"))
+            await self._save_pref(d.get("remember"))
+            say = str(d.get("call") or "").strip() if isinstance(d.get("call"), (str, bool)) and d.get("call") else ""
+            if say and say.lower() not in ("true", "1"):
+                return {"mode": "chat", "reply": reply, "task": "", "call": say}
             rem = d.get("reminder")
             if isinstance(rem, dict) and rem.get("when") and rem.get("text"):
-                return {"mode": "chat", "reply": reply, "task": "", "reminder": {"when": str(rem["when"]), "text": str(rem["text"])}}
+                return {"mode": "chat", "reply": reply, "task": "", "reminder": {"when": str(rem["when"]), "text": str(rem["text"]), "call": bool(rem.get("call"))}}
             if allow_tasks and d.get("mode") == "task":
                 return {"mode": "task", "reply": reply, "task": str(d.get("task", "")).strip() or text, "based_on": based_on}
             if not allow_tasks:  # faqat suhbat: ish so'ralgan bo'lsa taklif sifatida qaytaramiz
@@ -263,6 +286,15 @@ class Orchestrator:
         except (ValueError, TypeError):
             pass
         return {"mode": "chat", "reply": res.text.strip() or "Tushunmadim, qaytadan yozing.", "task": ""}
+
+    async def _save_pref(self, value):
+        """Egasining doimiy qoidasi yoki tuzatishi: xotiraga yoziladi va keyingi barcha suhbat/vazifalarda hisobga olinadi."""
+        text = " ".join(str(value or "").split())[:300]
+        if len(text) < 6 or text.lower() in ("none", "null", "false"):
+            return
+        if any(m["text"].strip().lower() == text.lower() for m in await self.store.owner_prefs(50)):
+            return
+        await self.store.add_memory(text, source="owner-pref")
 
     async def _valid_task_id(self, value) -> int | None:
         try:
@@ -473,6 +505,9 @@ class Orchestrator:
         roster = await self.team.roster()
         mems = await self.store.search_memories(request, 5)
         memo = ("# Relevant memory about the owner/business\n" + "\n".join(f"- {m['text']}" for m in mems) + "\n\n") if mems else ""
+        prefs = await self.store.owner_prefs()
+        if prefs:
+            memo = "# Owner's standing preferences (ALWAYS follow)\n" + "\n".join(f"- {m['text']}" for m in prefs) + "\n\n" + memo
         prompt = (f"# Team\n{roster}\n\n{memo}# Request\n{request}\n\n"
                   "Plan the work. Use at most 6 steps; steps without dependencies run in parallel. "
                   "Specialists can write files, search the web and (with the owner's approval) run commands. "

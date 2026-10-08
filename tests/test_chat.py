@@ -189,3 +189,63 @@ async def test_small_talk_hides_old_task_summaries_and_talk_only_mode(make_app):
     await app.store.set_kv("talk_only", "1")
     await app.orch.handle("salom", 5)
     assert "NEVER start or claim to do work" in seen[-1][0]
+
+
+async def test_owner_preferences_are_remembered_and_applied(make_app):
+    seen = []
+    base = scripted_company()
+    state = {"n": 0}
+
+    def handler(system, user, model):
+        if "front desk" in system:
+            seen.append(user)
+            state["n"] += 1
+            if state["n"] == 1:
+                return json.dumps({"mode": "chat", "reply": "Xo'p, so'ramaguningizcha aytmayman.",
+                                   "task": "", "remember": "Eski muammolarni so'ramagunimcha eslatma"})
+            return json.dumps({"mode": "chat", "reply": "ok", "task": ""})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID="1")
+    await app.orch.handle("eski muammolarni so'ramagunimcha aytma", 5)
+    prefs = await app.store.owner_prefs()
+    assert [p["text"] for p in prefs] == ["Eski muammolarni so'ramagunimcha eslatma"]
+    await app.orch.handle("salom", 5)
+    assert "standing preferences" in seen[-1] and "so'ramagunimcha" in seen[-1]
+    await app.orch._save_pref("Eski muammolarni so'ramagunimcha eslatma")        # takror yozilmaydi
+    assert len(await app.store.owner_prefs()) == 1
+
+
+async def test_call_now_and_phone_reminder(make_app):
+    base = scripted_company()
+    calls = []
+
+    def handler(system, user, model):
+        if "front desk" in system:
+            if "qo'ng'iroq qil" in user.split("# Latest owner message\n")[-1]:
+                return json.dumps({"mode": "chat", "reply": "Qo'ng'iroq qilaman", "task": "", "call": "Vazifa tayyor"})
+            return json.dumps({"mode": "chat", "reply": "", "task": "",
+                               "reminder": {"when": "+30m", "text": "dori ich", "call": True}})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID="1")
+
+    async def fake_call(text, **kw):
+        calls.append(text)
+        return True
+    app.orch.call_owner = fake_call
+    res = await app.orch.handle("menga qo'ng'iroq qil", 5)
+    assert calls == ["Vazifa tayyor"] and res["kind"] == "chat"
+    res = await app.orch.handle("30 daqiqadan keyin tel qilib eslat", 5)
+    assert "qo'ng'iroq" in res["reply"]
+    rid = (await app.store.list_reminders())[0]["id"]
+    assert await app.store.get_kv(f"rcall:{rid}") == "1"
+    from aicompany.reminders import deliver_due
+    async with app.store.engine.begin() as c:
+        import sqlalchemy as sa
+        from aicompany.db import reminders as rt
+        await c.execute(sa.update(rt).values(due_at="2000-01-01T00:00:00+00:00"))
+    sent = []
+
+    async def send(t):
+        sent.append(t)
+    await deliver_due(app, [send])
+    assert sent and calls[-1] == "Eslatma. dori ich"
