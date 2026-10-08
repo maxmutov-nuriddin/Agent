@@ -79,3 +79,13 @@ async def test_remote_db_survives_restart_without_disk(tmp_path):
     await app2.tg.logout()
     assert await app2.store.get_kv("tg_session_sealed") is None
     await app2.store.close()
+
+
+async def test_supabase_direct_connection_gives_clear_message(monkeypatch):
+    store = Store("postgresql://postgres:p@db.abcdefgh.supabase.co:5432/postgres")
+
+    async def boom():
+        raise OSError(101, "Network is unreachable")
+    monkeypatch.setattr(store, "_init", boom)
+    with pytest.raises(SystemExit, match="Session pooler"):
+        await store.init()

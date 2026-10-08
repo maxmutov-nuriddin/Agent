@@ -165,6 +165,16 @@ class Store:
                 cur.close()
 
     async def init(self):
+        try:
+            await self._init()
+        except OSError as e:
+            host = self.engine.url.host or ""
+            if re.fullmatch(r"db\.[a-z0-9]+\.supabase\.co", host):
+                raise SystemExit("DATABASE_URL: Supabase 'Direct connection' (db....supabase.co) faqat IPv6, Render ulana olmaydi. "
+                                 "Supabase -> Connect -> Session pooler satrini oling (...pooler.supabase.com:5432).") from e
+            raise SystemExit(f"Bazaga ulanib bo'lmadi ({host}): {e}. DATABASE_URL ni tekshiring.") from e
+
+    async def _init(self):
         async with self.engine.begin() as c:
             await c.run_sync(md.create_all)
             await c.run_sync(self._add_missing_columns)
