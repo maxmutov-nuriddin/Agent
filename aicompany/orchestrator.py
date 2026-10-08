@@ -89,6 +89,7 @@ class Orchestrator:
         self.running: dict[int, asyncio.Task] = {}
         self._stopping: set[int] = set()
         self.on_done = None
+        self._summarizing: set[int] = set()
         self.call_owner = None   # app.py ulaydi: egasiga qo'ng'iroq qilish (ovozli modul bo'lsa)
 
     async def _check_pause(self):
@@ -159,6 +160,7 @@ class Orchestrator:
         """Oddiy xabarni qabul qiladi. allow_tasks=True: suhbat yoki vazifa ekanini o'zi aniqlaydi (Telegram).
         allow_tasks=False: faqat suhbat; ish so'ralsa vazifa taklif qiladi (veb-chat)."""
         await self.store.add_chat(chat_id, "owner", text)
+        asyncio.create_task(self._maybe_summarize(chat_id))   # fonda: javobni kechiktirmaydi
         decision = {"mode": "task", "task": text, "reply": ""}
         if not attachments:  # fayl yuborilgan bo'lsa, bu aniq vazifa
             decision = await self._front_desk(text, chat_id, allow_tasks)
@@ -247,7 +249,8 @@ class Orchestrator:
     async def _front_desk(self, text: str, chat_id: int, allow_tasks: bool = True) -> dict:
         if allow_tasks and await self.store.get_kv("talk_only") == "1":  # «Faqat suhbat» rejimi: ish boshlamaydi, /task bilan beriladi
             allow_tasks = False
-        history = [h for h in await self.store.recent_chat(chat_id, 40) if h["role"] in ("owner", "ceo")][-9:-1]
+        all_hist = [h for h in await self.store.recent_chat(chat_id, 60) if h["role"] in ("owner", "ceo")]
+        history = all_hist[-(self.CHAT_WINDOW + 1):-1]
         if not TASK_WORDS.search(text):  # oddiy gapda eski vazifa xulosalari (xato, qayta ishga tushish) suhbatni bosib ketmasin
             history = [h for h in history if not (h["role"] == "ceo" and (h["text"] or "").startswith("[Vazifa #"))]
         # oxirgisi hozirgi xabarning o'zi
@@ -255,12 +258,18 @@ class Orchestrator:
         mems = await self.store.search_memories(text, 5)
         memo = "\n".join(f"- {m['text']}" for m in mems)
         prefs = "\n".join(f"- {m['text']}" for m in await self.store.owner_prefs())
+        summary = await self._chat_summary(chat_id)
+        window_start = history[0]["id"] if history else (all_hist[-1]["id"] if all_hist else 0)
+        older = await self.store.search_chat(chat_id, text, window_start)
+        recall = "\n".join(f"[{(h['created_at'] or '')[:10]}] {'Owner' if h['role'] == 'owner' else 'CEO'}: {clip(h['text'], 300)}" for h in older)
         roster = await self.team.roster()
         from datetime import datetime as _dt
         from zoneinfo import ZoneInfo
         now_local = _dt.now(ZoneInfo(self.settings.report_tz)).strftime("%Y-%m-%d %H:%M (%A)")
         prompt = (f"# Now\n{now_local}, {self.settings.report_tz}\n\n# Team\n{roster}\n\n" + (f"# Memory\n{memo}\n\n" if memo else "") +
                   (f"# Owner's standing preferences (ALWAYS follow)\n{prefs}\n\n" if prefs else "") +
+                  (f"# Summary of the earlier conversation (background)\n{summary}\n\n" if summary else "") +
+                  (f"# Possibly relevant older messages\n{recall}\n\n" if recall else "") +
                   (f"# Recent conversation\n{hist}\n\n" if hist else "") + f"# Latest owner message\n{text}")
         res = await self.team.router.call("cheap", (self.FRONT_DESK if allow_tasks else self.CHAT_ONLY) + self.EXTRA_FIELDS + self.TALK_STYLE,
                                           [{"role": "user", "content": prompt}], agent="ceo-chat")
@@ -286,6 +295,49 @@ class Orchestrator:
         except (ValueError, TypeError):
             pass
         return {"mode": "chat", "reply": res.text.strip() or "Tushunmadim, qaytadan yozing.", "task": ""}
+
+    CHAT_WINDOW = 16          # oxirgi nechta xabar to'liq ko'rsatiladi
+    SUMMARY_EVERY = 10        # shuncha eski xabar to'planganda xulosa yangilanadi
+
+    async def _chat_summary(self, chat_id) -> str:
+        try:
+            return str(json.loads(await self.store.get_kv(f"chat_sum:{chat_id}") or "{}").get("text", ""))
+        except ValueError:
+            return ""
+
+    async def _maybe_summarize(self, chat_id):
+        """Oynadan chiqib ketgan eski xabarlar xulosaga qo'shiladi (arzon modelda, kamdan-kam)."""
+        if chat_id in self._summarizing:
+            return
+        self._summarizing.add(chat_id)
+        try:
+            rows = [h for h in await self.store.recent_chat(chat_id, 400) if h["role"] in ("owner", "ceo")]
+            if len(rows) <= self.CHAT_WINDOW + self.SUMMARY_EVERY:
+                return
+            edge = rows[-(self.CHAT_WINDOW + 1)]["id"]          # shundan eskilari oynadan chiqib ketgan
+            try:
+                state = json.loads(await self.store.get_kv(f"chat_sum:{chat_id}") or "{}")
+            except ValueError:
+                state = {}
+            new = await self.store.chat_between(chat_id, int(state.get("upto", 0)), edge)
+            if len(new) < self.SUMMARY_EVERY:
+                return
+            convo = "\n".join(f"{'Owner' if h['role'] == 'owner' else 'CEO'}: {clip(h['text'], 400)}" for h in new)
+            res = await self.team.router.call("cheap", (
+                "You maintain a running summary of a long chat between a business owner and the CEO of their AI company. "
+                "Merge the new messages into the summary. Keep: decisions, facts about the owner, plans, preferences, open "
+                "questions, names, numbers, dates. Drop greetings and small talk. Max 180 words, plain text, in the owner's language."),
+                [{"role": "user", "content": f"# Current summary\n{state.get('text') or '(none)'}\n\n# New messages\n{convo}"}],
+                agent="ceo-summary")
+            text = res.text.strip()
+            if text:
+                await self.store.set_kv(f"chat_sum:{chat_id}", json.dumps({"upto": new[-1]["id"], "text": text[:1500]}, ensure_ascii=False))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — xulosa bo'lmasa ham suhbat ishlayveradi
+            pass
+        finally:
+            self._summarizing.discard(chat_id)
 
     async def _save_pref(self, value):
         """Egasining doimiy qoidasi yoki tuzatishi: xotiraga yoziladi va keyingi barcha suhbat/vazifalarda hisobga olinadi."""

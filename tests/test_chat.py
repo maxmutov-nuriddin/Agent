@@ -249,3 +249,35 @@ async def test_call_now_and_phone_reminder(make_app):
         sent.append(t)
     await deliver_due(app, [send])
     assert sent and calls[-1] == "Eslatma. dori ich"
+
+
+async def test_older_messages_are_recalled_and_long_chats_summarized(make_app):
+    seen = []
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "running summary" in system:
+            seen.append(("sum", user))
+            return "Egasi kafe ochmoqchi; byudjet 5 ming dollar."
+        if "front desk" in system:
+            seen.append(("fd", user))
+            return json.dumps({"mode": "chat", "reply": "ok", "task": ""})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID="1")
+    st = app.store
+    await st.add_chat(7, "owner", "Mening g'oyam: Toshkentda kofe yetkazib berish xizmati ochish")
+    await st.add_chat(7, "ceo", "Yaxshi g'oya, bozorni o'rganamiz")
+    for i in range(30):                                   # uzun suhbat: g'oya oynadan chiqib ketadi
+        await st.add_chat(7, "owner" if i % 2 == 0 else "ceo", f"gap {i}")
+    await app.orch.handle("o'tgan aytgan kofe yetkazib berish g'oyam nima edi", 7)
+    import asyncio
+    await asyncio.sleep(0.3)
+    fd = [u for k, u in seen if k == "fd"][-1]
+    assert "Possibly relevant older messages" in fd and "kofe yetkazib berish xizmati" in fd
+    assert fd.count("gap ") <= app.orch.CHAT_WINDOW        # oyna 16 ta
+    sums = [u for k, u in seen if k == "sum"]
+    assert sums and "kofe" in sums[0]
+    await app.orch.handle("salom", 7)
+    assert "Summary of the earlier conversation" in [u for k, u in seen if k == "fd"][-1]
+    await st.clear_chat(7)
+    assert await app.orch._chat_summary(7) == ""

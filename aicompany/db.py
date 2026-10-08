@@ -441,6 +441,29 @@ class Store:
 
     async def clear_chat(self, chat_id):
         await self._exec(sa.delete(chat_log).where(chat_log.c.chat_id == chat_id))
+        await self.delete_kv(f"chat_sum:{chat_id}")
+
+    @staticmethod
+    def _stems(text: str) -> set[str]:
+        """O'zbekcha qo'shimchalarga chidamli: so'zning dastlabki 5 harfi."""
+        return {w[:5] for w in re.findall(r"\w{3,}", (text or "").lower())}
+
+    async def search_chat(self, chat_id, query, before_id, limit=4, scan=1500):
+        """Eski suhbatdan (hozirgi oynadan oldingi) so'rovga mos xabarlarni topadi."""
+        words = self._stems(query)
+        if not words:
+            return []
+        rows = await self._all(sa.select(chat_log).where(chat_log.c.chat_id == chat_id, chat_log.c.id < before_id,
+                                                         chat_log.c.role.in_(("owner", "ceo")))
+                               .order_by(chat_log.c.id.desc()).limit(scan))
+        scored = [(len(words & self._stems(r["text"])), r["id"], r) for r in rows]
+        scored = [x for x in scored if x[0] >= (2 if len(words) > 2 else 1)]
+        scored.sort(key=lambda x: (-x[0], -x[1]))
+        return sorted((x[2] for x in scored[:limit]), key=lambda r: r["id"])
+
+    async def chat_between(self, chat_id, after_id, upto_id, limit=60):
+        return await self._all(sa.select(chat_log).where(chat_log.c.chat_id == chat_id, chat_log.c.id > after_id, chat_log.c.id <= upto_id,
+                                                         chat_log.c.role.in_(("owner", "ceo"))).order_by(chat_log.c.id).limit(limit))
 
     async def delete_memory(self, memory_id) -> bool:
         res = await self._exec(sa.delete(memories).where(memories.c.id == memory_id))
