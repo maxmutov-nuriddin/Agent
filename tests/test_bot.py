@@ -247,3 +247,24 @@ async def test_bot_task_summary_uses_uzbek_status(make_app, monkeypatch):
             break
     assert any(t and t.startswith("🏁 Vazifa #1 — ✅ tayyor") for t in sent)
     await bot.session.close()
+
+
+async def test_reminders_command_lists_and_cancels(make_app, monkeypatch):
+    sent = []
+
+    async def fake_call(self, method, request_timeout=None):
+        sent.append(getattr(method, "text", None))
+        return True
+    monkeypatch.setattr(Bot, "__call__", fake_call)
+    from aicompany import reminders
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID=str(OWNER))
+    bot = Bot("123456:ABC")
+    dp = make_dispatcher(app, bot)
+    await dp.feed_update(bot, update(OWNER, "/reminders"))
+    assert "Eslatma yo'q" in sent[-1]
+    await reminders.create(app.store, app.settings, OWNER, "Dori ich", "1 soat")
+    await dp.feed_update(bot, update(OWNER, "/reminders"))
+    assert "#1" in sent[-1] and "Dori ich" in sent[-1]
+    await dp.feed_update(bot, update(OWNER, "/reminders cancel 1"))
+    assert "Bekor" in sent[-1] and await app.store.list_reminders() == []
+    await bot.session.close()

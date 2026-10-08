@@ -178,6 +178,18 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
                        f"Ruxsat etilgan kontaktlar: {', '.join(s.tg_allowed) or 'cheklanmagan (har xabar tasdiqlanadi)'}\n"
                        f"Maxfiy yozishmalar faqat: {', '.join(s.private_providers) or 'barcha AI provayderlarga yuborilishi mumkin'}")
 
+    @dp.message(Command("reminders", "eslatma"))
+    async def _reminders(m: Message, command: CommandObject):
+        from .reminders import local_text
+        args = (command.args or "").split()
+        if len(args) == 2 and args[0] in ("cancel", "bekor") and args[1].isdigit():
+            ok = await app.store.cancel_reminder(int(args[1]))
+            return await m.answer("✅ Bekor qilindi" if ok else "Bunday kutilayotgan eslatma yo'q")
+        rows = await app.store.list_reminders()
+        text = "\n".join(f"#{r['id']} {local_text(r['due_at'], app.settings.report_tz)} — {r['text']}" for r in rows)
+        await m.answer(("⏰ Eslatmalar:\n" + text + "\n\nBekor qilish: /reminders cancel <id>") if rows
+                       else "Eslatma yo'q. Qo'yish uchun oddiy yozing: «ertaga 9:00 da ... eslat»")
+
     @dp.message(Command("stop"))
     async def _stop(m: Message, command: CommandObject):
         try:
@@ -303,7 +315,7 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
     return dp
 
 
-async def run_bot(app: App):
+async def run_bot(app: App, extra_senders=()):
     s = app.settings
     if not s.telegram_token or not s.owner_id:
         raise SystemExit("TELEGRAM_BOT_TOKEN va OWNER_TELEGRAM_ID .env da bo'lishi kerak")
@@ -312,8 +324,11 @@ async def run_bot(app: App):
 
     async def send_owner(text):
         await bot.send_message(s.owner_id, text)
+    from .reminders import reminder_loop
     report = asyncio.create_task(daily_report_loop(app, send_owner))
+    remind = asyncio.create_task(reminder_loop(app, [send_owner, *extra_senders]))
     try:
         await dp.start_polling(bot)
     finally:
         report.cancel()
+        remind.cancel()

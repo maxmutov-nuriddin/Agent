@@ -239,7 +239,7 @@ TOOLS: dict[str, Tool] = {t.name: t for t in [
          "Run a shell command inside the task workspace. The owner must approve EACH command, so use it sparingly.",
          _obj({"command": {"type": "string"}}, ["command"]), run_command),
 ]}
-GROUPS = ("files", "web", "memory", "shell", "maps", "telegram")
+GROUPS = ("files", "web", "memory", "shell", "maps", "telegram", "time")
 
 
 def tools_for(groups: str, env: "ToolEnv | None" = None) -> list[Tool]:

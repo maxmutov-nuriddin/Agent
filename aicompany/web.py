@@ -497,6 +497,25 @@ def make_web_app(app: App) -> web.Application:
             out.append(files[0])
         return out
 
+    async def h_reminders(request):
+        from .reminders import local_text
+        rows = await app.store.list_reminders()
+        return json_ok([{"id": r["id"], "text": r["text"], "due_at": r["due_at"], "local": local_text(r["due_at"], s.report_tz)} for r in rows])
+
+    async def h_reminder_add(request):
+        from . import reminders
+        d = await body(request)
+        try:
+            r = await reminders.create(app.store, s, chat_id, str(d.get("text", "")), str(d.get("when", "")))
+        except ValueError as e:
+            raise web.HTTPBadRequest(reason=str(e))
+        return json_ok(r)
+
+    async def h_reminder_cancel(request):
+        if not await app.store.cancel_reminder(int(request.match_info["id"])):
+            raise web.HTTPNotFound(reason="kutilayotgan eslatma topilmadi")
+        return json_ok({"ok": True})
+
     async def h_pause(request):
         await app.store.set_kv("paused", "1")
         return json_ok({"paused": True})
@@ -540,7 +559,9 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
-        web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload), web.get("/api/spend", h_agent_spend),
+        web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),
+        web.get("/api/reminders", h_reminders), web.post("/api/reminders", h_reminder_add),
+        web.delete(r"/api/reminders/{id:\d+}", h_reminder_cancel), web.get("/api/spend", h_agent_spend),
         web.get("/api/widget", h_widget),
     ])
     return a

@@ -97,6 +97,8 @@ class Orchestrator:
         "If a sensible default exists, do the task instead of asking. Never claim work is done in chat mode. "
         "If the owner wants to change, fix or continue the result of an earlier task (lines like '[Vazifa #N ...]'), "
         "add \"based_on\": N so the team starts from that task's files. "
+        "If the owner asks to be reminded of something at a time, use mode \"chat\" and add "
+        "\"reminder\": {\"when\": \"YYYY-MM-DD HH:MM\" (owner's local time, see '# Now') or a delay like \"30 daq\", \"text\": \"...\"}. "
         "Reply in the language the owner uses (Uzbek, Russian or English).")
 
     CHAT_ONLY = (
@@ -108,7 +110,9 @@ class Orchestrator:
         "research, build, analyze...), set \"proposed_task\" to a COMPLETE self-contained description (merging earlier "
         "messages) and make the reply a short offer such as 'Buni vazifa qilib topshiraymi?'; the app shows a "
         "'Submit as task' button. Otherwise proposed_task is an empty string. If the work changes or continues an earlier "
-        "task's result (lines like '[Vazifa #N ...]'), also add \"based_on\": N.")
+        "task's result (lines like '[Vazifa #N ...]'), also add \"based_on\": N. Reminders are allowed from chat: if the owner asks "
+        "to be reminded at a time, add \"reminder\": {\"when\": \"YYYY-MM-DD HH:MM\" (local time, see '# Now') or a delay like "
+        "\"30 daq\", \"text\": \"...\"}.")
 
     async def handle(self, text: str, chat_id: int = 0, notify: Notify = _noop,
                      attachments: list[Path] | None = None, allow_tasks: bool = True) -> dict:
@@ -118,6 +122,13 @@ class Orchestrator:
         decision = {"mode": "task", "task": text, "reply": ""}
         if not attachments:  # fayl yuborilgan bo'lsa, bu aniq vazifa
             decision = await self._front_desk(text, chat_id, allow_tasks)
+        if decision.get("reminder"):
+            from . import reminders
+            try:
+                r = await reminders.create(self.store, self.settings, chat_id, decision["reminder"]["text"], decision["reminder"]["when"])
+                decision["reply"] = f"⏰ Eslatma qo'yildi: {r['local']} — {r['text']}"
+            except ValueError as e:
+                decision["reply"] = f"Eslatmani qo'ya olmadim: {e}. Vaqtni aniqroq yozing (masalan: ertaga 9:00)."
         if decision["mode"] == "chat":
             await self.store.add_chat(chat_id, "ceo", decision["reply"])
             await notify(decision["reply"])
@@ -158,7 +169,10 @@ class Orchestrator:
         mems = await self.store.search_memories(text, 5)
         memo = "\n".join(f"- {m['text']}" for m in mems)
         roster = await self.team.roster()
-        prompt = (f"# Team\n{roster}\n\n" + (f"# Memory\n{memo}\n\n" if memo else "") +
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+        now_local = _dt.now(ZoneInfo(self.settings.report_tz)).strftime("%Y-%m-%d %H:%M (%A)")
+        prompt = (f"# Now\n{now_local}, {self.settings.report_tz}\n\n# Team\n{roster}\n\n" + (f"# Memory\n{memo}\n\n" if memo else "") +
                   (f"# Recent conversation\n{hist}\n\n" if hist else "") + f"# Latest owner message\n{text}")
         res = await self.team.router.call("cheap", self.FRONT_DESK if allow_tasks else self.CHAT_ONLY,
                                           [{"role": "user", "content": prompt}], agent="ceo-chat")
@@ -166,6 +180,9 @@ class Orchestrator:
             d = extract_json(res.text)
             reply = str(d.get("reply", "")).strip()
             based_on = await self._valid_task_id(d.get("based_on"))
+            rem = d.get("reminder")
+            if isinstance(rem, dict) and rem.get("when") and rem.get("text"):
+                return {"mode": "chat", "reply": reply, "task": "", "reminder": {"when": str(rem["when"]), "text": str(rem["text"])}}
             if allow_tasks and d.get("mode") == "task":
                 return {"mode": "task", "reply": reply, "task": str(d.get("task", "")).strip() or text, "based_on": based_on}
             if not allow_tasks:  # faqat suhbat: ish so'ralgan bo'lsa taklif sifatida qaytaramiz

@@ -97,6 +97,16 @@ chat_log = sa.Table(
     sa.Column("text", sa.Text),
     sa.Column("created_at", sa.String),
 )
+reminders = sa.Table(
+    "reminders", md,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("chat_id", sa.Integer),
+    sa.Column("text", sa.Text, nullable=False),
+    sa.Column("due_at", sa.String, index=True),   # UTC ISO
+    sa.Column("status", sa.String, server_default="pending"),  # pending | sent | cancelled | failed
+    sa.Column("created_at", sa.String),
+    sa.Column("sent_at", sa.String),
+)
 audit_log = sa.Table(
     "audit_log", md,
     sa.Column("id", sa.Integer, primary_key=True),
@@ -194,6 +204,9 @@ class Store:
             await c.execute(sa.insert(agents).values(
                 name=name, role=role, system_prompt=system_prompt, tier=tier,
                 status="active", created_by=created_by, created_at=now(), tools=tools))
+
+    async def set_agent_tools(self, name, tools):
+        await self._exec(sa.update(agents).where(agents.c.name == name, agents.c.status == "active").values(tools=tools))
 
     async def fire_agent(self, name) -> bool:
         res = await self._exec(sa.update(agents).where(agents.c.name == name, agents.c.status == "active")
@@ -337,6 +350,27 @@ class Store:
 
     async def recent_audit(self, limit=60):
         return await self._all(sa.select(audit_log).order_by(audit_log.c.id.desc()).limit(limit))
+
+    # eslatmalar
+    async def add_reminder(self, chat_id, text, due_iso) -> int:
+        res = await self._exec(sa.insert(reminders).values(chat_id=chat_id, text=text, due_at=due_iso, status="pending", created_at=now()))
+        return res.inserted_primary_key[0]
+
+    async def due_reminders(self, now_iso):
+        return await self._all(sa.select(reminders).where(reminders.c.status == "pending", reminders.c.due_at <= now_iso)
+                               .order_by(reminders.c.due_at))
+
+    async def mark_reminder(self, rid, status):
+        await self._exec(sa.update(reminders).where(reminders.c.id == rid).values(status=status, sent_at=now()))
+
+    async def list_reminders(self, include_done=False, limit=50):
+        q = sa.select(reminders).order_by(reminders.c.due_at).limit(limit)
+        return await self._all(q if include_done else q.where(reminders.c.status == "pending"))
+
+    async def cancel_reminder(self, rid) -> bool:
+        res = await self._exec(sa.update(reminders).where(reminders.c.id == rid, reminders.c.status == "pending")
+                               .values(status="cancelled", sent_at=now()))
+        return res.rowcount > 0
 
     # approvals
     async def create_approval(self, task_id, agent, description, kind="command") -> int:

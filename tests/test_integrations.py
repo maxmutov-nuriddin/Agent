@@ -301,4 +301,4 @@ def test_settings_parse_telegram_and_maps_options():
 async def test_assistant_agent_is_seeded_with_the_new_tool_groups(make_app):
     app, _ = await make_app(scripted_company())
     a = await app.store.get_agent("assistant")
-    assert a and set(a["tools"].split(",")) == {"maps", "telegram", "memory", "web"}
+    assert a and set(a["tools"].split(",")) == {"maps", "telegram", "memory", "web", "time"}

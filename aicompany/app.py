@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import shutil
+import time
 from dataclasses import dataclass
+from pathlib import Path
 
 from .approvals import ApprovalCenter
 from .config import Settings, load_settings
@@ -23,6 +26,21 @@ class App:
     tg: TgUser | None = None
 
 
+def clean_inbox(workspace: Path, days: int = 7) -> int:
+    """Eski yuklamalarni (vazifaga allaqachon nusxalangan) o'chiradi: disk to'lib ketmasin."""
+    inbox, cutoff, n = workspace / "inbox", time.time() - days * 86400, 0
+    if not inbox.is_dir():
+        return 0
+    for p in inbox.iterdir():
+        try:
+            if p.stat().st_mtime < cutoff:
+                shutil.rmtree(p) if p.is_dir() else p.unlink()
+                n += 1
+        except OSError:
+            pass
+    return n
+
+
 async def build_app(settings: Settings | None = None, providers=None, approver=None) -> App:
     settings = settings or load_settings()
     store = Store(settings.database_url)
@@ -31,6 +49,7 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     team = Team(store, router, settings.max_agents, settings.max_tool_turns, settings.private_providers)
     await team.ensure_seed()
     await store.fail_stale_tasks()
+    clean_inbox(settings.workspace_dir)
     center = ApprovalCenter()
     tg = TgUser(settings) if settings.tg_api_id else None
     orch = Orchestrator(store, team, settings, settings.max_revisions, approver or center, tg)

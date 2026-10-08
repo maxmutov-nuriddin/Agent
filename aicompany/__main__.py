@@ -83,6 +83,13 @@ def print_web_info(s):
         print("   Vidjet kaliti: .env dagi WIDGET_TOKEN")
 
 
+def panel_sender(app):
+    """Eslatma panel chatida ham ko'rinsin."""
+    async def send(text):
+        await app.store.add_chat(app.settings.owner_id or 0, "sys", text)
+    return send
+
+
 async def amain():
     ap = argparse.ArgumentParser(prog="aicompany")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -116,17 +123,18 @@ async def amain():
         elif args.cmd == "ask":
             await cmd_ask(app, args.text)
         elif args.cmd == "web":
+            from .reminders import reminder_loop
             from .web import start_web
             await start_web(app)
             print_web_info(app.settings)
-            await asyncio.Event().wait()
+            await reminder_loop(app, [panel_sender(app)])
         else:
             from .bot import run_bot
             from .web import start_web
             runner = await start_web(app)
             print_web_info(app.settings)
             try:
-                await run_bot(app)
+                await run_bot(app, extra_senders=[panel_sender(app)])
             finally:
                 await runner.cleanup()
     finally:

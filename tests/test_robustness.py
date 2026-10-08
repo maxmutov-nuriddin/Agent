@@ -93,3 +93,20 @@ async def test_failing_parallel_step_cancels_its_siblings(make_app):
     app.router.call = call
     res = await asyncio.wait_for(app.orch.run_task("x", 1), 3)
     assert res["status"] == "limit" and state["cancelled"] is True and app.team.busy == {}
+
+
+def test_clean_inbox_removes_only_old(tmp_path):
+    import os
+    import time
+    from aicompany.app import clean_inbox
+    inbox = tmp_path / "inbox"
+    (inbox / "old").mkdir(parents=True)
+    (inbox / "old" / "a.txt").write_text("x")
+    (inbox / "new").mkdir()
+    (inbox / "1_f.txt").write_text("y")
+    past = time.time() - 8 * 86400
+    os.utime(inbox / "old", (past, past))
+    os.utime(inbox / "1_f.txt", (past, past))
+    assert clean_inbox(tmp_path) == 2
+    assert [p.name for p in inbox.iterdir()] == ["new"]
+    assert clean_inbox(tmp_path / "missing") == 0

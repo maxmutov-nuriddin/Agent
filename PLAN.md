@@ -43,6 +43,7 @@ Egasi (Telegram) <-> Bot <-> CEO-agent <-> HR / Dasturchi / Marketolog / QA ...
 - Xavfsizlik: kod izolyatsiyalangan muhitda; kalitlar agentga to'g'ridan-to'g'ri berilmaydi.
 
 ## Holat
+- Audit (2026-10): band-hisoblagich oqishi, tugagan vazifani keyingi xato "failed" qilib qo'yishi, xabar yuborish xatolari, reja normalizatsiyasi, parallel qadamlarni bekor qilish, Telegramda uzun xabarlarni bo'lish tuzatildi. Qo'shildi: eslatmalar (chat/Telegram/panel), avvalgi vazifani davom ettirish (based_on), eski yuklamalarni tozalash.
 - Yordamchi (assistant): joylashuv/yo'l vaqti/joy qidirish va shaxsiy Telegram akkaunt (o'qish; yuborish tasdiq bilan) qurildi.
 - Keyingi tartib: ovozli javob (TTS) va panelda jonli qo'ng'iroq (Gemini Live, HTTPS kerak) -> Google Kalendar/Gmail -> WhatsApp Business (xabar + qo'ng'iroq) -> Instagram (Graph API) -> Telegram qo'ng'iroqlari (tajribaviy, alohida akkaunt).
 - Veb-panel (PWA) + iPhone Scriptable vidjeti qurildi; suhbat/vazifa ajratish (front desk) qo'shildi.

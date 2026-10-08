@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-k";
+const PANEL_V = "2026.10.08-l";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -282,8 +282,8 @@ async function download(id, path) {
 
 // --- Hisob ---
 async function loadStats() {
-  const [state, spend, mem, integ, loc] = await Promise.all([api("/state"), api("/spend"), api("/memory"), api("/integrations"), api("/location")]);
-  S.state = state; renderTabs(); return { state, spend, mem, integ, loc };
+  const [state, spend, mem, integ, loc, rems] = await Promise.all([api("/state"), api("/spend"), api("/memory"), api("/integrations"), api("/location"), api("/reminders")]);
+  S.state = state; renderTabs(); return { state, spend, mem, integ, loc, rems };
 }
 const tick = (ok) => (ok ? "✓" : "✕");
 function shareLocation() {
@@ -337,6 +337,16 @@ async function showAudit() {
       ...rows.map((r) => h("div", { class: "step" }, h("b", {}, `${r.actor} · ${r.action}`), h("div", {}, `${ago(r.ts)} oldin · ${r.detail}`))));
   } catch (e) { toast(e.message); }
 }
+function reminderAdd() {
+  const text = h("input", { placeholder: "Nimani eslatay? (masalan: Aliga qo'ng'iroq qilish)" });
+  const when = h("input", { placeholder: "Qachon: 09:00 · ertaga 9:00 · 30 daq · 2026-10-09 18:30" });
+  const btn = h("button", { class: "btn lime full" }, "Eslatma qo'yish");
+  btn.addEventListener("click", async () => {
+    try { const r = await post("/reminders", { text: text.value, when: when.value }); closeSheet(); toast("⏰ " + r.local); refresh(true); } catch (e) { toast(e.message); }
+  });
+  openSheet(h("h2", {}, "Eslatma"), h("p", { class: "muted" }, "Vaqti kelganda Telegram va panelga xabar keladi. Chatda «ertaga 9 da ... eslat» deb yozsangiz ham bo'ladi."),
+    h("label", {}, "Matn"), text, h("label", {}, "Vaqt"), when, h("div", { class: "label" }), btn);
+}
 function memoryAdd() {
   const ta = h("textarea", { rows: "3", placeholder: "Masalan: Men Toshkentda kofexona ochmoqchiman. Narxlarni so'mda yoz." });
   const btn = h("button", { class: "btn lime full" }, "Saqlash");
@@ -346,7 +356,7 @@ function memoryAdd() {
   });
   openSheet(h("h2", {}, "Xotiraga qo'shish"), h("p", { class: "muted" }, "Agentlar bu ma'lumotni keyingi vazifalarda eslab qoladi."), h("div", { class: "label" }), ta, h("div", { class: "label" }), btn);
 }
-function drawStats({ state, spend, mem, integ, loc }) {
+function drawStats({ state, spend, mem, integ, loc, rems }) {
   const on = state.budgets.filter((b) => b.enabled);
   const left = on.reduce((a, b) => a + b.budget - b.spent, 0);
   const provs = on.map((b) => {
@@ -399,6 +409,11 @@ function drawStats({ state, spend, mem, integ, loc }) {
     h("div", { class: "label" }, "Joylashuv"), where,
     spend.length ? h("div", { class: "label" }, "Agentlar sarfi") : null,
     ...spend.slice(0, 6).map((r) => h("div", { class: "item" }, h("div", { class: "grow" }, h("h3", {}, r.agent)), h("span", { class: "muted" }, usd(r.cost)))),
+    h("div", { class: "label" }, "Eslatmalar"),
+    ...rems.map((r) => h("div", { class: "item" }, h("div", { class: "grow" }, h("h3", {}, "⏰ " + r.local), h("p", {}, r.text)),
+      h("button", { class: "btn red sm", onclick: async () => { try { await api("/reminders/" + r.id, { method: "DELETE" }); toast("Bekor qilindi"); refresh(true); } catch (e) { toast(e.message); } }, "aria-label": "Bekor qilish" }, "✕"))),
+    rems.length ? null : h("p", { class: "hint" }, "Kutilayotgan eslatma yo'q."),
+    h("button", { class: "btn ghost full", onclick: reminderAdd }, "+ Eslatma qo'yish"),
     h("div", { class: "label" }, "Xotira"),
     ...mem.slice(0, 8).map((m) => h("div", { class: "item" }, h("div", { class: "grow" }, h("p", {}, m.text)),
       h("button", { class: "btn red sm", onclick: () => delMem(m.id), "aria-label": "O'chirish" }, "✕"))),

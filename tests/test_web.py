@@ -593,3 +593,16 @@ async def test_continue_previous_task_via_panel(web):
     assert next(t for t in lst if t["id"] == 2)["based_on"] == 1
     chat = (await get(c, "/api/chat"))[1]
     assert any(r["text"].startswith("📌 (#1 ustida)") for r in chat)
+
+
+async def test_reminders_in_the_panel(web):
+    c, app = web
+    assert (await get(c, "/api/reminders"))[1] == []
+    code, r = await post(c, "/api/reminders", {"text": "Aliga qo'ng'iroq", "when": "30 daq"})
+    assert code == 200 and r["local"] and r["id"] == 1
+    assert (await post(c, "/api/reminders", {"text": "x", "when": "kecha"}))[0] == 400
+    assert (await post(c, "/api/reminders", {"text": "", "when": "30 daq"}))[0] == 400
+    assert [x["text"] for x in (await get(c, "/api/reminders"))[1]] == ["Aliga qo'ng'iroq"]
+    assert (await c.delete("/api/reminders/1", headers=TOK)).status == 200
+    assert (await c.delete("/api/reminders/1", headers=TOK)).status == 404
+    assert "Eslatmalar" in (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()

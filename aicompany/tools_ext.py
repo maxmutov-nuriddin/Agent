@@ -280,6 +280,36 @@ async def tg_send(env, a):
     return f"yuborildi: {display}"
 
 
+# ---------- eslatmalar ----------
+async def set_reminder(env, a):
+    from . import reminders
+    try:
+        r = await reminders.create(env.store, env.settings, env.settings.owner_id or 0, a["text"], a["when"])
+    except ValueError as e:
+        raise ToolError(str(e)) from e
+    return f"eslatma #{r['id']} qo'yildi: {r['local']} ({env.settings.report_tz}) — {r['text']}"
+
+
+async def list_reminders(env, a):
+    from .reminders import local_text
+    rows = await env.store.list_reminders()
+    return "\n".join(f"#{r['id']} {local_text(r['due_at'], env.settings.report_tz)}: {r['text']}" for r in rows) or "eslatma yo'q"
+
+
+async def cancel_reminder(env, a):
+    if not await env.store.cancel_reminder(int(a["id"])):
+        raise ToolError("bunday kutilayotgan eslatma yo'q")
+    return f"eslatma #{a['id']} bekor qilindi"
+
+
+TOOLS.update({t.name: t for t in [
+    Tool("set_reminder", "time", "Remind the owner later (sent to Telegram and the panel). when: 'HH:MM', 'ertaga HH:MM', "
+         "'YYYY-MM-DD HH:MM' (owner's local time) or a delay like '30 daq', '2 soat', '1 kun'.",
+         _obj({"text": {"type": "string"}, "when": {"type": "string"}}, ["text", "when"]), set_reminder),
+    Tool("list_reminders", "time", "List the owner's pending reminders.", _obj({}, []), list_reminders),
+    Tool("cancel_reminder", "time", "Cancel a pending reminder by id.", _obj({"id": {"type": "integer"}}, ["id"]), cancel_reminder),
+]})
+
 TOOLS.update({t.name: t for t in [
     Tool("where_am_i", "maps", "Where the owner is right now (last location they shared in Telegram or the panel).", _obj({}, []), where_am_i),
     Tool("save_place", "maps", "Save a named place (e.g. home, work) from an address, or from the owner's current location with address 'me'.",

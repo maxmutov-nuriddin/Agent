@@ -28,9 +28,9 @@ SEED = {
     "developer": ("Senior software engineer: writes clean, working code with tests and short run instructions.", "mid", "files,web,shell"),
     "marketer": ("Marketing strategist and copywriter: positioning, content plans, ad copy, social media.", "mid", "files,web,memory"),
     "researcher": ("Analyst: structured research with sources, comparisons, summaries and recommendations.", "cheap", "files,web,memory"),
-    "generalist": ("Versatile specialist used when no other role fits.", "cheap", "files,web"),
+    "generalist": ("Versatile specialist used when no other role fits.", "cheap", "files,web,time"),
     "assistant": ("Personal assistant: knows where the owner is, travel times, nearby places, and handles their Telegram "
-                  "messages (read, draft replies, send only with approval).", "mid", "maps,telegram,memory,web"),
+                  "messages (read, draft replies, send only with approval).", "mid", "maps,telegram,memory,web,time"),
 }
 
 
@@ -47,8 +47,11 @@ class Team:
 
     async def ensure_seed(self):
         for name, (role, tier, tools) in SEED.items():
-            if not await self.store.get_agent(name):
+            existing = await self.store.get_agent(name)
+            if not existing:
                 await self.store.create_agent(name, role, system_prompt(name, role), tier, "seed", tools)
+            elif existing["created_by"] == "seed" and existing["tools"] != tools:
+                await self.store.set_agent_tools(name, tools)  # yangi versiyadagi asboblar eski bazadagi asosiy xodimlarga ham
 
     async def roster(self) -> str:
         return "\n".join(f"- {a['name']}: {a['role']}" for a in await self.store.list_agents())

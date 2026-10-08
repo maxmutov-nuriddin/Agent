@@ -17,7 +17,7 @@ Faqat Claude bilan boshlash: `.env` da faqat `ANTHROPIC_API_KEY` ni to'ldiring, 
 `.env` da kerak: `TELEGRAM_BOT_TOKEN` (@BotFather), `OWNER_TELEGRAM_ID` (@userinfobot), kamida bitta API kalit.
 
 ## Telegram
-`/team` `/tasks` `/task <id>` `/budget` `/report` `/memory` `/hire <nom> <sabab>` `/fire <nom>` `/review` `/pause` `/resume`. Oddiy matn = yangi vazifa; fayl yuborsangiz vazifaga ilova bo'ladi. Tayyor fayllar vazifa tugagach Telegramga yuboriladi. Har kuni `REPORT_HOUR` da hisobot keladi (LLM ishlatmaydi, pul sarflamaydi). Bot faqat `OWNER_TELEGRAM_ID` ga javob beradi.
+`/team` `/tasks` `/task <id>` `/budget` `/report` `/memory` `/hire <nom> <sabab>` `/fire <nom>` `/review` `/pause` `/resume` `/stop <id>` `/reminders` (`/reminders cancel <id>`) `/home` `/tg` `/ai` `/web`. Oddiy gap = suhbat, ish so'rasangiz = vazifa (rahbar o'zi ajratadi); fayl yuborsangiz vazifaga ilova bo'ladi. Tayyor fayllar vazifa tugagach Telegramga yuboriladi. Har kuni `REPORT_HOUR` da hisobot keladi (LLM ishlatmaydi, pul sarflamaydi). Bot faqat `OWNER_TELEGRAM_ID` ga javob beradi.
 
 ## Veb-panel (PWA) va iPhone
 `python -m aicompany run` Telegram botdan tashqari veb-panelni ham ishga tushiradi (faqat veb: `python -m aicompany web`). Terminalda maxfiy havola chiqadi: `http://...:8080/#token=...`. Kalit birinchi ishga tushirishda avtomatik yaratilib `.env` ga yoziladi.
@@ -67,11 +67,20 @@ Yangi xodim **assistant** shu imkoniyatlarga ega.
 | files | write_file, read_file, list_files | faqat vazifaning `workspace/task_N/` papkasi ichida |
 | web | web_search, fetch_url | ichki/lokal manzillar bloklangan; natija "ishonchsiz" deb belgilanadi |
 | memory | remember, recall | uzoq muddatli xotira |
+| time | set_reminder, list_reminders, cancel_reminder | eslatmalar |
 | shell | run_command | **har bir buyruq Telegramda sizning tasdig'ingizni kutadi** (✅/❌), 10 daqiqada javob bo'lmasa rad etiladi |
 
 Rollarga guruhlar biriktirilgan (masalan faqat dasturchida `shell` bor). HR yangi xodim yaratganda unga kerakli guruhlarni tanlaydi.
 
 **Xavfsizlik chegarasi:** `run_command` to'liq izolyatsiyalangan sandbox EMAS. U workspace papkasida, API kalitlarisiz (toza muhit) ishlaydi, lekin sizning kompyuteringizdagi oddiy jarayon. Shuning uchun har buyruq tasdiqlanadi. Buyruqni o'qib chiqib keyin ruxsat bering. Kelajakda Docker sandbox qo'shiladi.
+
+## Eslatmalar
+- Botga yoki panel chatiga: "ertaga 9:00 da onamga qo'ng'iroq qilishni eslat", "30 daqiqadan keyin choyni eslat". Rahbar eslatmani darhol qo'yadi (vazifa ochmaydi).
+- Vaqt `REPORT_TZ` bo'yicha. Vaqti kelganda Telegramga (va panel chatiga) keladi.
+- Ro'yxat: `/reminders`, bekor qilish `/reminders cancel <id>`. Panelda: Hisob → Eslatmalar (qo'shish/bekor qilish).
+
+## Avvalgi vazifani davom ettirish
+- Panelda vazifa kartasidagi **✏️ O'zgartirish / davom** tugmasi yoki chatda "#12 dagi saytga qora rejim qo'sh" deb yozing. Yangi vazifa eski vazifaning fayllari va natijasidan boshlaydi (eski vazifa o'zgarmaydi).
 
 ## Xodimlar
 - HR yangi xodim yaratadi (jamoa `MAX_AGENTS` bilan cheklangan, yangi xodim hech qachon avtomatik `strong` bo'lmaydi).
@@ -92,5 +101,7 @@ Router vazifa darajasiga (cheap/mid/strong) qarab eng arzon provayderni tanlaydi
 ## Muhim
 `models.yaml` dagi OpenAI/Gemini model nomlari va narxlar tasdiqlanmagan. Kalit qo'ygach `check` ni ishga tushiring.
 
-## Hozircha yo'q
-Docker sandbox, GitHub asbobi, ovozli xabar, OpenAI/Gemini uchun asbob qo'llash (ular faqat matn rejimida ishlaydi), vektor qidiruv (xotira hozir kalit so'z bo'yicha), veb-panel, VPS/Supabase joylashtirish.
+## Hozircha yo'q (navbatda)
+Ovozli javob (TTS) va jonli qo'ng'iroq, Google Kalendar/Gmail, WhatsApp Business, Instagram (Graph API), Telegram qo'ng'iroqlari, agent uchun alohida raqam, Docker sandbox, GitHub asbobi, vektor qidiruv (xotira hozir kalit so'z bo'yicha), VPS/Supabase joylashtirish.
+
+Panelga yuklangan fayllar vazifaga nusxalanadi; `workspace/inbox` dagi 7 kundan eski yuklamalar ishga tushganda o'chiriladi.
