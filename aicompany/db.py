@@ -295,9 +295,18 @@ class Store:
     async def get_task(self, task_id):
         return await self._one(sa.select(tasks).where(tasks.c.id == task_id))
 
-    async def list_tasks(self, limit=10, archived: bool = False):
+    async def list_tasks(self, limit=10, archived: bool = False, view: str | None = None):
+        """view: active (jarayonda/to'xtagan) | done (tugatilgan) | archive (arxivga qo'yilgan yoki rad etilgan). Bo'sh: eski ko'rinish."""
         q = sa.select(tasks).order_by(tasks.c.id.desc()).limit(limit)
-        q = q.where(tasks.c.archived == 1) if archived else q.where(sa.or_(tasks.c.archived == 0, tasks.c.archived.is_(None)))
+        live = sa.or_(tasks.c.archived == 0, tasks.c.archived.is_(None))
+        if view == "archive":
+            q = q.where(sa.or_(tasks.c.archived == 1, tasks.c.status == "cancelled"))
+        elif view == "done":
+            q = q.where(live, tasks.c.status == "done")
+        elif view == "active":
+            q = q.where(live, tasks.c.status.notin_(("done", "cancelled")))
+        else:
+            q = q.where(tasks.c.archived == 1) if archived else q.where(live)
         return await self._all(q)
 
     async def set_archived(self, task_id, flag: bool):

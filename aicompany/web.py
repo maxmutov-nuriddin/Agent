@@ -250,7 +250,8 @@ def make_web_app(app: App) -> web.Application:
 
     async def h_tasks(request):
         archived = request.query.get("archived") == "1"
-        rows = await app.store.list_tasks(60, archived=archived)
+        view = request.query.get("view")
+        rows = await app.store.list_tasks(60, archived=archived, view=view if view in ("active", "done", "archive") else None)
         return json_ok([{"id": t["id"], "status": t["status"], "request": t["request"][:160],
                          "created_at": t["created_at"], "finished_at": t["finished_at"],
                          "archived": bool(t["archived"]), "note": t["note"], "based_on": t["based_on"],
@@ -393,7 +394,7 @@ def make_web_app(app: App) -> web.Application:
     async def h_task_delete(request):
         """Butunlay o'chirish: faqat arxivdagi vazifa."""
         t = await get_task_or_404(request)
-        if not t["archived"]:
+        if not t["archived"] and t["status"] != "cancelled":
             raise web.HTTPConflict(reason="faqat arxivdagi vazifani butunlay o'chirish mumkin")
         ws = (s.workspace_dir / f"task_{t['id']}").resolve()
         if ws.is_dir() and ws.parent == s.workspace_dir.resolve():

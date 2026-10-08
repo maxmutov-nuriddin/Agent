@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-i";
+const PANEL_V = "2026.10.09-j";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -122,7 +122,7 @@ function saveCache() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => { try { localStorage.setItem("aij_cache", JSON.stringify({ ...S.cache, _chat: S.chat.slice(-60) })); } catch { /* joy tugasa */ } }, 500);
 }
-const S = { cache: loadCache(), token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, archive: false };
+const S = { cache: loadCache(), token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, view: "active" };
 
 // ---------- yordamchilar ----------
 function h(tag, attrs, ...kids) {
@@ -576,14 +576,14 @@ function drawCards(items) {
 
 // --- Vazifalar ---
 async function loadTasks() {
-  const [state, tasks] = await Promise.all([api("/state"), api("/tasks" + (S.archive ? "?archived=1" : ""))]);
-  S.state = state; renderTabs(); return { tasks, archive: S.archive };
+  const [state, tasks] = await Promise.all([api("/state"), api("/tasks?view=" + S.view)]);
+  S.state = state; renderTabs(); return { tasks, view: S.view };
 }
-function drawTasks({ tasks, archive }) {
-  const seg = h("div", { class: "seg" },
-    h("button", { class: archive ? "" : "on", onclick: () => { S.archive = false; refresh(true); } }, "Faol"),
-    h("button", { class: archive ? "on" : "", onclick: () => { S.archive = true; refresh(true); } }, "Arxiv"));
-  if (!tasks.length) return [head("Vazifalar", liveTag()), seg, h("div", { class: "empty" }, archive ? "Arxiv bo'sh" : "Hali vazifa yo'q. «Vazifa berish» tugmasini bosing.")];
+function drawTasks({ tasks, view }) {
+  const seg = h("div", { class: "seg" }, [["active", "Faol"], ["done", "Tugatilgan"], ["archive", "Arxiv"]].map(([v, l]) =>
+    h("button", { class: view === v ? "on" : "", onclick: () => { S.view = v; refresh(true); } }, l)));
+  const EMPTY = { active: "Hali vazifa yo'q. «Vazifa berish» tugmasini bosing.", done: "Tugatilgan vazifa hali yo'q.", archive: "Arxiv bo'sh (bu yerga rad etilgan va arxivga olingan vazifalar tushadi)" };
+  if (!tasks.length) return [head("Vazifalar", liveTag()), seg, h("div", { class: "empty" }, EMPTY[view])];
   return [head("Vazifalar", liveTag()), seg, h("div", { class: "tlist" }, tasks.map((t) => {
     const [label, tone] = ST[t.status] || [t.status, ""];
     const barTone = t.status === "running" ? "run" : t.status === "failed" ? "bad" : t.status === "done" ? "" : "warn";
@@ -610,8 +610,9 @@ async function openTask(id) {
   };
   const acts = t.status === "running"
     ? [h("button", { class: "btn red", onclick: act(`/tasks/${t.id}/stop`, "To'xtatilmoqda…") }, "⏹ To'xtatish")]
-    : t.archived
-      ? [h("button", { class: "btn", onclick: act(`/tasks/${t.id}/restore`, "Qaytarildi") }, "↩ Qaytarish"),
+    : t.archived || t.status === "cancelled"
+      ? [t.archived ? h("button", { class: "btn", onclick: act(`/tasks/${t.id}/restore`, "Qaytarildi") }, "↩ Qaytarish")
+           : h("button", { class: "btn lime", onclick: () => taskSheet(t.id) }, "✏️ Qayta ishlatish"),
          h("button", { class: "btn red", onclick: () => { if (confirm("Vazifa va uning fayllari butunlay o'chiriladi. Davom etasizmi?")) act(`/tasks/${t.id}`, "O'chirildi", "DELETE")(); } }, "🗑 Butunlay o'chirish")]
       : [CAN_RESUME.has(t.status) ? h("button", { class: "btn lime", onclick: async () => {  // bir bosishda: bajarilgan qism saqlanadi, qolgani tugatiladi
             try { await post("/tasks", { text: t.request, based_on: t.id }); closeSheet(); toast("▶️ Davom ettirilmoqda…"); go("tasks"); } catch (e) { toast(e.message); }

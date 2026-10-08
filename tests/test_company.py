@@ -403,3 +403,17 @@ async def test_eco_single_step_skips_the_rewrite_call(make_app):
     await app.store.set_kv("eco", "0")
     await app.orch.run_task("y", 1)
     assert calls == [1]
+
+
+async def test_task_views_active_done_archive(make_app):
+    app, _ = await make_app(scripted_company())
+    st = app.store
+    ids = {}
+    for name, status in (("a", "running"), ("b", "done"), ("c", "cancelled"), ("d", "failed"), ("e", "done")):
+        ids[name] = await st.create_task(1, name)
+        await st.update_task(ids[name], status=status)
+    await st.set_archived(ids["e"], True)
+    names = lambda rows: sorted(t["request"] for t in rows)  # noqa: E731
+    assert names(await st.list_tasks(view="active")) == ["a", "d"]
+    assert names(await st.list_tasks(view="done")) == ["b"]
+    assert names(await st.list_tasks(view="archive")) == ["c", "e"]   # rad etilgan + arxivga olingan
