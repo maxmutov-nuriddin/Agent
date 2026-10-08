@@ -253,7 +253,7 @@ class Orchestrator:
         files = self._files(ws)
         if prev["status"] != "done":  # to'xtatilgan/uzilgan/pauzadagi vazifa: bajarilgan qismini saqlab, qolganini tugatamiz
             done = "\n\n".join(f"[{m['agent']}]\n{clip(m['content'] or '', 1500)}" for m in await self.store.task_messages(based_on)
-                                if m["agent"] not in ("hr", "qa"))
+                                if m["agent"] not in ("hr", "qa") and "===ANSWER===" not in (m["content"] or ""))  # qadoqlash xabari kerak emas
             return (f"\n\n[RESUME: task #{based_on} was stopped before it finished (status: {prev['status']}). Its files are already in the "
                     f"workspace: {', '.join(files) or '(none)'}. Work already done by the team is below: do NOT redo it; "
                     f"continue from where it stopped and deliver the complete final result.\nWork so far:\n{clip(done or prev['result'] or '(nothing saved)', 5000)}]")
