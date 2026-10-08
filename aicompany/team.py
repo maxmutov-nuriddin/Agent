@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from .db import Store
+from .db import Store, cache_key
 from .providers import MalformedCall, ProviderError
 from .router import BudgetExhausted, PinnedUnavailable, Router
 from .tools import GROUPS, ToolEnv, ToolError, tool_defs, tools_for
@@ -36,6 +36,9 @@ SEED = {
 
 def system_prompt(name: str, role: str) -> str:
     return f"You are '{name}', a member of an AI company team. Your role: {role}\n{LANG}"
+
+
+TOOL_CACHE_TTL = {"web_search": 6 * 3600, "fetch_url": 6 * 3600, "find_places": 3600}  # soniya; boshqa asboblar keshlanmaydi
 
 
 class Team:
@@ -152,6 +155,23 @@ class Team:
             messages.append({"role": "user", "content": results})
         return text
 
+    async def _cached_call(self, tool, env, args) -> str:
+        """Qidiruv va sahifa natijalari keshlanadi: vazifa ichida (xotirada) va vazifalar orasida (bazada, TOOL_CACHE_TTL)."""
+        ttl = TOOL_CACHE_TTL.get(tool.name)
+        if not ttl:
+            return await tool.handler(env, args)
+        key = cache_key("tool", tool.name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+        if env is not None and key in env.cache:
+            return env.cache[key]
+        out = await self.store.cache_get_fresh(key, ttl)
+        if out is None:
+            out = await tool.handler(env, args)
+            if out and not out.startswith("Xato"):
+                await self.store.cache_put(key, out)
+        if env is not None:
+            env.cache[key] = out
+        return out
+
     async def _exec_tool(self, by_name, call, env) -> dict:
         tool = by_name.get(call["name"])
         block = {"type": "tool_result", "tool_use_id": call["id"]}
@@ -159,7 +179,7 @@ class Team:
             if not tool:
                 raise ToolError(f"noma'lum asbob: {call['name']}")
             args = call["input"] or {}
-            out = await tool.handler(env, args)
+            out = await self._cached_call(tool, env, args)
             await self.store.audit(env.agent, f"tool:{tool.name}", json.dumps(args, ensure_ascii=False)[:300])
             block["content"] = clip(out, 8000)
         except ToolError as e:

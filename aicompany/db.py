@@ -77,6 +77,7 @@ memories = sa.Table(
     sa.Column("text", sa.Text, nullable=False),
     sa.Column("source", sa.String),
     sa.Column("created_at", sa.String),
+    sa.Column("emb", sa.Text),          # ma'no bo'yicha qidiruv uchun vektor (JSON), bo'lmasa kalit so'z qidiruvi
 )
 approvals = sa.Table(
     "approvals", md,
@@ -139,6 +140,18 @@ audit_log = sa.Table(
 
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+SEM_MIN = 0.55   # shundan past o'xshashlik "mos emas" deb hisoblanadi
+
+
+def cosine(a, b) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
 
 
 def cache_key(*parts) -> str:
@@ -394,6 +407,16 @@ class Store:
         row = await self._one(sa.select(cache).where(cache.c.key == key))
         return row["value"] if row else None
 
+    async def cache_get_fresh(self, key, max_age_s: float):
+        row = await self._one(sa.select(cache).where(cache.c.key == key))
+        if not row:
+            return None
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(row["created_at"])).total_seconds()
+        except (TypeError, ValueError):
+            return None
+        return row["value"] if age <= max_age_s else None
+
     async def cache_put(self, key, value):
         await self._exec(self._upsert(cache, "key", {"key": key, "value": value, "created_at": now()}))
 
@@ -444,15 +467,37 @@ class Store:
     async def recent_memories(self, limit=500):
         return await self._all(sa.select(memories).order_by(memories.c.id.desc()).limit(limit))
 
-    async def search_memories(self, query, limit=5):
+    async def search_memories(self, query, limit=5, qvec=None):
+        """Kalit so'z bo'yicha; qvec (so'rov vektori) berilsa, ma'no bo'yicha ham (embedding)."""
         words = {w for w in re.findall(r"\w{3,}", query.lower())}
+        stems = self._stems(query)
         scored = []
         for m in await self.recent_memories(500):
-            score = len(words & set(re.findall(r"\w{3,}", m["text"].lower())))
+            kw = len(words & set(re.findall(r"\w{3,}", m["text"].lower()))) + 0.5 * len(stems & self._stems(m["text"]))
+            sem = 0.0
+            if qvec is not None and m.get("emb"):
+                try:
+                    sem = cosine(qvec, json.loads(m["emb"]))
+                except (ValueError, TypeError):
+                    sem = 0.0
+            score = (sem * 10 if sem >= SEM_MIN else 0) + kw
             if score:
                 scored.append((score, m["id"], m))
         scored.sort(key=lambda x: (-x[0], -x[1]))
         return [m for _, _, m in scored[:limit]]
+
+    async def memories_without_emb(self, limit=32):
+        return await self._all(sa.select(memories).where(memories.c.emb.is_(None)).order_by(memories.c.id.desc()).limit(limit))
+
+    async def set_memory_emb(self, memory_id, vec):
+        await self._exec(sa.update(memories).where(memories.c.id == memory_id).values(emb=json.dumps([round(x, 4) for x in vec])))
+
+    async def replace_owner_prefs(self, texts):
+        """Doimiy qoidalarni birlashtirilgan ro'yxat bilan almashtiradi (bitta tranzaksiyada)."""
+        async with self.engine.begin() as c:
+            await c.execute(sa.delete(memories).where(memories.c.source == "owner-pref"))
+            for t in texts:
+                await c.execute(sa.insert(memories).values(text=t.strip()[:1000], source="owner-pref", created_at=now()))
 
     # suhbat tarixi
     async def add_chat(self, chat_id, role, text):

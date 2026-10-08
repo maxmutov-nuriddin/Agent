@@ -37,6 +37,9 @@ async def _safe_done(cb, res):
         pass
 
 
+PREFS_MAX = 15     # shundan ko'p doimiy qoida bo'lsa, takrorlari birlashtiriladi
+PREFS_SHOWN = 20   # suhbat va rejaga hammasi sig'adi (birlashtirish 15 dan oshirmaydi)
+STEP_CTX = 3000    # keyingi qadamga beriladigan oldingi natija hajmi; to'liqi .steps/ faylida
 TASK_WORDS = re.compile(r"vazifa|natija|hisobot|task|#\d|задач|результат|отчет|отчёт|nima bo'?ldi|qani|tugadimi|xato|muammo|davom|buni|uni |shuni|o'zgartir|qisqartir|kengaytir|tuzat|qo'sh|yaxshila|qayta|yana|fayl|prompt|исправ|измени|сократи", re.I)
 
 
@@ -76,7 +79,11 @@ def normalize_plan(plan: dict) -> dict:
                       "tier": s.get("tier") if s.get("tier") in TIERS else None,
                       "depends_on": [str(d) for d in deps if str(d) != sid]})
     roles = [r for r in (plan.get("new_roles") or []) if isinstance(r, dict) and r.get("name")]
-    return {"summary": str(plan.get("summary") or ""), "steps": steps, "new_roles": roles}
+    acc = plan.get("acceptance") or []
+    acc = [str(a).strip()[:200] for a in (acc if isinstance(acc, list) else [acc]) if str(a).strip()][:6]
+    return {"summary": str(plan.get("summary") or ""), "steps": steps, "new_roles": roles,
+            "complexity": "simple" if plan.get("complexity") == "simple" else "normal",
+            "direct_answer": str(plan.get("direct_answer") or "").strip()[:8000], "acceptance": acc}
 
 
 class Orchestrator:
@@ -90,6 +97,7 @@ class Orchestrator:
         self._stopping: set[int] = set()
         self.on_done = None
         self._summarizing: set[int] = set()
+        self._background: set[asyncio.Task] = set()
         self.call_ready = lambda: False   # app.py ulaydi: qo'ng'iroq moduli tayyormi
         self.call_owner = None   # app.py ulaydi: egasiga qo'ng'iroq qilish (ovozli modul bo'lsa)
 
@@ -105,7 +113,8 @@ class Orchestrator:
     @staticmethod
     def _files(ws: Path) -> list[str]:
         """Asosiy natija va tayyor prompt birinchi, qolganlari alifbo tartibida."""
-        files = sorted(str(f.relative_to(ws)) for f in ws.rglob("*") if f.is_file())
+        files = sorted(str(f.relative_to(ws)) for f in ws.rglob("*")
+                       if f.is_file() and not any(part.startswith(".") for part in f.relative_to(ws).parts))
         return [f for f in MAIN_FILES if f in files] + [f for f in files if f not in MAIN_FILES]
 
     FRONT_DESK = (
@@ -164,7 +173,7 @@ class Orchestrator:
         """Oddiy xabarni qabul qiladi. allow_tasks=True: suhbat yoki vazifa ekanini o'zi aniqlaydi (Telegram).
         allow_tasks=False: faqat suhbat; ish so'ralsa vazifa taklif qiladi (veb-chat)."""
         await self.store.add_chat(chat_id, "owner", text)
-        asyncio.create_task(self._maybe_summarize(chat_id))   # fonda: javobni kechiktirmaydi
+        self._bg(self._maybe_summarize(chat_id))   # fonda: javobni kechiktirmaydi
         decision = {"mode": "task", "task": text, "reply": ""}
         if not attachments:  # fayl yuborilgan bo'lsa, bu aniq vazifa
             decision = await self._front_desk(text, chat_id, allow_tasks)
@@ -209,7 +218,7 @@ class Orchestrator:
         await self.store.add_chat(chat_id, "ceo", summary[:1500])
         res["kind"] = "task"
         if getattr(self, "on_done", None):
-            asyncio.create_task(_safe_done(self.on_done, res))  # masalan: tugaganda qo'ng'iroq qilish
+            self._bg(_safe_done(self.on_done, res))  # masalan: tugaganda qo'ng'iroq qilish
         return res
 
     async def resume_stopped(self, notify: Notify, statuses=("interrupted",), *, max_age_h: float = 6, limit: int = 3, delay: float = 15,
@@ -264,9 +273,9 @@ class Orchestrator:
             history = [h for h in history if not (h["role"] == "ceo" and (h["text"] or "").startswith("[Vazifa #"))]
         # oxirgisi hozirgi xabarning o'zi
         hist = "\n".join(f"{'Owner' if h['role'] == 'owner' else 'CEO'}: {clip(h['text'], 600)}" for h in history)
-        mems = await self.store.search_memories(text, 5)
+        mems = await self._recall(text, 5)
         memo = "\n".join(f"- {m['text']}" for m in mems)
-        prefs = "\n".join(f"- {m['text']}" for m in await self.store.owner_prefs())
+        prefs = "\n".join(f"- {m['text']}" for m in await self.store.owner_prefs(PREFS_SHOWN))
         summary = await self._chat_summary(chat_id)
         window_start = history[0]["id"] if history else (all_hist[-1]["id"] if all_hist else 0)
         older = await self.store.search_chat(chat_id, text, window_start)
@@ -351,6 +360,23 @@ class Orchestrator:
         finally:
             self._summarizing.discard(chat_id)
 
+    async def _recall(self, text: str, k: int = 5):
+        """Xotiradan qidirish: ma'no bo'yicha (Gemini embedding) + kalit so'z. Vektori yo'q eski xotiralar shu yerda to'ldiriladi."""
+        qvec = None
+        router = self.team.router
+        if any(hasattr(p, "embed") for p in router.providers.values()):
+            try:
+                missing = await self.store.memories_without_emb(32)
+                if missing:
+                    vecs = await router.embed([m["text"] for m in missing])
+                    for m, v in zip(missing, vecs or []):
+                        await self.store.set_memory_emb(m["id"], v)
+                got = await router.embed([text[:2000]], query=True)
+                qvec = got[0] if got else None
+            except Exception:  # noqa: BLE001 — vektor bo'lmasa kalit so'z qidiruvi yetadi
+                qvec = None
+        return await self.store.search_memories(text, k, qvec)
+
     async def _save_plan(self, value):
         """Egasi aytgan o'z rejasi (kunlik/haftalik...) Rejalar sahifasiga yoziladi. AI vazifa rejalari bu yerga tushmaydi."""
         if not isinstance(value, dict):
@@ -368,9 +394,41 @@ class Orchestrator:
         text = " ".join(str(value or "").split())[:300]
         if len(text) < 6 or text.lower() in ("none", "null", "false"):
             return
-        if any(m["text"].strip().lower() == text.lower() for m in await self.store.owner_prefs(50)):
+        if any(m["text"].strip().lower() == text.lower() for m in await self.store.owner_prefs(100)):
             return
         await self.store.add_memory(text, source="owner-pref")
+        if len(await self.store.owner_prefs(100)) > PREFS_MAX:
+            self._bg(self._consolidate_prefs())
+
+    def _bg(self, coro):
+        """Fon vazifasi: havola saqlanadi (aks holda Python uni yarim yo'lda yo'qotishi mumkin)."""
+        t = asyncio.create_task(coro)
+        self._background.add(t)
+        t.add_done_callback(self._background.discard)
+        return t
+
+    async def _consolidate_prefs(self):
+        """Doimiy qoidalar ko'payib ketsa, takrorlari birlashtiriladi. Hech bir alohida qoida yo'qolmasligi kerak:
+        eski ro'yxat zaxiraga yoziladi, natija shubhali bo'lsa (juda qisqargan) o'zgartirilmaydi."""
+        prefs = await self.store.owner_prefs(100)          # yangisi birinchi
+        if len(prefs) <= PREFS_MAX:
+            return
+        listing = "\n".join(f"{i + 1}. {p['text']}" for i, p in enumerate(prefs))
+        try:
+            res = await self.team.router.call("cheap", (
+                "You maintain the owner's standing rules for an AI assistant. Merge duplicates and near-duplicates into one "
+                "rule each. NEVER drop a distinct rule or detail. If two rules contradict, keep the NEWER one (item 1 is the "
+                f"newest). Keep the owner's language. Return ONLY JSON: {{\"rules\": [\"...\"]}} with at most {PREFS_MAX} rules."),
+                [{"role": "user", "content": listing}], agent="memory")
+            rules = [" ".join(str(r).split())[:300] for r in extract_json(res.text).get("rules", []) if str(r).strip()]
+        except Exception:  # noqa: BLE001 — birlashtirib bo'lmasa, qoidalar avvalgidek qoladi
+            return
+        if not rules or len(rules) < max(3, len(prefs) * 0.4) or len(rules) > len(prefs):
+            await self.store.audit("memory", "prefs_merge_skipped", f"{len(prefs)} -> {len(rules)}")
+            return
+        await self.store.set_kv("prefs_backup", json.dumps({"at": now(), "rules": [p["text"] for p in prefs]}, ensure_ascii=False))
+        await self.store.replace_owner_prefs(list(reversed(rules)))   # eng yangisi oxirida yoziladi: tartib saqlanadi
+        await self.store.audit("memory", "prefs_merged", f"{len(prefs)} -> {len(rules)} (eski ro'yxat zaxirada: prefs_backup)")
 
     async def _valid_task_id(self, value) -> int | None:
         try:
@@ -412,8 +470,15 @@ class Orchestrator:
         based_on = await self._valid_task_id(based_on) if based_on else None
         task_id = await self.store.create_task(chat_id, request, based_on)
         ws = self._workspace(task_id)
+        resume = None
         if based_on:
             request += await self._continue_from(based_on, ws)
+            prev = await self.store.get_task(based_on)
+            if prev and prev["status"] != "done":  # aynan to'xtagan joydan: saqlangan reja va qadam natijalari
+                try:
+                    resume = json.loads(await self.store.get_kv(f"ckpt:{based_on}") or "null")
+                except ValueError:
+                    resume = None
         for src in attachments or []:
             shutil.copy(src, ws / Path(src).name)
         if attachments:
@@ -423,8 +488,9 @@ class Orchestrator:
         await notify(f"📝 Vazifa #{task_id} qabul qilindi. Rahbar rejalashtiryapti...")
         out = {"task_id": task_id, "workspace": str(ws)}
         try:
-            result = await self._run_guarded(task_id, request, notify, env)
+            result = await self._run_guarded(task_id, request, notify, env, resume)
             await self.store.update_task(task_id, status="done", result=result, finished_at=now())
+            await self.store.delete_kv(f"ckpt:{task_id}")   # tugadi: nazorat nuqtasi kerak emas
             out.update(status="done", result=result)
             await self._learn(task_id, request, result)
         except Stopped:
@@ -456,9 +522,9 @@ class Orchestrator:
             pass
         return out
 
-    async def _run_guarded(self, task_id, request, notify, env) -> str:
+    async def _run_guarded(self, task_id, request, notify, env, resume=None) -> str:
         """Ishni alohida vazifa sifatida yuritadi, shunda uni tashqaridan to'xtatish mumkin."""
-        inner = asyncio.ensure_future(self._run(task_id, request, notify, env))
+        inner = asyncio.ensure_future(self._run(task_id, request, notify, env, resume))
         self.running[task_id] = inner
         try:
             return await inner
@@ -477,10 +543,22 @@ class Orchestrator:
         if fired:
             await notify("🧑‍💼 HR tahlili: ishsiz qolgan xodimlar bo'shatildi: " + ", ".join(fired))
 
-    async def _run(self, task_id: int, request: str, notify: Notify, env: ToolEnv) -> str:
+    async def _run(self, task_id: int, request: str, notify: Notify, env: ToolEnv, resume: dict | None = None) -> str:
         eco = await self.store.get_kv("eco") != "0"  # tejamkor rejim (standart: yoqilgan)
-        plan = await self._plan(task_id, request, env, eco)
+        outputs: dict[str, str] = {}
+        if resume and resume.get("plan"):  # uzilgan vazifa: reja va bajarilgan qadamlar saqlangan, faqat qolgani bajariladi
+            plan = resume["plan"]
+            outputs = {k: v for k, v in (resume.get("outputs") or {}).items() if any(st["id"] == k for st in plan["steps"])}
+            await notify(f"♻️ {len(outputs)}/{len(plan['steps'])} qadam avval bajarilgan, qolgani davom ettirilmoqda.")
+        else:
+            plan = await self._plan(task_id, request, env, eco)
         await self.store.update_task(task_id, plan=json.dumps(plan, ensure_ascii=False))
+        simple = plan.get("complexity") == "simple" and len(plan["steps"]) == 1
+        direct = str(plan.get("direct_answer") or "").strip()
+        has_context = any(m in request for m in ("[Attached files", "[This continues task", "[RESUME"))
+        if simple and direct and not resume and not has_context and len(direct) >= 20:  # oddiy savol: jamoa ishga tushmaydi (1 ta arzon so'rov)
+            await notify("💡 Oddiy savol: rahbar o'zi javob berdi.")
+            return self._package_simple(request, direct, env)
 
         for role in plan.get("new_roles", [])[:2]:
             await self._check_pause()
@@ -491,8 +569,9 @@ class Orchestrator:
         steps = plan["steps"][:MAX_STEPS]
         await notify(f"📋 Reja: {str(plan.get('summary', ''))[:500]}\n" + "\n".join(
             f"• {s['agent']} [{s.get('tier') or 'auto'}]: {s['task'][:80]}" for s in steps))
-        outputs: dict[str, str] = {}
-        remaining = {s["id"]: s for s in steps}
+        remaining = {s["id"]: s for s in steps if s["id"] not in outputs}
+        steps_dir = env.workspace / ".steps"
+        steps_dir.mkdir(exist_ok=True)
         while remaining:
             ready = [s for s in remaining.values() if not any(d in remaining for d in s.get("depends_on", []))]
             if not ready:  # sikl: qolganlarini ketma-ket bajaramiz
@@ -500,7 +579,9 @@ class Orchestrator:
             await self._check_pause()
 
             async def work(s):
-                ctx = "\n\n".join(f"## {d}\n{clip(outputs[d])}" for d in s.get("depends_on", []) if d in outputs)
+                # oldingi qadam natijasi qisqa holda beriladi, to'liqi faylda (kerak bo'lsa agent o'qiydi): token tejaladi
+                ctx = "\n\n".join(f"## {d}\n{clip(outputs[d], STEP_CTX)}" + (f"\n(To'liq matn: .steps/{d}.md fayli)" if len(outputs[d]) > STEP_CTX else "")
+                                  for d in s.get("depends_on", []) if d in outputs)
                 tier = s.get("tier")
                 if eco and tier == "strong":
                     tier = "mid"  # eng qimmat daraja faqat «sifat» rejimida
@@ -511,22 +592,35 @@ class Orchestrator:
             for sid, out in await self._gather_or_cancel([work(s) for s in ready]):
                 outputs[sid] = out
                 remaining.pop(sid)
+                (steps_dir / f"{sid}.md").write_text(out, encoding="utf-8")
+            await self.store.set_kv(f"ckpt:{task_id}", json.dumps({"plan": plan, "outputs": outputs}, ensure_ascii=False))
 
-        if eco and len(outputs) == 1:  # bitta qadam: uni qayta yozishning keragi yo'q (pul va vaqt tejaladi)
+        criteria = [str(c)[:200] for c in (plan.get("acceptance") or []) if str(c).strip()][:6]
+        if (eco or simple) and len(outputs) == 1:  # bitta qadam: uni qayta yozishning keragi yo'q (pul va vaqt tejaladi)
             deliverable = next(iter(outputs.values()))
         else:
-            deliverable = await self._synthesize(task_id, request, outputs, None, "mid", env)
+            deliverable = await self._synthesize(task_id, request, outputs, None, "mid", env, criteria=criteria)
+        if simple and not self._files(env.workspace):  # oddiy, faylsiz ish: QA va qadoqlash so'rovlari kerak emas
+            return self._package_simple(request, deliverable, env)
         for attempt in range(self.max_revisions + 1):
             await self._check_pause()
-            verdict = await self._review(task_id, request, deliverable, env)
+            verdict = await self._review(task_id, request, deliverable, env, criteria)
             if verdict.get("verdict") == "pass" or attempt == self.max_revisions:
                 if verdict.get("verdict") != "pass":
                     deliverable += "\n\n⚠️ QA hali ham e'tiroz bildirgan:\n- " + "\n- ".join(verdict.get("issues", []))
                 break
             await notify(f"🔎 QA {len(verdict.get('issues', []))} ta muammo topdi, tuzatilyapti...")
             deliverable = await self._synthesize(task_id, request, outputs, verdict.get("issues", []), "mid" if eco else "strong", env,
-                                                 previous=deliverable)
+                                                 previous=deliverable, criteria=criteria)
         return await self._package(task_id, request, deliverable, env, eco)
+
+    def _package_simple(self, request: str, answer: str, env) -> str:
+        """LLM'siz qadoqlash (oddiy ishlar): NATIJA.md = javob, PROMPT.md = namunaviy prompt."""
+        ws = env.workspace
+        (ws / RESULT_FILE).write_text(answer, encoding="utf-8")
+        (ws / PROMPT_FILE).write_text(f"# Vazifa\n{request}\n\n# Kutilgan natija (namuna)\n{clip(answer, 6000)}\n\n"
+                                      "Yuqoridagi vazifani to'liq bajaring va natijani shu namunadagi tuzilishda bering.", encoding="utf-8")
+        return answer
 
     async def _package(self, task_id, request, deliverable, env, eco: bool = False) -> str:
         """Yakuniy qadoqlash: NATIJA.md (to'liq tayyor natija), PROMPT.md (boshqa AI uchun to'liq prompt)
@@ -539,7 +633,7 @@ class Orchestrator:
                 previews.append(f"### {rel}\n{clip((ws / rel).read_text(encoding='utf-8'), 1500)}")
             except (UnicodeDecodeError, OSError):
                 previews.append(f"### {rel}\n(binary)")
-        prompt = (f"# Original request\n{request}\n\n# Final deliverable\n{clip(deliverable, 10000)}\n\n"
+        prompt = (f"# Original request\n{request}\n\n# Final deliverable\n{clip(deliverable, 8000)}\n\n"
                   f"# Other files produced\n" + ("\n\n".join(previews) or "(none)") + "\n\n"
                   "Write two sections in the language of the request, in plain human language (no JSON):\n"
                   "===ANSWER===\nA short, direct answer to exactly what was asked (the conclusion, the numbers, the decision, "
@@ -579,9 +673,9 @@ class Orchestrator:
 
     async def _plan(self, task_id, request, env, eco: bool = False) -> dict:
         roster = await self.team.roster()
-        mems = await self.store.search_memories(request, 5)
+        mems = await self._recall(request, 5)
         memo = ("# Relevant memory about the owner/business\n" + "\n".join(f"- {m['text']}" for m in mems) + "\n\n") if mems else ""
-        prefs = await self.store.owner_prefs()
+        prefs = await self.store.owner_prefs(PREFS_SHOWN)
         if prefs:
             memo = "# Owner's standing preferences (ALWAYS follow)\n" + "\n".join(f"- {m['text']}" for m in prefs) + "\n\n" + memo
         prompt = (f"# Team\n{roster}\n\n{memo}# Request\n{request}\n\n"
@@ -590,7 +684,12 @@ class Orchestrator:
                   "Pick a model tier per step: 'cheap' for lookups and simple drafting, 'mid' for substantive "
                   "creation, 'strong' ONLY for the hardest reasoning or architecture. Prefer the cheaper tier when unsure. "
                   "Only propose new_roles if no existing role fits (max 2). "
-                  'Return ONLY JSON: {"summary": "...", "steps": [{"id": "s1", "agent": "<team member name>", '
+                  "Set complexity to 'simple' when ONE step by one specialist is enough and no files or research are needed. "
+                  "If it is a simple question you can answer fully and correctly yourself from general knowledge (no files, "
+                  "no current data, no web research, nothing to build), put the complete answer in direct_answer and give one step anyway. "
+                  "List 2-6 concrete acceptance criteria the final result must meet (what the owner explicitly asked for). "
+                  'Return ONLY JSON: {"summary": "...", "complexity": "simple|normal", "direct_answer": "", '
+                  '"acceptance": ["..."], "steps": [{"id": "s1", "agent": "<team member name>", '
                   '"task": "self-contained instruction", "tier": "cheap|mid|strong", "depends_on": []}], '
                   '"new_roles": [{"name": "snake_case_name", "why": "..."}]}')
         last_err = None
@@ -607,24 +706,27 @@ class Orchestrator:
             prompt += "\n\nYour previous answer was not valid JSON in the required shape. Return ONLY the JSON."
         raise RuntimeError(f"Rahbar yaroqli reja tuza olmadi: {last_err}")
 
-    async def _synthesize(self, task_id, request, outputs, issues, tier, env, previous=None) -> str:
-        parts = "\n\n".join(f"## {k}\n{clip(v, 8000)}" for k, v in outputs.items())
+    async def _synthesize(self, task_id, request, outputs, issues, tier, env, previous=None, criteria=None) -> str:
+        parts = "\n\n".join(f"## {k}\n{clip(v, 6000)}" for k, v in outputs.items())
         files = self._files(env.workspace)
         prompt = (f"# Original request\n{request}\n\n# Team outputs\n{parts}\n\n"
                   f"# Files in the workspace (delivered to the user automatically)\n{', '.join(files) or '(none)'}\n\n"
                   "Assemble ONE final, complete answer for the user. Merge the outputs, remove duplication, "
                   "keep all concrete content, and refer to the delivered files by name.")
+        if criteria:
+            prompt += "\n\n# The result MUST satisfy\n- " + "\n- ".join(criteria)
         if issues:
             prompt += ("\n\n# Previous draft\n" + clip(previous or "", 8000) +
                        "\n\n# Reviewer issues to fix\n- " + "\n- ".join(issues))
         return await self.team.run_agent("ceo", prompt, task_id=task_id, tier=tier, env=env)
 
-    async def _review(self, task_id, request, deliverable, env) -> dict:
+    async def _review(self, task_id, request, deliverable, env, criteria=None) -> dict:
         files = self._files(env.workspace)
-        prompt = (f"# Original request\n{request}\n\n# Deliverable\n{clip(deliverable, 12000)}\n\n"
+        checklist = ("# Acceptance criteria (check EACH one explicitly)\n- " + "\n- ".join(criteria) + "\n\n") if criteria else ""
+        prompt = (f"# Original request\n{request}\n\n{checklist}# Deliverable\n{clip(deliverable, 10000)}\n\n"
                   f"# Workspace files (you may read them)\n{', '.join(files) or '(none)'}\n\n"
-                  "Does the deliverable fully and correctly satisfy the request? Report only real problems "
-                  '(missing parts, errors, ignored requirements). Return ONLY JSON: '
+                  "Does the deliverable fully and correctly satisfy the request" + (" and every acceptance criterion" if criteria else "") +
+                  "? Report only real problems (missing parts, errors, ignored requirements, unmet criteria). Return ONLY JSON: "
                   '{"verdict": "pass|fail", "issues": ["..."]}')
         raw = await self.team.run_agent("qa", prompt, task_id=task_id, env=env)
         try:

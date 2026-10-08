@@ -188,6 +188,25 @@ class Router:
             return text
         raise VoiceError(f"Ovozni matnga aylantirib bo'lmadi ({last})")
 
+    async def embed(self, texts: list[str], *, query: bool = False) -> list[list[float]] | None:
+        """Ma'no bo'yicha qidiruv uchun vektorlar (Gemini). Kalit yo'q yoki xato: None (kalit so'z qidiruvi ishlaydi)."""
+        if not texts:
+            return []
+        for name, prov in self.providers.items():
+            if not hasattr(prov, "embed"):
+                continue
+            pc = self.s.providers.get(name)
+            if pc and await self.store.spent(name) >= pc.budget_usd:
+                return None
+            try:
+                vecs, cost = await prov.embed(texts, query=query)
+            except ProviderError as e:
+                await self.store.audit("router", "embed_error", str(e)[:300])
+                return None
+            await self.store.add_usage(name, "embedding", None, "memory", 0, 0, 0, cost)
+            return vecs
+        return None
+
     async def speak(self, text: str, *, task_id=None) -> bytes:
         """Matnni ovozga aylantiradi (PCM 24 kHz mono). Faqat Gemini."""
         cands = [p for n, p in self.s.providers.items() if n in self.providers and hasattr(self.providers[n], "speak")]

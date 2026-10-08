@@ -36,6 +36,7 @@ class ToolEnv:
     notify: Any = None  # async (matn) -> None: egasiga xabar (Telegram/panel)
     tg: Any = None      # TgUser (shaxsiy Telegram akkaunt) yoki None
     redact: bool = False  # maxfiy AI yo'q: Telegram matnidagi karta/parol/kod/kalitlar yashiriladi
+    cache: dict = field(default_factory=dict)  # vazifa ichida bir xil qidiruv/sahifa qayta so'ralmaydi
 
 
 @dataclass(frozen=True)

@@ -269,6 +269,24 @@ class GeminiProvider(_HttpProvider):
         tin, tout = u.get("promptTokenCount", 0), (u.get("candidatesTokenCount", 0) or 0) + (u.get("thoughtsTokenCount", 0) or 0)
         return LLMResult(text, tin, tout, 0, compute_cost(cfg, tin, tout, 0))
 
+    EMBED_MODEL = "gemini-embedding-001"
+    EMBED_DIM = 256
+
+    async def embed(self, texts: list[str], query: bool = False) -> tuple[list[list[float]], float]:
+        """Matnlarni vektorga aylantiradi (ma'no bo'yicha qidiruv uchun). Qaytadi: vektorlar va taxminiy narx ($)."""
+        reqs = [{"model": f"models/{self.EMBED_MODEL}", "content": {"parts": [{"text": t[:2000]}]},
+                 "taskType": "RETRIEVAL_QUERY" if query else "RETRIEVAL_DOCUMENT", "outputDimensionality": self.EMBED_DIM}
+                for t in texts]
+        data = await self._request("POST", f"{self.base}/models/{self.EMBED_MODEL}:batchEmbedContents", json={"requests": reqs})
+        try:
+            vecs = [e["values"] for e in data["embeddings"]]
+        except (KeyError, TypeError) as e:
+            raise ProviderError(f"gemini: vektor kelmadi ({str(data)[:200]})") from e
+        if len(vecs) != len(texts):
+            raise ProviderError("gemini: vektorlar soni mos emas")
+        tokens = sum(len(t) for t in texts) // 4
+        return vecs, tokens * 0.15 / 1_000_000
+
     TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
     async def speak(self, cfg, text: str, voice: str = "Kore") -> tuple[bytes, float]:
