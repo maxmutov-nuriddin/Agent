@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-w";
+const PANEL_V = "2026.10.08-x";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -132,7 +132,12 @@ const usd = (n) => "$" + Number(n || 0).toFixed(Math.abs(n) >= 10 ? 1 : 2);
 const initials = (n) => n.split("_").map((p) => p[0] || "").join("").slice(0, 2).toUpperCase();
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 2400); }
 async function api(path, opts = {}) {
-  const r = await fetch("/api" + path, { ...opts, headers: { Authorization: "Bearer " + S.token, "Content-Type": "application/json" } });
+  // Vaqt chegarasi: server uxlab qolsa yoki osilsa, sahifa abadiy qora turib qolmasin
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), opts.timeout || 30000);
+  let r;
+  try { r = await fetch("/api" + path, { ...opts, signal: ctl.signal, headers: { Authorization: "Bearer " + S.token, "Content-Type": "application/json" } }); }
+  catch (e) { throw new Error(e.name === "AbortError" ? "Server javob bermadi" : "Aloqa yo'q"); }
+  finally { clearTimeout(timer); }
   if (r.status === 401) { showLogin(); throw new Error("auth"); }
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || "Xatolik " + r.status);
@@ -147,15 +152,54 @@ function ago(iso) {
 
 // ---------- kirish ----------
 function showLogin(msg) { $("login").hidden = false; $("login-err").textContent = msg || ""; }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Ulanish: bepul serverda birinchi so'rov uni uyg'otadi (1 daqiqagacha) — qora ekran o'rniga holatni ko'rsatamiz
 async function tryLogin(token) {
-  S.token = token;
-  try { await api("/state"); } catch (e) { if (e.message !== "auth") showLogin(e.message); return false; }
-  localStorage.setItem("aij_token", token); $("login").hidden = true; return true;
+  const splash = $("splash"), msg = $("splash-msg"), retry = $("splash-retry");
+  splash.hidden = false; retry.hidden = true; msg.textContent = "";
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    const s = Math.round((Date.now() - t0) / 1000);
+    if (s >= 4) msg.textContent = `Server uyg'onmoqda (bepul tarifda 1 daqiqagacha)… ${s} s`;
+  }, 1000);
+  try {
+    S.token = token;
+    for (;;) {
+      try { await api("/state", { timeout: 25000 }); break; }
+      catch (e) {
+        if (e.message === "auth") return false;
+        if (Date.now() - t0 > 100000) {
+          clearInterval(tick);
+          msg.textContent = "Server javob bermayapti (" + e.message + "). Render'da xizmat ishlayotganini tekshiring.";
+          retry.hidden = false;
+          await new Promise((res) => { retry.onclick = res; });
+          return tryLogin(token);
+        }
+        await sleep(3000);
+      }
+    }
+    localStorage.setItem("aij_token", token); $("login").hidden = true; return true;
+  } finally { clearInterval(tick); splash.hidden = true; }
 }
 $("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!(await tryLogin($("token").value.trim()))) $("login-err").textContent = "Kalit noto'g'ri"; else start();
 });
+// PWA: telefon/kompyuterga ilova sifatida o'rnatish
+let installEvt = null;
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; });
+function installCard() {
+  const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  if (standalone) return h("div", { class: "card" }, h("div", { class: "kv" }, h("span", {}, "📲 Ilova"), h("span", { class: "muted" }, "o'rnatilgan ✓")));
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const btn = installEvt ? h("button", { class: "btn lime full", onclick: async () => {
+    installEvt.prompt(); try { await installEvt.userChoice; } catch { /* bekor qilindi */ } installEvt = null; refresh(true);
+  } }, "📲 Ilovani o'rnatish") : null;
+  const tip = ios
+    ? "iPhone: brauzerdagi «Ulashish» (□↑) tugmasi → «Bosh ekranga qo'shish» → «Qo'shish». Ilovani birinchi ochganda kalitni bir marta kiritasiz."
+    : installEvt ? "Ilova alohida oynada ochiladi, kalit eslab qolinadi." : "Brauzer menyusi (⋮) → «Ilovani o'rnatish» yoki «Bosh ekranga qo'shish».";
+  return h("div", { class: "card" }, btn, h("p", { class: "hint" }, tip));
+}
 
 // ---------- oyna ----------
 function openSheet(...kids) { $("sheet-body").replaceChildren(...kids.filter((k) => k != null && k !== false)); $("sheet").hidden = false; }
@@ -677,6 +721,7 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("div", { class: "acts" }, h("button", { class: "btn", onclick: showModels }, "🔎 Modellarni tekshirish"), h("button", { class: "btn", onclick: showWidget }, "📱 iPhone vidjeti")),
     pause, h("div", { class: "label" }),
     h("button", { class: "btn ghost full", onclick: () => { localStorage.removeItem("aij_token"); S.token = ""; location.reload(); } }, "Chiqish"),
+    h("div", { class: "label" }, "Telefonga o'rnatish"), installCard(),
     h("p", { class: "hint ver" }, "Versiya: " + (state.version || "?") + " · panel " + PANEL_V)];
 }
 

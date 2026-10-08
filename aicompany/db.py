@@ -154,7 +154,8 @@ class Store:
         self.remote = not url.startswith("sqlite")  # tashqi baza: fayllar va Telegram sessiyasi ham bazada saqlanadi
         if url.startswith("sqlite") and ":memory:" not in url:
             Path(url.split("///", 1)[1]).parent.mkdir(parents=True, exist_ok=True)
-        extra = {"pool_pre_ping": True, "pool_recycle": 1800} if self.remote else {}
+        # tashqi baza: ulanishlar soni kichik (Supabase bepul pooler limiti), uzilgan ulanish tekshiriladi
+        extra = {"pool_pre_ping": True, "pool_recycle": 1800, "pool_size": 3, "max_overflow": 5} if self.remote else {}
         self.engine = create_async_engine(url, connect_args=connect_args, **extra)
         if url.startswith("sqlite") and ":memory:" not in url:
             @sa.event.listens_for(self.engine.sync_engine, "connect")

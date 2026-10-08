@@ -283,3 +283,4 @@ details.team { margin-top: 18px; }
 details.team summary { cursor: pointer; color: var(--muted); font-weight: 700; font-size: 14px; padding: 8px 0; }
 .linkbtn { background: none; border: 0; color: var(--lime); padding: 6px 0; font-weight: 700; font-size: 14px; }
 .step .md div, .step .md td, .step .md th { color: var(--text); font-size: inherit; margin: 0; }
+[hidden] { display: none !important; }  /* .btn kabi display beradigan uslublar hidden ni bosib ketmasin */
