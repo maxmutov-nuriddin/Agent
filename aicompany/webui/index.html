@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>AI Jamoa</title>
-<meta name="theme-color" content="#0a0c0e">
+<meta name="theme-color" content="#000000">
 <meta name="color-scheme" content="dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -17,21 +17,28 @@
 </head>
 <body>
 <div id="app">
-  <header class="top">
-    <div class="brand"><span class="orb" id="orb"></span><div><h1>AI Jamoa</h1><p id="sub">Yuklanmoqda…</p></div></div>
-    <div class="spend" id="spend"></div>
-  </header>
   <main id="view"></main>
   <nav class="tabs" id="tabs"></nav>
 </div>
+<section id="chat" class="chatpage" hidden>
+  <header class="chat-top">
+    <button class="back" id="chat-back" aria-label="Orqaga">‹</button>
+    <div><h2>Rahbar</h2><p id="chat-sub"></p></div>
+  </header>
+  <div class="msgs" id="msgs"></div>
+  <div class="composer">
+    <textarea id="chat-input" rows="1" placeholder="Rahbarga yozing…" enterkeyhint="send"></textarea>
+    <button class="send" id="chat-send" aria-label="Yuborish"></button>
+  </div>
+</section>
 <div id="sheet" class="sheet" hidden><div class="sheet-bg" id="sheet-bg"></div><div class="sheet-body" id="sheet-body"></div></div>
 <div id="login" class="login" hidden>
   <form class="login-card" id="login-form" autocomplete="off">
-    <span class="orb big"></span>
+    <span class="ring big"></span>
     <h2>Kirish</h2>
-    <p>Terminalda chiqqan maxfiy kalitni (WEB_TOKEN) kiriting yoki shu kalitli havolani oching.</p>
+    <p>Terminalda yoki Telegramda (/web) chiqqan havolani oching, yoki kalitni kiriting.</p>
     <input id="token" type="password" placeholder="WEB_TOKEN" autocomplete="off" autocapitalize="off" spellcheck="false">
-    <button class="btn primary" id="login-btn" type="submit">Kirish</button>
+    <button class="btn lime" id="login-btn" type="submit">Kirish</button>
     <p class="err" id="login-err"></p>
   </form>
 </div>

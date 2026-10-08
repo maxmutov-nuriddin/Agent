@@ -117,6 +117,9 @@ async def test_state_team_and_hire_fire(web):
     c, app = web
     _, st = await get(c, "/api/state")
     assert st["paused"] is False and st["pending"] == 0 and st["budgets"][0]["provider"] == "anthropic"
+    assert st["done_today"] == 0
+    await app.orch.run_task("x", 1)
+    assert (await get(c, "/api/state"))[1]["done_today"] == 1
     _, team = await get(c, "/api/team")
     assert {a["name"] for a in team} >= {"ceo", "developer"} and next(a for a in team if a["name"] == "ceo")["core"]
     assert (await post(c, "/api/team/fire", {"name": "ceo"}))[0] == 409  # asosiy xodim

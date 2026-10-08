@@ -119,12 +119,16 @@ def make_web_app(app: App) -> web.Application:
 
     async def state_data() -> dict:
         budgets = await app.router.status()
-        running = [t for t in await app.store.list_tasks(50) if t["status"] == "running"]
+        recent = await app.store.list_tasks(100)
+        running = [t for t in recent if t["status"] == "running"]
+        day_iso = day_start_utc(datetime.now(ZoneInfo(s.report_tz))).isoformat()
+        done_today = sum(1 for t in recent if t["status"] == "done" and (t["finished_at"] or "") >= day_iso)
         return {
             "paused": await app.store.get_kv("paused") == "1",
             "today": round(await today_spend(), 4),
             "budgets": [{"provider": n, **v} for n, v in budgets.items()],
             "working": [{"agent": a, "task_id": b["task_id"]} for a, b in app.team.busy.items()],
+            "done_today": done_today,
             "running_tasks": [{"id": t["id"], "request": t["request"][:100]} for t in running],
             "pending": len(app.center.list()) if app.center else 0,
         }
