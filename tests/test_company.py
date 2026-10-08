@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from aicompany.util import extract_json
@@ -301,10 +302,10 @@ async def test_interrupted_task_is_resumed_once_after_restart(make_app):
         notes.append(s)
     await app.orch.resume_interrupted(notify, delay=0)
     tasks = {t["id"]: t for t in await app.store.list_tasks(10)}
-    assert len(tasks) == 2 and tasks[tid]["status"] == "interrupted" and "avtomatik" in tasks[tid]["note"]
+    assert len(tasks) == 2 and tasks[tid]["status"] == "interrupted" and "vtomatik" in tasks[tid]["note"]
     new = tasks[max(tasks)]
     assert new["status"] == "done" and new["based_on"] == tid
-    assert any("avtomatik qayta boshlandi" in n for n in notes)
+    assert any("avtomatik davom ettirilmoqda" in n for n in notes)
     await app.orch.resume_interrupted(notify, delay=0)               # ikkinchi qayta ishga tushish: takrorlamaydi
     assert len(await app.store.list_tasks(10)) == 2
     # nusxa ham uzilsa, cheksiz takrorlanmaydi
@@ -328,3 +329,43 @@ async def test_daily_report_lists_important_actions(make_app):
     text = await build_report(app, since, "Hisobot")
     assert "1 ta yuborildi, 1 ta rad" in text and "Ali" in text and "npm install" in text
     assert "Maxfiy AI ishlamadi: 1 marta" in text and "Xatolar: 1" in text
+
+
+async def test_resume_gives_progress_and_files_to_the_new_task(make_app):
+    seen = []
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "Plan the work" in user:
+            seen.append(user)
+        return base(system, user, model)
+    app, _ = await make_app(handler)
+    tid = await app.store.create_task(0, "sayt yasab ber")
+    ws = app.settings.workspace_dir / f"task_{tid}"
+    ws.mkdir(parents=True, exist_ok=True)
+    (ws / "index.html").write_text("<h1>yarim</h1>")
+    await app.store.add_message(tid, "researcher", "TADQIQOT NATIJASI: 3 ta raqobatchi")
+    await app.store.add_message(tid, "ceo", "===ANSWER===\nqisqa javob\n===PROMPT===\nprompt")   # qadoqlash: kontekstga tushmasligi kerak
+    await app.store.update_task(tid, status="cancelled", finished_at="2026-10-09T10:00:00+00:00")
+    res = await app.orch.submit_task("sayt yasab ber", 0, None or (lambda s: asyncio.sleep(0)), None, based_on=tid)
+    assert res["status"] == "done"
+    plan_prompt = seen[-1]
+    assert "RESUME" in plan_prompt and "do NOT redo" in plan_prompt and "TADQIQOT NATIJASI" in plan_prompt and "index.html" in plan_prompt
+    assert "===ANSWER===" not in plan_prompt
+    assert (app.settings.workspace_dir / f"task_{res['task_id']}" / "index.html").exists()   # fayl nusxalandi
+
+
+async def test_paused_tasks_continue_after_resume_once(make_app):
+    app, _ = await make_app(scripted_company())
+    tid = await app.store.create_task(0, "reja tuz")
+    from aicompany.db import now
+    await app.store.update_task(tid, status="paused", finished_at=now())
+    notes = []
+
+    async def notify(s):
+        notes.append(s)
+    assert await app.orch.resume_stopped(notify, ("paused",), delay=0) == 1
+    assert await app.orch.resume_stopped(notify, ("paused",), delay=0) == 0           # ikkinchi marta takrorlamaydi
+    tasks = await app.store.list_tasks(10)
+    assert len(tasks) == 2 and {t["status"] for t in tasks} == {"paused", "done"}
+    assert any("davom ettirilmoqda" in n for n in notes) and any("🏁" in n for n in notes)

@@ -225,7 +225,31 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
     @dp.message(Command("resume"))
     async def _resume(m: Message):
         await app.store.set_kv("paused", "0")
-        await m.answer("▶️ Davom etamiz.")
+        await m.answer("▶️ Davom etamiz. Pauza tufayli to'xtagan vazifalar qayta boshlanadi.")
+
+        async def tell(text):
+            await send_text(bot, m.chat.id, text)
+        spawn(app.orch.resume_stopped(tell, ("paused",), delay=0))
+
+    @dp.message(Command("davom"))
+    async def _continue_cmd(m: Message, command: CommandObject):
+        arg = (command.args or "").strip().lstrip("#")
+        t = await app.store.get_task(int(arg)) if arg.isdigit() else None
+        if not t:
+            return await m.answer("Vazifa raqamini yozing: /davom 12")
+        if t["status"] in ("running", "done"):
+            return await m.answer("Bu vazifa " + ("hozir ishlayapti." if t["status"] == "running" else "tugagan. O'zgartirish uchun oddiy xabar yozing."))
+
+        async def tell(text):
+            await send_text(bot, m.chat.id, text)
+
+        async def job():
+            res = await app.orch.submit_task(t["request"], m.chat.id, tell, None, based_on=t["id"])
+            await tell(f"🏁 Vazifa #{res.get('task_id')} — {STATUS_UZ.get(res.get('status'), res.get('status'))}")
+            if res.get("result"):
+                await send_long(bot, m.chat.id, res["result"], f"task_{res['task_id']}.md")
+        await m.answer(f"▶️ #{t['id']} davom ettirilmoqda…")
+        spawn(job())
 
     @dp.message(Command("hire"))
     async def _hire(m: Message, command: CommandObject):

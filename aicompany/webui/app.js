@@ -9,14 +9,15 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-d";
+const PANEL_V = "2026.10.09-e";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
   limit: ["Limit tugadi", "amber"], paused: ["Pauza", "amber"], interrupted: ["Uzildi (dastur qayta yoqilgan)", "amber"], stopped: ["To'xtatilgan", "amber"] };
-const WHY = { done: "", running: "", failed: "Vazifa xato bilan tugadi.", cancelled: "Siz uni qo'lda to'xtatdingiz. Bajarilgan qismi saqlangan.",
+const CAN_RESUME = new Set(["interrupted", "paused", "cancelled", "limit", "failed", "stopped"]);  // to'xtagan: «Davom ettirish» tugmasi
+const WHY = { done: "", running: "", failed: "Vazifa xato bilan tugadi. «Davom ettirish» bilan qolgan qismini tugatishingiz mumkin.", cancelled: "Siz uni qo'lda to'xtatdingiz. Bajarilgan qismi saqlangan.",
   limit: "Bitta vazifa uchun ajratilgan pul limiti tugadi. .env dagi MAX_TASK_USD ni oshirishingiz mumkin.", paused: "Hammasi pauzaga qo'yilgan edi.",
-  interrupted: "Dastur qayta ishga tushganda vazifa o'rtada uzilgan.", stopped: "" };
+  interrupted: "Dastur qayta ishga tushganda vazifa o'rtada uzilgan. «Davom ettirish» bilan bajarilgan qismidan davom etadi.", stopped: "" };
 const APPR = { approved: ["✓ Ruxsat berdingiz", ""], denied: ["✕ Siz rad etdingiz", "red"], expired: ["⏱ Javob bermadingiz (muddat tugadi)", "amber"], pending: ["Javob kutilmoqda", ""] };
 const AGENT_UZ = { ceo: "Rahbar", hr: "HR", qa: "Sifat nazorati", developer: "Dasturchi", marketer: "Marketolog",
   researcher: "Tahlilchi", generalist: "Universal xodim", assistant: "Yordamchi" };
@@ -612,7 +613,10 @@ async function openTask(id) {
     : t.archived
       ? [h("button", { class: "btn", onclick: act(`/tasks/${t.id}/restore`, "Qaytarildi") }, "↩ Qaytarish"),
          h("button", { class: "btn red", onclick: () => { if (confirm("Vazifa va uning fayllari butunlay o'chiriladi. Davom etasizmi?")) act(`/tasks/${t.id}`, "O'chirildi", "DELETE")(); } }, "🗑 Butunlay o'chirish")]
-      : [h("button", { class: "btn lime", onclick: () => taskSheet(t.id) }, "✏️ O'zgartirish / davom"),
+      : [CAN_RESUME.has(t.status) ? h("button", { class: "btn lime", onclick: async () => {  // bir bosishda: bajarilgan qism saqlanadi, qolgani tugatiladi
+            try { await post("/tasks", { text: t.request, based_on: t.id }); closeSheet(); toast("▶️ Davom ettirilmoqda…"); go("tasks"); } catch (e) { toast(e.message); }
+          } }, "▶️ Davom ettirish") : null,
+         h("button", { class: CAN_RESUME.has(t.status) ? "btn" : "btn lime", onclick: () => taskSheet(t.id) }, "✏️ O'zgartirish / davom"),
          h("button", { class: "btn", onclick: act(`/tasks/${t.id}/archive`, "Arxivga olindi") }, "🗄 Arxivga olish")];
   const why = WHY[t.status] || "";
   openSheet(h("h2", {}, "Vazifa #" + t.id), h("p", { class: "muted" }, `${label} · ${usd(t.cost)}${t.archived ? " · arxivda" : ""}`),

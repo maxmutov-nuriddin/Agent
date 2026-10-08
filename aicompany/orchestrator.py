@@ -158,13 +158,15 @@ class Orchestrator:
         res["kind"] = "task"
         return res
 
-    async def resume_interrupted(self, notify: Notify, *, max_age_h: float = 6, limit: int = 3, delay: float = 15):
-        """Server qayta ishga tushganda (Render uyquga ketishi/yangi versiya) uzilgan vazifalarni bir marta o'zi qayta boshlaydi."""
+    async def resume_stopped(self, notify: Notify, statuses=("interrupted",), *, max_age_h: float = 6, limit: int = 3, delay: float = 15) -> int:
+        """Uzilgan (server qayta ishga tushgan) yoki pauzada qolgan vazifalarni bir martadan qayta boshlaydi:
+        avvalgi ish fayllari va jamoa natijalari yangi vazifaga beriladi, bajarilgan qism qaytadan qilinmaydi."""
         from datetime import datetime, timedelta, timezone
-        await asyncio.sleep(delay)
+        if delay:
+            await asyncio.sleep(delay)
         since = (datetime.now(timezone.utc) - timedelta(hours=max_age_h)).isoformat()
         started = 0
-        for t in await self.store.interrupted_since(since):
+        for t in await self.store.stopped_since(statuses, since):
             if started >= limit:
                 break
             if await self.store.get_kv(f"resumed:{t['id']}"):
@@ -172,15 +174,20 @@ class Orchestrator:
             if t["based_on"] and await self.store.get_kv(f"resumed:{t['based_on']}"):
                 continue  # bu allaqachon avtomatik qayta boshlangan vazifaning nusxasi: cheksiz takrorlanmasin
             await self.store.set_kv(f"resumed:{t['id']}", "1")
-            await self.store.update_task(t["id"], note=(f"Server qayta ishga tushgani uchun avtomatik qayta boshlandi.")[:400])
+            await self.store.update_task(t["id"], note="Avtomatik davom ettirildi (yangi vazifa sifatida).")
             started += 1
             try:
-                await _safe(notify)(f"♻️ Server qayta ishga tushgani uchun #{t['id']} vazifa avtomatik qayta boshlandi.")
-                await self.submit_task(t["request"], t["chat_id"] or 0, notify, None, based_on=t["id"])
+                await _safe(notify)(f"♻️ #{t['id']} vazifa avtomatik davom ettirilmoqda.")
+                res = await self.submit_task(t["request"], t["chat_id"] or 0, notify, None, based_on=t["id"])
+                await _safe(notify)(f"🏁 #{res.get('task_id')} (#{t['id']} davomi) — {res.get('status')}")
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
                 await self.store.audit("orchestrator", "resume_error", f"#{t['id']}: {e!r}"[:300])
+        return started
+
+    async def resume_interrupted(self, notify: Notify, **kw) -> int:
+        return await self.resume_stopped(notify, ("interrupted",), **kw)
 
     def stop_task(self, task_id: int) -> bool:
         t = self.running.get(task_id)
@@ -244,6 +251,12 @@ class Orchestrator:
         if src.is_dir():
             shutil.copytree(src, ws, dirs_exist_ok=True)
         files = self._files(ws)
+        if prev["status"] != "done":  # to'xtatilgan/uzilgan/pauzadagi vazifa: bajarilgan qismini saqlab, qolganini tugatamiz
+            done = "\n\n".join(f"[{m['agent']}]\n{clip(m['content'] or '', 1500)}" for m in await self.store.task_messages(based_on)
+                                if m["agent"] not in ("hr", "qa"))
+            return (f"\n\n[RESUME: task #{based_on} was stopped before it finished (status: {prev['status']}). Its files are already in the "
+                    f"workspace: {', '.join(files) or '(none)'}. Work already done by the team is below: do NOT redo it; "
+                    f"continue from where it stopped and deliver the complete final result.\nWork so far:\n{clip(done or prev['result'] or '(nothing saved)', 5000)}]")
         return (f"\n\n[This continues task #{based_on}: \"{clip(prev['request'], 300)}\". "
                 f"Its files are already in the workspace: {', '.join(files) or '(none)'}. Modify or extend them as "
                 f"requested instead of starting over.\nPrevious result:\n{clip(prev['result'] or '', 2500)}]")

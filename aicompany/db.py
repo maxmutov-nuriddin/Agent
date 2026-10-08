@@ -386,8 +386,8 @@ class Store:
                                .values(status="interrupted", finished_at=now()))
         return res.rowcount
 
-    async def interrupted_since(self, iso_ts: str):
-        return await self._all(sa.select(tasks).where(tasks.c.status == "interrupted", tasks.c.finished_at >= iso_ts).order_by(tasks.c.id))
+    async def stopped_since(self, statuses, iso_ts: str):
+        return await self._all(sa.select(tasks).where(tasks.c.status.in_(list(statuses)), tasks.c.finished_at >= iso_ts).order_by(tasks.c.id))
 
     async def audit_since(self, iso_ts: str, limit: int = 300):
         return await self._all(sa.select(audit_log).where(audit_log.c.ts >= iso_ts).order_by(audit_log.c.id.desc()).limit(limit))

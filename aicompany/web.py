@@ -710,6 +710,13 @@ def make_web_app(app: App) -> web.Application:
 
     async def h_resume(request):
         await app.store.set_kv("paused", "0")
+
+        async def job():  # pauza tufayli to'xtagan vazifalar o'zi davom etadi
+            try:
+                await app.orch.resume_stopped(notify, ("paused",), delay=0)
+            except Exception as e:  # noqa: BLE001
+                await report_failure(e)
+        spawn(job())
         return json_ok({"paused": False})
 
     async def h_memory(request):
