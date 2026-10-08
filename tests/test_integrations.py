@@ -237,8 +237,8 @@ async def test_tg_send_disabled_in_read_mode_and_validates(tgenv):
     with pytest.raises(ToolError, match="TG_MODE=write"):
         await run(env, "tg_send", chat="@ali_x", text="x")
     env.settings = dataclasses.replace(env.settings, tg_mode="write")
-    for bad in ("", "x" * 3001):
-        with pytest.raises(ToolError, match="1-3000"):
+    for bad in ("", "x" * 4097):
+        with pytest.raises(ToolError, match="1-4096"):
             await run(env, "tg_send", chat="@ali_x", text=bad)
     assert fake.sent == []
 
