@@ -171,6 +171,7 @@ def make_web_app(app: App) -> web.Application:
         return {
             "paused": await app.store.get_kv("paused") == "1",
             "eco": await app.store.get_kv("eco") != "0",
+            "bot_push": (await app.store.get_kv("bot_push")) or "all",
             "today": round(await today_spend(), 4),
             "budgets": [{"provider": n, **v} for n, v in budgets.items()],
             "working": [{"agent": a, "task_id": b["task_id"]} for a, b in app.team.busy.items()],
@@ -729,6 +730,14 @@ def make_web_app(app: App) -> web.Application:
             raise web.HTTPNotFound(reason="kutilayotgan eslatma topilmadi")
         return json_ok({"ok": True})
 
+    async def h_bot_push(request):
+        mode = str((await body(request)).get("mode", ""))
+        if mode not in ("all", "result", "off"):
+            raise web.HTTPBadRequest(reason="mode: all | result | off")
+        await app.store.set_kv("bot_push", mode)
+        await app.store.audit("owner", "bot_push", f"bot xabarlari: {mode}")
+        return json_ok({"bot_push": mode})
+
     async def h_eco(request):
         on = bool((await body(request)).get("enabled"))
         await app.store.set_kv("eco", "1" if on else "0")
@@ -791,7 +800,7 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/tasks", h_task_submit),
         web.post(r"/api/tasks/{id:\d+}/stop", h_task_stop), web.post(r"/api/tasks/{id:\d+}/archive", h_task_archive),
         web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
-        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/resume", h_resume),
+        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/resume", h_resume),
         web.post("/api/provider", h_provider), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),

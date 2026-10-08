@@ -14,6 +14,7 @@ from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile, Inline
                            InlineKeyboardMarkup, Message)
 
 from .app import App
+from .orchestrator import Progress
 from .providers import VoiceError, VoiceUnavailable
 from .report import build_report, daily_report_loop
 
@@ -227,9 +228,10 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
         await app.store.set_kv("paused", "0")
         await m.answer("▶️ Davom etamiz. Pauza tufayli to'xtagan vazifalar qayta boshlanadi.")
 
-        async def tell(text):
-            await send_text(bot, m.chat.id, text)
-        spawn(app.orch.resume_stopped(tell, ("paused",), delay=0))
+        async def go():
+            await app.orch.resume_stopped(await progress_notifier(m.chat.id), ("paused",), delay=0,
+                                          on_result=lambda res: deliver(m.chat.id, res))
+        spawn(go())
 
     @dp.message(Command("davom"))
     async def _continue_cmd(m: Message, command: CommandObject):
@@ -240,14 +242,9 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
         if t["status"] in ("running", "done"):
             return await m.answer("Bu vazifa " + ("hozir ishlayapti." if t["status"] == "running" else "tugagan. O'zgartirish uchun oddiy xabar yozing."))
 
-        async def tell(text):
-            await send_text(bot, m.chat.id, text)
-
         async def job():
-            res = await app.orch.submit_task(t["request"], m.chat.id, tell, None, based_on=t["id"])
-            await tell(f"🏁 Vazifa #{res.get('task_id')} — {STATUS_UZ.get(res.get('status'), res.get('status'))}")
-            if res.get("result"):
-                await send_long(bot, m.chat.id, res["result"], f"task_{res['task_id']}.md")
+            res = await app.orch.submit_task(t["request"], m.chat.id, await progress_notifier(m.chat.id), None, based_on=t["id"])
+            await deliver(m.chat.id, res)
         await m.answer(f"▶️ #{t['id']} davom ettirilmoqda…")
         spawn(job())
 
@@ -269,29 +266,45 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
         fired = await app.team.review(10)
         await m.answer("🧑‍💼 Bo'shatildi: " + ", ".join(fired) if fired else "Hamma xodim kerak yoki yetarli ma'lumot yo'q (10 vazifa kerak).")
 
-    async def run(chat_id: int, text: str, attachments=None):
+    async def push_mode() -> str:
+        return (await app.store.get_kv("bot_push")) or "all"   # all | result | off
+
+    async def deliver(chat_id: int, res: dict):
+        """Tugagan vazifa natijasini yuboradi («O'chiq» rejimida hech narsa yuborilmaydi: natija panelda)."""
+        if res.get("kind") == "chat" or await push_mode() == "off":
+            return
+        head = f"🏁 Vazifa #{res['task_id']} — {STATUS_UZ.get(res['status'], res['status'])}"
+        if res.get("error"):
+            head += f"\n{res['error']}"
+        await send_text(bot, chat_id, head)
+        if res.get("result"):
+            await send_long(bot, chat_id, res["result"], f"task_{res['task_id']}.md")
+        ws = app.settings.workspace_dir / f"task_{res['task_id']}"
+        for rel in res.get("files", [])[:8]:
+            f = ws / rel
+            try:
+                if f.stat().st_size <= MAX_UPLOAD:
+                    await bot.send_document(chat_id, FSInputFile(f, filename=f.name), caption=f"📎 {rel}")
+            except Exception:  # noqa: BLE001 — bitta fayl yuborilmasa qolganlari yuborilsin
+                log.exception("fayl yuborilmadi: %s", rel)
+        if len(res.get("files", [])) > 8:
+            await bot.send_message(chat_id, f"… yana {len(res['files']) - 8} ta fayl panelda (/web)")
+
+    async def progress_notifier(chat_id: int):
+        """Savolga javob doim yuboriladi; jarayon xabarlari (reja, qadamlar) faqat «Hammasi» rejimida."""
+        mode = await push_mode()
+
         async def notify(s: str):
+            if isinstance(s, Progress) and mode != "all":
+                return
             await send_text(bot, chat_id, s)
+        return notify
+
+    async def run(chat_id: int, text: str, attachments=None):
+        notify = await progress_notifier(chat_id)
         try:
             res = await app.orch.handle(text, chat_id, notify, attachments)
-            if res["kind"] == "chat":
-                return  # javob allaqachon yuborilgan
-            head = f"🏁 Vazifa #{res['task_id']} — {STATUS_UZ.get(res['status'], res['status'])}"
-            if res.get("error"):
-                head += f"\n{res['error']}"
-            await send_text(bot, chat_id, head)
-            if res.get("result"):
-                await send_long(bot, chat_id, res["result"], f"task_{res['task_id']}.md")
-            ws = app.settings.workspace_dir / f"task_{res['task_id']}"
-            for rel in res.get("files", [])[:8]:
-                f = ws / rel
-                try:
-                    if f.stat().st_size <= MAX_UPLOAD:
-                        await bot.send_document(chat_id, FSInputFile(f, filename=f.name), caption=f"📎 {rel}")
-                except Exception:  # noqa: BLE001 — bitta fayl yuborilmasa qolganlari yuborilsin
-                    log.exception("fayl yuborilmadi: %s", rel)
-            if len(res.get("files", [])) > 8:
-                await bot.send_message(chat_id, f"… yana {len(res['files']) - 8} ta fayl panelda (/web)")
+            await deliver(chat_id, res)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — foydalanuvchi javobsiz qolmasligi kerak
@@ -338,6 +351,8 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
     async def _text(m: Message):
         spawn(run(m.chat.id, m.text))
 
+    dp["deliver"] = deliver
+    dp["push_mode"] = push_mode
     return dp
 
 
@@ -351,14 +366,20 @@ async def run_bot(app: App, extra_senders=()):
     async def send_owner(text):
         await bot.send_message(s.owner_id, text)
     from .reminders import reminder_loop
+
+    async def send_report(text):
+        if await dp["push_mode"]() != "off":
+            await send_owner(text)
     async def tell(text):
+        if isinstance(text, Progress) and await dp["push_mode"]() != "all":
+            return
         for send in (send_owner, *extra_senders):
             try:
                 await send(text)
             except Exception:  # noqa: BLE001
                 pass
-    resume = asyncio.create_task(app.orch.resume_interrupted(tell))  # uzilgan vazifalar o'zi davom etadi
-    report = asyncio.create_task(daily_report_loop(app, send_owner))
+    resume = asyncio.create_task(app.orch.resume_interrupted(tell, on_result=lambda res: dp["deliver"](s.owner_id, res)))  # uzilgan vazifalar o'zi davom etadi
+    report = asyncio.create_task(daily_report_loop(app, send_report))
     remind = asyncio.create_task(reminder_loop(app, [send_owner, *extra_senders]))
     try:
         await dp.start_polling(bot)

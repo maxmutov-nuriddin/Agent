@@ -952,3 +952,10 @@ async def test_static_files_are_compressed_and_cached_with_etag(web):
     assert r2.status == 304                                              # o'zgarmagan: qayta yuklanmaydi
     big = await c.get("/api/overview", headers={**TOK, "Accept-Encoding": "gzip"}, skip_auto_headers=("Accept-Encoding",))
     assert big.status == 200 and len(await big.read()) > 0
+
+
+async def test_api_bot_push(web):
+    c, app = web
+    r = await c.post("/api/bot_push", json={"mode": "result"}, headers=TOK)
+    assert r.status == 200 and await app.store.get_kv("bot_push") == "result"
+    assert (await c.post("/api/bot_push", json={"mode": "zzz"}, headers=TOK)).status == 400

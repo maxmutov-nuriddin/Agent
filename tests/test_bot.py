@@ -268,3 +268,29 @@ async def test_reminders_command_lists_and_cancels(make_app, monkeypatch):
     await dp.feed_update(bot, update(OWNER, "/reminders cancel 1"))
     assert "Bekor" in sent[-1] and await app.store.list_reminders() == []
     await bot.session.close()
+
+
+async def test_bot_push_modes(make_app, monkeypatch):
+    from aicompany.orchestrator import Progress
+    sent = []
+
+    async def fake_call(self, method, request_timeout=None):
+        sent.append(getattr(method, "text", None))
+        return True
+    monkeypatch.setattr(Bot, "__call__", fake_call)
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID=str(OWNER))
+    bot = Bot("123456:ABC")
+    dp = make_dispatcher(app, bot)
+    res = {"task_id": 1, "status": "done", "result": "Javob", "files": []}
+
+    assert await dp["push_mode"]() == "all"
+    await dp["deliver"](OWNER, res)
+    assert any("Javob" in (t or "") for t in sent)
+
+    await app.store.set_kv("bot_push", "off")
+    sent.clear()
+    await dp["deliver"](OWNER, res)
+    assert sent == []
+    await bot.session.close()
+    assert isinstance(Progress("x"), str)
+

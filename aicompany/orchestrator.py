@@ -29,6 +29,10 @@ class Stopped(Exception):
     """Egasi vazifani to'xtatdi."""
 
 
+class Progress(str):
+    """Jarayon xabari (reja, qadam tugadi...). Telegram «Faqat natija»/«O'chiq» rejimlarida ko'rsatilmaydi, panelda esa har doim."""
+
+
 async def _noop(_: str):
     return None
 
@@ -158,7 +162,8 @@ class Orchestrator:
         res["kind"] = "task"
         return res
 
-    async def resume_stopped(self, notify: Notify, statuses=("interrupted",), *, max_age_h: float = 6, limit: int = 3, delay: float = 15) -> int:
+    async def resume_stopped(self, notify: Notify, statuses=("interrupted",), *, max_age_h: float = 6, limit: int = 3, delay: float = 15,
+                             on_result=None) -> int:
         """Uzilgan (server qayta ishga tushgan) yoki pauzada qolgan vazifalarni bir martadan qayta boshlaydi:
         avvalgi ish fayllari va jamoa natijalari yangi vazifaga beriladi, bajarilgan qism qaytadan qilinmaydi."""
         from datetime import datetime, timedelta, timezone
@@ -177,9 +182,12 @@ class Orchestrator:
             await self.store.update_task(t["id"], note="Avtomatik davom ettirildi (yangi vazifa sifatida).")
             started += 1
             try:
-                await _safe(notify)(f"♻️ #{t['id']} vazifa avtomatik davom ettirilmoqda.")
+                await _safe(notify)(Progress(f"♻️ #{t['id']} vazifa avtomatik davom ettirilmoqda."))
                 res = await self.submit_task(t["request"], t["chat_id"] or 0, notify, None, based_on=t["id"])
-                await _safe(notify)(f"🏁 #{res.get('task_id')} (#{t['id']} davomi) — {res.get('status')}")
+                if on_result:
+                    await on_result(res)  # natija (matn va fayllar) Telegramga ham yetkaziladi
+                else:
+                    await _safe(notify)(f"🏁 #{res.get('task_id')} (#{t['id']} davomi) — {res.get('status')}")
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
@@ -263,7 +271,10 @@ class Orchestrator:
 
     async def _run_task(self, request: str, chat_id: int, notify: Notify,
                         attachments: list[Path] | None, based_on: int | None = None) -> dict:
-        notify = _safe(notify)
+        raw_notify = _safe(notify)
+
+        async def notify(text: str):
+            await raw_notify(Progress(text))
         based_on = await self._valid_task_id(based_on) if based_on else None
         task_id = await self.store.create_task(chat_id, request, based_on)
         ws = self._workspace(task_id)
