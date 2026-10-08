@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-z";
+const PANEL_V = "2026.10.09-a";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -114,7 +114,14 @@ function readable(m) {
   return box;
 }
 const TEXT_EXT = /\.(txt|md|html?|css|js|mjs|json|py|ts|tsx|jsx|csv|xml|ya?ml|sh|sql|java|c|cpp|h|go|rs|php|rb|svg|toml|ini|log)$/i;
-const S = { cache: {}, token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, archive: false };
+// Oxirgi ko'rilgan ma'lumot telefonda saqlanadi: ilova ochilishi bilan darhol ko'rinadi, yangisi orqada keladi
+const loadCache = () => { try { return JSON.parse(localStorage.getItem("aij_cache") || "{}"); } catch { return {}; } };
+let saveTimer = 0;
+function saveCache() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { try { localStorage.setItem("aij_cache", JSON.stringify({ ...S.cache, _chat: S.chat.slice(-60) })); } catch { /* joy tugasa */ } }, 500);
+}
+const S = { cache: loadCache(), token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, archive: false };
 
 // ---------- yordamchilar ----------
 function h(tag, attrs, ...kids) {
@@ -242,7 +249,7 @@ async function refresh(force) {
   const [load, draw] = VIEWS[S.tab];
   try {
     const tab = S.tab, data = await load(), sig = JSON.stringify(data);
-    S.cache[tab] = data;
+    S.cache[tab] = data; saveCache();
     if (tab !== S.tab) return;  // kutilayotganda boshqa tabga o'tildi
     if (!force && S.sig[S.tab] === sig) return;
     S.sig[S.tab] = sig;
@@ -748,7 +755,7 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("div", { class: "acts" }, h("button", { class: "btn", onclick: showReport }, "📊 Hisobot"), h("button", { class: "btn", onclick: showAudit }, "🧾 Jurnal")),
     h("div", { class: "acts" }, h("button", { class: "btn", onclick: showModels }, "🔎 Modellarni tekshirish"), h("button", { class: "btn", onclick: showWidget }, "📱 iPhone vidjeti")),
     pause, h("div", { class: "label" }),
-    h("button", { class: "btn ghost full", onclick: () => { localStorage.removeItem("aij_token"); S.token = ""; location.reload(); } }, "Chiqish"),
+    h("button", { class: "btn ghost full", onclick: () => { localStorage.removeItem("aij_token"); localStorage.removeItem("aij_cache"); S.token = ""; location.reload(); } }, "Chiqish"),
     h("div", { class: "label" }, "Telefonga o'rnatish"), installCard(),
     h("p", { class: "hint ver" }, "Versiya: " + (state.version || "?") + " · panel " + PANEL_V)];
 }
@@ -857,9 +864,10 @@ async function poll() {
   if (polling) return;  // oldingi so'rov tugamagan bo'lsa, ustiga yangisini yubormaymiz (sekin aloqada navbat to'planardi)
   polling = true;
   try {
-    await pollChat();
-    if (S.chatOpen) { S.state = await api("/state"); $("chat-sub").textContent = S.state.paused ? "pauza" : S.state.working.length ? S.state.working.map((w) => w.agent).join(", ") + " ishlayapti" : "onlayn"; if (!S.state.working.length && !S.state.running_tasks.length) document.querySelectorAll(".typing").forEach((n) => n.remove()); }
-    else await refresh(false);
+    const chat = pollChat();  // chat va sahifa parallel yangilanadi (ketma-ket emas)
+    if (S.chatOpen) { await chat; S.state = await api("/state"); $("chat-sub").textContent = S.state.paused ? "pauza" : S.state.working.length ? S.state.working.map((w) => w.agent).join(", ") + " ishlayapti" : "onlayn"; if (!S.state.working.length && !S.state.running_tasks.length) document.querySelectorAll(".typing").forEach((n) => n.remove()); }
+    else await Promise.all([chat, refresh(false)]);
+    saveCache();
   } catch (e) { if (e.message !== "auth") toast("Aloqa yo'q…"); }
   finally { polling = false; }
 }
@@ -873,5 +881,11 @@ window.addEventListener("hashchange", () => location.reload());
   const m = location.hash.match(/token=([^&]+)/);
   if (m) { history.replaceState(null, "", location.pathname); S.token = decodeURIComponent(m[1]); }
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+  const cached = S.cache[S.tab];
+  if (S.token && cached) {  // oldin kirilgan: kutmasdan oxirgi holat bilan ochamiz, server orqada tekshiriladi
+    if (S.cache._chat) { S.chat = S.cache._chat; S.lastChat = S.chat.length ? S.chat[S.chat.length - 1].id : 0; }
+    paint(S.tab, cached); start();
+    return;
+  }
   if (S.token && (await tryLogin(S.token))) start(); else showLogin();
 })();

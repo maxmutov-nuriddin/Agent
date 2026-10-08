@@ -89,3 +89,17 @@ async def test_supabase_direct_connection_gives_clear_message(monkeypatch):
     monkeypatch.setattr(store, "_init", boom)
     with pytest.raises(SystemExit, match="Session pooler"):
         await store.init()
+
+
+async def test_kv_cache_stays_consistent():
+    store = Store(settings().database_url)
+    await store.init()
+    assert await store.get_kv("x", "def") == "def"            # yo'qligi ham keshlanadi
+    await store.set_kv("x", 5)
+    assert await store.get_kv("x") == "5"
+    await store.set_kv("x", "yangi")
+    assert await store.get_kv("x") == "yangi"
+    await store.delete_kv("x")
+    assert await store.get_kv("x") is None and await store.get_kv("x", "d") == "d"
+    fresh = Store(settings().database_url)                       # kesh faqat jarayon ichida; baza haqiqiy manba
+    await store.close()

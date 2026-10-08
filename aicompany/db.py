@@ -151,6 +151,7 @@ def normalize_db_url(url: str) -> tuple[str, dict]:
 class Store:
     def __init__(self, url: str):
         url, connect_args = normalize_db_url(url)
+        self._kv_cache: dict[str, str | None] = {}
         self.remote = not url.startswith("sqlite")  # tashqi baza: fayllar va Telegram sessiyasi ham bazada saqlanadi
         if url.startswith("sqlite") and ":memory:" not in url:
             Path(url.split("///", 1)[1]).parent.mkdir(parents=True, exist_ok=True)
@@ -217,7 +218,12 @@ class Store:
 
     # kv
     async def get_kv(self, key, default=None):
+        # sozlamalar juda tez-tez o'qiladi, kam yoziladi: jarayon xotirasida keshlanadi (bitta jarayon yozadi)
+        if key in self._kv_cache:
+            v = self._kv_cache[key]
+            return default if v is None else v
         row = await self._one(sa.select(kv).where(kv.c.key == key))
+        self._kv_cache[key] = row["value"] if row else None
         return row["value"] if row else default
 
     def _upsert(self, table, key_col: str, values: dict):
@@ -232,6 +238,7 @@ class Store:
 
     async def set_kv(self, key, value):
         await self._exec(self._upsert(kv, "key", {"key": key, "value": str(value)}))
+        self._kv_cache[key] = str(value)
 
     # vazifa fayllari (tashqi bazada nusxa)
     async def save_task_files(self, task_id, files: dict[str, bytes]):
@@ -249,6 +256,7 @@ class Store:
 
     async def delete_kv(self, key):
         await self._exec(sa.delete(kv).where(kv.c.key == key))
+        self._kv_cache.pop(key, None)
 
     # agents
     async def list_agents(self, active_only=True):
