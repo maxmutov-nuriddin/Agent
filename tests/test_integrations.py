@@ -185,9 +185,11 @@ async def test_tg_tools_hidden_until_account_is_connected(make_app, tmp_path):
     bare = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings)
     names = {t.name for t in tools_for("maps,telegram", bare)}
     assert "route_eta" in names and not names & {"tg_chats", "tg_read", "tg_send"}   # akkaunt yo'q: agent ko'rmaydi
-    connected = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings, tg=object())
+    tg = TgUser(app.settings, client_factory=lambda: None)
+    tg.api_id, tg.api_hash = 1, "h"
+    connected = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings, tg=tg)
     assert {"tg_chats", "tg_read", "tg_send"} <= {t.name for t in tools_for("maps,telegram", connected)}
-    assert app.orch.tg is None and app.tg is None                                       # sozlanmagan
+    assert app.tg is not None and not app.tg.configured()                               # sozlanmagan
 
 
 async def test_tg_chats_and_read_wrap_content_as_untrusted(tgenv):
@@ -275,7 +277,8 @@ async def test_private_providers_keep_telegram_content_off_other_providers(make_
     app, provs = await make_app(lambda *a: "ok", names=("anthropic", "gemini"), PRIVATE_PROVIDERS="anthropic",
                                 PRIMARY_PROVIDER="gemini", TG_API_ID="1", TG_API_HASH="h")
     provs["anthropic"].handler, provs["gemini"].handler = mk("anthropic"), mk("gemini")
-    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings, tg=object())
+    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings,
+                         tg=TgUser(app.settings, client_factory=lambda: None))
     await app.team.run_agent("assistant", "o'qi", env=env)                             # telegram asboblari bor: faqat anthropic
     assert seen == {"anthropic": 1, "gemini": 0}
     await app.team.run_agent("researcher", "x", env=env)                               # oddiy agent: asosiy (gemini)
@@ -284,7 +287,8 @@ async def test_private_providers_keep_telegram_content_off_other_providers(make_
 
 async def test_private_providers_missing_fails_closed(make_app, tmp_path):
     app, _ = await make_app(lambda *a: "ok", names=("gemini",), PRIVATE_PROVIDERS="anthropic", TG_API_ID="1", TG_API_HASH="h")
-    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings, tg=object())
+    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings,
+                         tg=TgUser(app.settings, client_factory=lambda: None))
     with pytest.raises(BudgetExhausted, match="PRIVATE_PROVIDERS"):
         await app.team.run_agent("assistant", "o'qi", env=env)                         # yashirincha Gemini'ga ketmaydi
 

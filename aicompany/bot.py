@@ -173,7 +173,7 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
     async def _tg(m: Message):
         s = app.settings
         if not app.tg or not app.tg.configured():
-            return await m.answer("Telegram akkaunt ulanmagan. Kompyuterda: python -m aicompany tglogin")
+            return await m.answer("Telegram akkaunt ulanmagan. Panelda: Hisob -> Telegram akkaunt (yoki kompyuterda: python -m aicompany tglogin)")
         await m.answer(f"📨 Telegram akkaunt ulangan.\nRejim: {'o`qish va yuborish (tasdiq bilan)' if s.tg_mode == 'write' else 'faqat o`qish'}\n"
                        f"Ruxsat etilgan kontaktlar: {', '.join(s.tg_allowed) or 'cheklanmagan (har xabar tasdiqlanadi)'}\n"
                        f"Maxfiy yozishmalar faqat: {', '.join(s.private_providers) or 'barcha AI provayderlarga yuborilishi mumkin'}")

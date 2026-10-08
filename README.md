@@ -50,9 +50,10 @@ Yangi xodim **assistant** shu imkoniyatlarga ega.
 - `GOOGLE_MAPS_API_KEY` qo'ysangiz tirbandlik va jamoat transporti hisobga olinadi, joy qidiruv aniqroq. Bo'lmasa vaqt tirbandliksiz taxminiy.
 - Panel yoki iPhone Shortcuts: `POST /api/location {"lat":..,"lon":..}` (Authorization: Bearer WEB_TOKEN).
 
-**Shaxsiy Telegram akkaunt** (rasmiy foydalanuvchi API'si, sizning akkauntingiz sifatida):
-1. https://my.telegram.org → API development tools → `TG_API_ID` va `TG_API_HASH` ni `.env` ga yozing.
-2. `pip install -r requirements.txt`, so'ng `python -m aicompany tglogin` (telefon raqami + Telegramga kelgan kod; bir marta).
+**Shaxsiy Telegram akkaunt** (rasmiy foydalanuvchi API'si; agent uchun ortiqcha akkaunt tavsiya etiladi):
+1. Panel → **Hisob → Ulanishlar → 📨 Telegram akkauntni ulash**. Qadamlar: (1) my.telegram.org dan olingan `api_id` va `api_hash` ni kiriting, (2) telefon raqami, (3) Telegramga kelgan kod (ikki bosqichli parol bo'lsa, uni ham). Bir marta bajariladi.
+   Terminal varianti: `.env` ga `TG_API_ID`/`TG_API_HASH` yozib `python -m aicompany tglogin`.
+2. Panelda kiritilgan kalitlar `data/` bazasida saqlanadi (git'ga tushmaydi). Uzish: xuddi shu oyna → «Akkauntni uzish» (sessiya Telegramda ham tugatiladi).
 3. Boshlanishda `TG_MODE=read` (faqat o'qish va javob loyihasi). Yuborish uchun `TG_MODE=write`: **har bir xabar** Kartalar/Telegram tugmalarida sizga kimga va qanday matn bilan ketishi ko'rsatilib, tasdig'ingizdan keyingina yuboriladi. Soatiga `TG_MAX_SENDS_PER_HOUR` dan ko'p yuborilmaydi, `TG_ALLOWED` bilan faqat ma'lum kontaktlarga cheklash mumkin.
 4. Asboblar: `tg_chats`, `tg_read`, `tg_send`. Chatdagi xabarlar «ishonchsiz matn» deb belgilanadi: ularda «pul o'tkaz» kabi ko'rsatma bo'lsa bajarilmaydi.
 

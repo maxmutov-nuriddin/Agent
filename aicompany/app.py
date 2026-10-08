@@ -51,6 +51,11 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     await store.fail_stale_tasks()
     clean_inbox(settings.workspace_dir)
     center = ApprovalCenter()
-    tg = TgUser(settings) if settings.tg_api_id else None
+    tg = TgUser(settings)
+    if not tg.has_keys():  # .env da yo'q bo'lsa, panel orqali kiritilganini olamiz
+        kid, khash = await store.get_kv("tg_api_id"), await store.get_kv("tg_api_hash")
+        if kid and kid.isdigit() and khash:
+            tg.api_id, tg.api_hash = int(kid), khash
+    tg.me = await store.get_kv("tg_me") or ""
     orch = Orchestrator(store, team, settings, settings.max_revisions, approver or center, tg)
     return App(settings, store, router, team, orch, center, tg)

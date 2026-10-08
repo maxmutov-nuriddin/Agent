@@ -8,12 +8,14 @@ from aicompany.orchestrator import normalize_plan
 from aicompany.router import BudgetExhausted, TaskBudgetExceeded
 from aicompany.tools import ToolEnv
 
+from aicompany.tguser import TgUser
+
 from .conftest import scripted_company
 
 
 async def test_busy_counter_does_not_leak_when_private_provider_check_fails(make_app, tmp_path):
     app, _ = await make_app(lambda *a: "ok", names=("gemini",), PRIVATE_PROVIDERS="anthropic", TG_API_ID="1", TG_API_HASH="h")
-    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings, tg=object())
+    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings, tg=TgUser(app.settings, client_factory=lambda: None))
     with pytest.raises(BudgetExhausted):
         await app.team.run_agent("assistant", "x", env=env)
     assert app.team.busy == {}   # oldin "assistant" abadiy band bo'lib qolardi

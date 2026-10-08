@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-l";
+const PANEL_V = "2026.10.08-m";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -337,6 +337,50 @@ async function showAudit() {
       ...rows.map((r) => h("div", { class: "step" }, h("b", {}, `${r.actor} · ${r.action}`), h("div", {}, `${ago(r.ts)} oldin · ${r.detail}`))));
   } catch (e) { toast(e.message); }
 }
+async function tgSheet() {
+  let t;
+  try { t = (await api("/integrations")).telegram_account; } catch (e) { return toast(e.message); }
+  const again = () => tgSheet();
+  const field = (label, attrs) => { const i = h("input", attrs); return [h("label", {}, label), i, i]; };
+  const run = (btn, fn) => btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try { await fn(); } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+  });
+  if (t.configured) {
+    const out = h("button", { class: "btn outline full" }, "Akkauntni uzish");
+    run(out, async () => { if (!confirm("Telegram akkaunt uziladi. Davom etasizmi?")) return; await post("/tg/logout"); closeSheet(); toast("Uzildi"); refresh(true); });
+    return openSheet(h("h2", {}, "Telegram akkaunt"), h("p", { class: "muted" }, "✅ Ulangan" + (t.me ? ": " + t.me : "") + ". Rejim: " + (t.mode === "write" ? "o'qish + yuborish (har xabar tasdiq bilan)" : "faqat o'qish") + "."),
+      h("p", { class: "hint" }, "Yuborishni yoqish: .env da TG_MODE=write. Kirishni to'xtatish: Telegram → Sozlamalar → Qurilmalar."), h("div", { class: "label" }), out);
+  }
+  if (!t.keys) {
+    const [l1, id] = field("api_id", { placeholder: "masalan 1234567", inputmode: "numeric" });
+    const [l2, hash] = field("api_hash", { placeholder: "32 belgili kod", autocomplete: "off" });
+    const go = h("button", { class: "btn lime full" }, "Saqlash");
+    run(go, async () => { await post("/tg/keys", { api_id: id.value, api_hash: hash.value }); again(); });
+    return openSheet(h("h2", {}, "Telegram akkaunt: 1/3"),
+      h("p", { class: "muted" }, "Agent uchun ajratilgan (ortiqcha) akkauntni ulaymiz. Avval Telegramning rasmiy kalitlari kerak:"),
+      h("p", { class: "hint" }, "1) my.telegram.org ga ortiqcha raqam bilan kiring → API development tools → ilova yarating. 2) Chiqqan api_id va api_hash ni shu yerga yozing."),
+      l1, id, l2, hash, h("div", { class: "label" }), go);
+  }
+  if (!t.pending) {
+    const [l, phone] = field("Telefon raqami", { placeholder: "+998901234567", inputmode: "tel", autocomplete: "off" });
+    const go = h("button", { class: "btn lime full" }, "Kod yuborish");
+    run(go, async () => { await post("/tg/code", { phone: phone.value }); again(); });
+    return openSheet(h("h2", {}, "Telegram akkaunt: 2/3"),
+      h("p", { class: "muted" }, "Ortiqcha akkaunt raqamini yozing. Telegram shu akkauntga (yoki SMS bilan) kod yuboradi."), l, phone, h("div", { class: "label" }), go);
+  }
+  const [lc, code] = field("Telegramdan kelgan kod", { placeholder: "12345", inputmode: "numeric", autocomplete: "one-time-code" });
+  const [lp, pw] = field("Ikki bosqichli parol (agar qo'ygan bo'lsangiz)", { type: "password", autocomplete: "off" });
+  const go = h("button", { class: "btn lime full" }, "Kirish");
+  run(go, async () => {
+    const r = await post("/tg/verify", { code: code.value, password: pw.value });
+    if (r.status === "password") { toast("Ikki bosqichli parolni kiriting"); return pw.focus(); }
+    closeSheet(); toast("✅ Ulandi: " + r.me); refresh(true);
+  });
+  openSheet(h("h2", {}, "Telegram akkaunt: 3/3"), h("p", { class: "muted" }, "Kod ortiqcha akkaunt ochiq Telegram ilovasiga keladi (\"Telegram\" chati). Kodni hech kimga bermang."),
+    lc, code, lp, pw, h("div", { class: "label" }), go,
+    h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: async () => { try { await post("/tg/logout"); again(); } catch (e) { toast(e.message); } } }, "↺ Boshqa raqam / qayta")));
+}
 function reminderAdd() {
   const text = h("input", { placeholder: "Nimani eslatay? (masalan: Aliga qo'ng'iroq qilish)" });
   const when = h("input", { placeholder: "Qachon: 09:00 · ertaga 9:00 · 30 daq · 2026-10-09 18:30" });
@@ -381,12 +425,13 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
   const ta = integ.telegram_account;
   const links = h("div", { class: "card" },
     ...[["Telegram bot", integ.telegram_bot, ""],
-        ["Telegram akkaunt", ta.configured, ta.configured ? (ta.mode === "write" ? "o'qish + yuborish (tasdiq bilan)" : "faqat o'qish") : "ulash: python -m aicompany tglogin"],
+        ["Telegram akkaunt", ta.configured, ta.configured ? (ta.me ? ta.me + " · " : "") + (ta.mode === "write" ? "o'qish + yuborish (tasdiq bilan)" : "faqat o'qish") : "ulanmagan"],
         ["Xarita", true, integ.maps === "google" ? "Google (tirbandlik bilan)" : "OpenStreetMap (bepul, tirbandliksiz)"],
         ["Ovozni tushunish", integ.voice, integ.voice ? "Gemini" : "GEMINI_API_KEY kerak"],
         ["Veb-qidiruv", true, integ.search === "brave" ? "Brave" : "DuckDuckGo"],
         ["Maxfiy chat uchun AI", ta.private_providers.length > 0, ta.private_providers.length ? ta.private_providers.join(", ") : "cheklanmagan (PRIVATE_PROVIDERS)"],
-       ].map(([name, ok, note]) => h("div", { class: "kv" }, h("span", {}, `${tick(ok)} ${name}`), h("span", { class: "muted" }, note))));
+       ].map(([name, ok, note]) => h("div", { class: "kv" }, h("span", {}, `${tick(ok)} ${name}`), h("span", { class: "muted" }, note))),
+    h("div", { class: "acts" }, h("button", { class: "btn", onclick: () => tgSheet() }, ta.configured ? "📨 Telegram akkaunt" : "📨 Telegram akkauntni ulash")));
   const L = integ.limits;
   const limits = h("div", { class: "card" }, ...[["Bitta vazifa limiti", usd(L.task_usd) + " (MAX_TASK_USD)"], ["Jamoa hajmi", L.agents + " xodimgacha"],
     ["Bir vaqtda vazifa", L.parallel], ["QA qayta ishlash", L.revisions + " marta"], ["Agent asbob chaqiruvi", L.tool_turns + " ta"],

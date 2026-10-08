@@ -18,6 +18,7 @@ from aiohttp import web
 from .app import App
 from .report import build_report, day_start_utc
 from .providers import ProviderError, VoiceError, VoiceUnavailable, suggest_model
+from .tguser import TgError
 from .tools import ToolError
 from .team import CORE
 from .util import clip
@@ -383,7 +384,9 @@ def make_web_app(app: App) -> web.Application:
         tg = app.tg
         return json_ok({
             "telegram_bot": bool(s.telegram_token),
-            "telegram_account": {"configured": bool(tg and tg.configured()), "mode": s.tg_mode, "allowed": list(s.tg_allowed),
+            "telegram_account": {"configured": bool(tg and tg.configured()), "mode": s.tg_mode,
+                                 "keys": bool(tg and tg.has_keys()), "pending": bool(tg and tg.login_pending()),
+                                 "me": (tg.me if tg and tg.configured() else ""), "allowed": list(s.tg_allowed),
                                  "private_providers": list(s.private_providers)},
             "maps": "google" if s.google_maps_key else "osm",
             "voice": any(p.supports_audio for p in app.router.providers.values()),
@@ -394,6 +397,47 @@ def make_web_app(app: App) -> web.Application:
                        "tool_turns": s.max_tool_turns, "command_s": s.command_timeout, "report": f"{s.report_hour}:00 ({s.report_tz})",
                        "tg_sends_per_hour": s.tg_max_sends},
         })
+
+    # ---------- Telegram akkauntni panel orqali ulash ----------
+    async def h_tg_keys(request):
+        d = await body(request)
+        kid, khash = str(d.get("api_id", "")).strip(), str(d.get("api_hash", "")).strip()
+        if not kid.isdigit() or not re.fullmatch(r"[0-9a-zA-Z]{20,64}", khash):
+            raise web.HTTPBadRequest(reason="api_id raqam, api_hash 32 belgili kod bo'lishi kerak (my.telegram.org)")
+        await app.store.set_kv("tg_api_id", kid)
+        await app.store.set_kv("tg_api_hash", khash)
+        app.tg.api_id, app.tg.api_hash = int(kid), khash
+        await app.store.audit("owner", "tg_keys", "Telegram API kalitlari panel orqali saqlandi")
+        return json_ok({"ok": True})
+
+    async def h_tg_code(request):
+        phone = re.sub(r"[\s()\-]", "", str((await body(request)).get("phone", "")))
+        if not re.fullmatch(r"\+?\d{8,15}", phone):
+            raise web.HTTPBadRequest(reason="telefon raqamini +998901234567 ko'rinishida yozing")
+        try:
+            await app.tg.login_start(phone if phone.startswith("+") else "+" + phone)
+        except TgError as e:
+            raise web.HTTPBadRequest(reason=str(e))
+        return json_ok({"ok": True})
+
+    async def h_tg_verify(request):
+        d = await body(request)
+        code, password = re.sub(r"\D", "", str(d.get("code", ""))), str(d.get("password", ""))
+        try:
+            status = await app.tg.login_verify(code, password)
+        except TgError as e:
+            raise web.HTTPBadRequest(reason=str(e))
+        if status == "ok":
+            await app.store.set_kv("tg_me", app.tg.me)
+            await app.store.audit("owner", "tg_login", f"Telegram akkaunt ulandi: {app.tg.me}"[:200])
+        return json_ok({"status": status, "me": app.tg.me if status == "ok" else ""})
+
+    async def h_tg_logout(request):
+        await app.tg.logout()
+        await app.store.delete_kv("tg_me")
+        app.tg.me = ""
+        await app.store.audit("owner", "tg_logout", "Telegram akkaunt uzildi")
+        return json_ok({"ok": True})
 
     async def h_models(request):
         """`python -m aicompany check` ning paneldagi o'rni: kalit ishlayaptimi va models.yaml dagi nomlar haqiqiy modelga mosmi."""
@@ -557,6 +601,8 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/provider", h_provider), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
+        web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
+        web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/logout", h_tg_logout),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),

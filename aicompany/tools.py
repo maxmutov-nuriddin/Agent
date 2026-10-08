@@ -244,7 +244,7 @@ GROUPS = ("files", "web", "memory", "shell", "maps", "telegram", "time")
 
 def tools_for(groups: str, env: "ToolEnv | None" = None) -> list[Tool]:
     wanted = {g.strip() for g in groups.split(",") if g.strip()}
-    return [t for t in TOOLS.values() if t.group in wanted and (t.requires != "tg" or (env is not None and env.tg is not None))]
+    return [t for t in TOOLS.values() if t.group in wanted and (t.requires != "tg" or (env is not None and env.tg is not None and env.tg.configured()))]
 
 
 def tool_defs(tools: list[Tool]) -> list[dict]:

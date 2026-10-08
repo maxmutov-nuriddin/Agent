@@ -441,7 +441,8 @@ async def test_telegram_approval_card_has_its_own_kind(web):
 async def test_integrations_overview(web2):
     c, app, provs = web2
     d = (await get(c, "/api/integrations"))[1]
-    assert d["telegram_account"] == {"configured": False, "mode": "read", "allowed": [], "private_providers": []}
+    assert d["telegram_account"] == {"configured": False, "keys": False, "pending": False, "me": "", "mode": "read", "allowed": [],
+                                     "private_providers": []}
     assert d["voice"] is True and d["maps"] == "osm" and d["search"] == "duckduckgo" and d["primary"] == "auto"
     assert [(p["name"], p["enabled"]) for p in d["providers"]] == [("anthropic", True), ("openai", False), ("gemini", True)]
     app.settings = dataclasses.replace(app.settings, google_maps_key="k", brave_key="b", tg_mode="write", tg_allowed=("ali",))
@@ -606,3 +607,98 @@ async def test_reminders_in_the_panel(web):
     assert (await c.delete("/api/reminders/1", headers=TOK)).status == 200
     assert (await c.delete("/api/reminders/1", headers=TOK)).status == 404
     assert "Eslatmalar" in (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()
+
+
+# ---------- Telegram akkauntni panel orqali ulash ----------
+class LoginClient:
+    class PasswordNeeded(Exception):
+        pass
+
+    def __init__(self, need_password=False, bad_code=False):
+        self.need_password, self.bad_code = need_password, bad_code
+        self.log, self.connected, self.authed = [], False, False
+
+    async def connect(self):
+        self.connected = True
+
+    async def disconnect(self):
+        self.connected = False
+
+    def is_connected(self):
+        return self.connected
+
+    async def is_user_authorized(self):
+        return self.authed
+
+    async def send_code_request(self, phone):
+        self.log.append(("code", phone))
+        return type("Sent", (), {"phone_code_hash": "H1"})()
+
+    async def sign_in(self, phone=None, code=None, phone_code_hash=None, password=None):
+        self.log.append(("sign_in", phone, code, phone_code_hash, password))
+        if self.bad_code and code:
+            raise type("PhoneCodeInvalidError", (Exception,), {})()
+        if self.need_password and password is None:
+            raise type("SessionPasswordNeededError", (Exception,), {})()
+        self.authed = True
+
+    async def get_me(self):
+        return type("Me", (), {"first_name": "Agent", "last_name": None, "username": "agent_x", "id": 9})()
+
+    async def log_out(self):
+        self.log.append(("logout",))
+        self.authed = False
+
+
+async def test_tg_login_flow_via_panel(web):
+    from aicompany.tguser import TgUser
+    c, app = web
+    client = LoginClient()
+    app.tg = TgUser(app.settings, client_factory=lambda: client)
+    app.tg.api_id = app.tg.api_hash = None                                    # kalitlar hali yo'q
+    assert (await get(c, "/api/integrations"))[1]["telegram_account"]["keys"] is False
+    assert (await post(c, "/api/tg/keys", {"api_id": "abc", "api_hash": "x"}))[0] == 400
+    assert (await post(c, "/api/tg/keys", {"api_id": "12345", "api_hash": "a" * 32}))[0] == 200
+    assert await app.store.get_kv("tg_api_id") == "12345"
+    assert (await post(c, "/api/tg/code", {"phone": "salom"}))[0] == 400
+    assert (await post(c, "/api/tg/verify", {"code": "1"}))[0] == 400          # avval kod so'ralmagan
+    assert (await post(c, "/api/tg/code", {"phone": "+998 90 123-45-67"}))[0] == 200
+    assert ("code", "+998901234567") in client.log
+    assert (await get(c, "/api/integrations"))[1]["telegram_account"]["pending"] is True
+    st, d = await post(c, "/api/tg/verify", {"code": "1 2 3-45"})
+    assert (st, d["status"]) == (200, "ok") and d["me"] == "Agent (@agent_x)"
+    assert ("sign_in", "+998901234567", "12345", "H1", None) in client.log
+    ta = (await get(c, "/api/integrations"))[1]["telegram_account"]
+    assert ta["configured"] and ta["me"] == "Agent (@agent_x)" and not ta["pending"]
+    assert await app.store.get_kv("tg_me") == "Agent (@agent_x)"
+    assert "12345" not in json.dumps([dict(r) for r in await app.store.recent_audit(20)])   # kod jurnalga tushmaydi
+    assert (await post(c, "/api/tg/logout"))[0] == 200
+    assert ("logout",) in client.log and await app.store.get_kv("tg_me") is None
+
+
+async def test_tg_login_two_factor_and_bad_code(web):
+    from aicompany.tguser import TgUser
+    c, app = web
+    client = LoginClient(need_password=True)
+    app.tg = TgUser(app.settings, client_factory=lambda: client)
+    app.tg.api_id, app.tg.api_hash = 1, "h"
+    await post(c, "/api/tg/code", {"phone": "+998901234567"})
+    st, d = await post(c, "/api/tg/verify", {"code": "11111"})
+    assert (st, d["status"]) == (200, "password")
+    st, d = await post(c, "/api/tg/verify", {"code": "11111", "password": "sir"})
+    assert (st, d["status"]) == (200, "ok")
+    bad = LoginClient(bad_code=True)
+    app.tg = TgUser(app.settings, client_factory=lambda: bad)
+    app.tg.api_id, app.tg.api_hash = 1, "h"
+    await post(c, "/api/tg/code", {"phone": "+998901234567"})
+    st, d = await post(c, "/api/tg/verify", {"code": "000"})
+    assert st == 400 and "Kod noto'g'ri" in d["error"]
+
+
+async def test_tg_keys_from_panel_survive_restart(make_app):
+    app, _ = await make_app(front())
+    await app.store.set_kv("tg_api_id", "777")
+    await app.store.set_kv("tg_api_hash", "b" * 32)
+    from aicompany.app import build_app
+    again = await build_app(app.settings, providers={})
+    assert (again.tg.api_id, again.tg.api_hash) == (777, "b" * 32) and not again.tg.configured()

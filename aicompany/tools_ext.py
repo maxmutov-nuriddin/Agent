@@ -216,7 +216,7 @@ async def find_places(env, a):
 # ---------- Telegram (shaxsiy akkaunt) ----------
 def _tg(env: ToolEnv):
     if env.tg is None:
-        raise ToolError("Telegram akkaunt ulanmagan: `python -m aicompany tglogin`")
+        raise ToolError("Telegram akkaunt ulanmagan: panelda Hisob -> Telegram akkaunt (yoki `python -m aicompany tglogin`)")
     return env.tg
 
 
