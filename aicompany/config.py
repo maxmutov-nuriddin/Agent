@@ -112,8 +112,10 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
         max_tool_turns=int(env.get("MAX_TOOL_TURNS", 8)),
         command_timeout=int(env.get("COMMAND_TIMEOUT", 60)),
         # Render/Railway kabi xostinglar PORT beradi va tashqaridan ulanish 0.0.0.0 da bo'lishi kerak
-        web_host=env.get("WEB_HOST") or ("0.0.0.0" if env.get("PORT") else "127.0.0.1"),
-        web_port=int(env.get("WEB_PORT") or env.get("PORT") or 8080),
+        # Render'da lokal .env dan ko'chirilgan WEB_HOST=127.0.0.1 / WEB_PORT=8080 ilovani ulab bo'lmaydigan qilardi: e'tiborsiz
+        web_host=("0.0.0.0" if env.get("RENDER") and env.get("PORT") else
+                  env.get("WEB_HOST") or ("0.0.0.0" if env.get("PORT") else "127.0.0.1")),
+        web_port=int((env.get("PORT") if env.get("RENDER") else None) or env.get("WEB_PORT") or env.get("PORT") or 8080),
         web_token=env.get("WEB_TOKEN") or None,
         widget_token=env.get("WIDGET_TOKEN") or None,
         web_public_url=(env.get("WEB_PUBLIC_URL") or env.get("RENDER_EXTERNAL_URL") or "").rstrip("/") or None,

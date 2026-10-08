@@ -918,3 +918,9 @@ def test_missing_token_on_render_fails_clearly(tmp_path, monkeypatch):
     with pytest.raises(SystemExit, match="Render"):
         ensure_secret("WEB_TOKEN_X", tmp_path / ".env")
     assert not (tmp_path / ".env").exists()
+
+
+def test_render_ignores_local_host_and_port_copied_from_env():
+    from .conftest import settings
+    s = settings(RENDER="true", PORT="10000", WEB_HOST="127.0.0.1", WEB_PORT="8080")
+    assert (s.web_host, s.web_port) == ("0.0.0.0", 10000)
