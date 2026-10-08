@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import itertools
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -11,11 +10,9 @@ from aiogram.types import (BufferedInputFile, CallbackQuery, FSInputFile, Inline
                            InlineKeyboardMarkup, Message)
 
 from .app import App
-from .approvals import Approver
 from .report import build_report, daily_report_loop
 
 log = logging.getLogger("bot")
-APPROVAL_TIMEOUT = 600
 MAX_UPLOAD = 10_000_000
 HELP = (
     "Men AI kompaniya rahbariman. Menga oddiy yozing: gaplashishingiz, savol berishingiz yoki vazifa topshirishingiz mumkin. Qaysi biri ekanini o'zim tushunaman, kerak bo'lsa aniqlashtiraman. Fayl ham yuborishingiz mumkin.\n\n"
@@ -34,37 +31,7 @@ async def send_long(bot: Bot, chat_id: int, text: str, filename="natija.md"):
         await bot.send_document(chat_id, BufferedInputFile(text.encode(), filename))
 
 
-class TelegramApprover(Approver):
-    def __init__(self, bot: Bot, owner_id: int):
-        self.bot, self.owner_id = bot, owner_id
-        self.pending: dict[int, asyncio.Future] = {}
-        self._ids = itertools.count(1)
-
-    async def ask(self, task_id, agent, description) -> bool:
-        aid = next(self._ids)
-        fut = asyncio.get_running_loop().create_future()
-        self.pending[aid] = fut
-        kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Ruxsat", callback_data=f"ap:{aid}:y"),
-            InlineKeyboardButton(text="❌ Rad", callback_data=f"ap:{aid}:n")]])
-        await self.bot.send_message(
-            self.owner_id, f"🔐 Ruxsat so'ralmoqda (vazifa #{task_id}, {agent})\n\n{description[:3000]}", reply_markup=kb)
-        try:
-            return await asyncio.wait_for(fut, APPROVAL_TIMEOUT)
-        except asyncio.TimeoutError:
-            return False
-        finally:
-            self.pending.pop(aid, None)
-
-    def resolve(self, aid: int, ok: bool) -> bool:
-        fut = self.pending.get(aid)
-        if fut and not fut.done():
-            fut.set_result(ok)
-            return True
-        return False
-
-
-def make_dispatcher(app: App, bot: Bot, approver: TelegramApprover | None = None) -> Dispatcher:
+def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
     dp = Dispatcher()
     owner = app.settings.owner_id
     running: set[asyncio.Task] = set()
@@ -74,6 +41,15 @@ def make_dispatcher(app: App, bot: Bot, approver: TelegramApprover | None = None
             await bot.send_message(owner, text)
 
     app.router.on_warning = warn
+
+    async def announce(aid, task_id, agent, description):
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Ruxsat", callback_data=f"ap:{aid}:y"),
+            InlineKeyboardButton(text="❌ Rad", callback_data=f"ap:{aid}:n")]])
+        await bot.send_message(owner, f"🔐 Ruxsat so'ralmoqda (vazifa #{task_id}, {agent})\n\n{description[:3000]}",
+                               reply_markup=kb)
+    if app.center:
+        app.center.announcers.append(announce)
     # Faqat egasi: boshqa hech kimga javob berilmaydi
     dp.message.filter(F.from_user.id == owner)
     dp.callback_query.filter(F.from_user.id == owner)
@@ -81,7 +57,7 @@ def make_dispatcher(app: App, bot: Bot, approver: TelegramApprover | None = None
     @dp.callback_query(F.data.startswith("ap:"))
     async def _approval(cb: CallbackQuery):
         _, aid, ans = cb.data.split(":")
-        ok = approver.resolve(int(aid), ans == "y") if approver else False
+        ok = app.center.resolve(int(aid), ans == "y") if app.center else False
         await cb.answer("Ruxsat berildi" if ok and ans == "y" else "Rad etildi" if ok else "Muddati o'tgan")
         if cb.message:
             await cb.message.edit_reply_markup(reply_markup=None)
@@ -208,9 +184,7 @@ async def run_bot(app: App):
     if not s.telegram_token or not s.owner_id:
         raise SystemExit("TELEGRAM_BOT_TOKEN va OWNER_TELEGRAM_ID .env da bo'lishi kerak")
     bot = Bot(s.telegram_token)
-    approver = TelegramApprover(bot, s.owner_id)
-    app.orch.approver = approver
-    dp = make_dispatcher(app, bot, approver)
+    dp = make_dispatcher(app, bot)
 
     async def send_owner(text):
         await bot.send_message(s.owner_id, text)

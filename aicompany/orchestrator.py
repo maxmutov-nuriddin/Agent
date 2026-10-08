@@ -80,8 +80,8 @@ class Orchestrator:
         return res
 
     async def _front_desk(self, text: str, chat_id: int) -> dict:
-        history = await self.store.recent_chat(chat_id, 8)
-        history = [h for h in history][:-1]  # oxirgisi hozirgi xabarning o'zi
+        history = [h for h in await self.store.recent_chat(chat_id, 40) if h["role"] in ("owner", "ceo")][-9:-1]
+        # oxirgisi hozirgi xabarning o'zi
         hist = "\n".join(f"{'Owner' if h['role'] == 'owner' else 'CEO'}: {clip(h['text'], 600)}" for h in history)
         mems = await self.store.search_memories(text, 5)
         memo = "\n".join(f"- {m['text']}" for m in mems)

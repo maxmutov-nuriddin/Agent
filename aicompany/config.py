@@ -46,6 +46,10 @@ class Settings:
     report_tz: str = "Asia/Tashkent"
     max_tool_turns: int = 8
     command_timeout: int = 60
+    web_host: str = "127.0.0.1"
+    web_port: int = 8080
+    web_token: str | None = None
+    widget_token: str | None = None
 
 
 def load_settings(env: dict | None = None, models_path: Path | None = None) -> Settings:
@@ -84,4 +88,29 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
         report_tz=env.get("REPORT_TZ", "Asia/Tashkent"),
         max_tool_turns=int(env.get("MAX_TOOL_TURNS", 8)),
         command_timeout=int(env.get("COMMAND_TIMEOUT", 60)),
+        web_host=env.get("WEB_HOST", "127.0.0.1"),
+        web_port=int(env.get("WEB_PORT", 8080)),
+        web_token=env.get("WEB_TOKEN") or None,
+        widget_token=env.get("WIDGET_TOKEN") or None,
     )
+
+
+def ensure_secret(name: str, env_path: Path | None = None) -> str:
+    """Maxfiy token yo'q bo'lsa yaratib .env ga yozadi (git'ga tushmaydi)."""
+    import secrets
+    load_dotenv(env_path or ROOT / ".env")  # allaqachon bor kalitni qayta yaratib yubormaslik uchun
+    if os.environ.get(name):
+        return os.environ[name]
+    value = secrets.token_urlsafe(32)
+    path = env_path or ROOT / ".env"
+    text = path.read_text() if path.exists() else ""
+    line = f"{name}={value}"
+    if f"{name}=" in text:
+        import re
+        text = re.sub(rf"^{name}=.*$", line, text, flags=re.M)
+    else:
+        text = text.rstrip("\n") + f"\n{line}\n"
+    path.write_text(text)
+    path.chmod(0o600)
+    os.environ[name] = value
+    return value

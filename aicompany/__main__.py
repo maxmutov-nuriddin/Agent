@@ -4,8 +4,11 @@ import argparse
 import asyncio
 import logging
 
+import socket
+
 from .app import build_app
 from .approvals import CliApprover
+from .config import ensure_secret
 from .providers import ProviderError
 
 
@@ -39,24 +42,58 @@ async def cmd_ask(app, text):
     print(res.get("result", ""))
 
 
+def lan_ip() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+            sk.connect(("10.255.255.255", 1))  # paket yuborilmaydi, faqat yo'nalish aniqlanadi
+            return sk.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def print_web_info(s):
+    host = lan_ip() if s.web_host in ("0.0.0.0", "::") else s.web_host
+    print("\n🌐 Veb-panel:", f"http://{host}:{s.web_port}/#token={s.web_token}")
+    print("   (havola maxfiy kalitni o'z ichiga oladi: hech kimga yubormang)")
+    if s.web_host in ("127.0.0.1", "localhost"):
+        print("   Telefondan ochish uchun .env ga WEB_HOST=0.0.0.0 qo'ying (WiFi) yoki Tailscale/Cloudflare Tunnel ishlating.")
+    if s.widget_token:
+        print(f"   Vidjet manzili: http://{host}:{s.web_port}/api/widget?token={s.widget_token}")
+
+
 async def amain():
     ap = argparse.ArgumentParser(prog="aicompany")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("run", help="Telegram botni ishga tushirish")
+    sub.add_parser("run", help="Telegram bot + veb-panel")
+    sub.add_parser("web", help="faqat veb-panel (Telegramsiz)")
     sub.add_parser("check", help="kalitlar va model ID'larni tekshirish")
     ask = sub.add_parser("ask", help="vazifani terminaldan berish (Telegramsiz)")
     ask.add_argument("text")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO)
+    if args.cmd in ("run", "web"):
+        ensure_secret("WEB_TOKEN")
+        ensure_secret("WIDGET_TOKEN")
     app = await build_app(approver=CliApprover() if args.cmd == "ask" else None)
     try:
         if args.cmd == "check":
             await cmd_check(app)
         elif args.cmd == "ask":
             await cmd_ask(app, args.text)
+        elif args.cmd == "web":
+            from .web import start_web
+            await start_web(app)
+            print_web_info(app.settings)
+            await asyncio.Event().wait()
         else:
             from .bot import run_bot
-            await run_bot(app)
+            from .web import start_web
+            runner = await start_web(app)
+            print_web_info(app.settings)
+            try:
+                await run_bot(app)
+            finally:
+                await runner.cleanup()
     finally:
         await app.store.close()
 

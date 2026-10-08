@@ -35,6 +35,7 @@ def system_prompt(name: str, role: str) -> str:
 class Team:
     def __init__(self, store: Store, router: Router, max_agents: int, max_tool_turns: int = 8):
         self.store, self.router, self.max_agents, self.max_tool_turns = store, router, max_agents, max_tool_turns
+        self.busy: dict[str, dict] = {}  # agent -> {"count": n, "task_id": id}: hozir kim ishlayapti
 
     async def ensure_seed(self):
         for name, (role, tier, tools) in SEED.items():
@@ -56,6 +57,21 @@ class Team:
         if env:
             env.agent = agent["name"]
         text = ""
+        b = self.busy.setdefault(agent["name"], {"count": 0, "task_id": task_id})
+        b["count"] += 1
+        b["task_id"] = task_id
+        try:
+            text = await self._loop(agent, tier, system, messages, defs, by_name, env, task_id)
+        finally:
+            b["count"] -= 1
+            if b["count"] <= 0:
+                self.busy.pop(agent["name"], None)
+        if task_id is not None:
+            await self.store.add_message(task_id, agent["name"], text)
+        return text
+
+    async def _loop(self, agent, tier, system, messages, defs, by_name, env, task_id) -> str:
+        text = ""
         for turn in range(self.max_tool_turns + 1):
             res = await self.router.call(tier or agent["tier"], system, messages,
                                          task_id=task_id, agent=agent["name"], tools=defs)
@@ -70,8 +86,6 @@ class Team:
             if turn == self.max_tool_turns - 1:
                 results.append({"type": "text", "text": "Tool budget is nearly used up. Finish now and give your final answer."})
             messages.append({"role": "user", "content": results})
-        if task_id is not None:
-            await self.store.add_message(task_id, agent["name"], text)
         return text
 
     async def _exec_tool(self, by_name, call, env) -> dict:

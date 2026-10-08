@@ -238,6 +238,20 @@ class Store:
             .where(messages.c.task_id.in_(task_ids)).group_by(messages.c.agent))
         return {r["agent"]: r["n"] for r in rows}
 
+    async def fail_stale_tasks(self) -> int:
+        """Qayta ishga tushganda 'running' bo'lib qolgan vazifalarni 'interrupted' deb belgilaydi."""
+        res = await self._exec(sa.update(tasks).where(tasks.c.status == "running")
+                               .values(status="interrupted", finished_at=now()))
+        return res.rowcount
+
+    async def agent_message_counts(self):
+        rows = await self._all(sa.select(messages.c.agent, sa.func.count().label("n")).group_by(messages.c.agent))
+        return {r["agent"]: r["n"] for r in rows}
+
+    async def chat_since(self, chat_id, after_id=0, limit=200):
+        return await self._all(sa.select(chat_log).where(chat_log.c.chat_id == chat_id, chat_log.c.id > after_id)
+                               .order_by(chat_log.c.id).limit(limit))
+
     # memory
     async def add_memory(self, text, source="agent"):
         await self._exec(sa.insert(memories).values(text=text.strip()[:1000], source=source, created_at=now()))

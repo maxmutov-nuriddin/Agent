@@ -182,7 +182,7 @@ async def run_command(env, a):
     if not cmd:
         raise ToolError("bo'sh buyruq")
     aid = await env.store.create_approval(env.task_id, env.agent, cmd)
-    ok = await env.approver.ask(env.task_id, env.agent, cmd)
+    ok = await env.approver.ask(aid, env.task_id, env.agent, cmd)
     await env.store.decide_approval(aid, "approved" if ok else "denied")
     await env.store.audit(env.agent, "run_command", f"{'APPROVED' if ok else 'DENIED'}: {cmd[:300]}")
     if not ok:

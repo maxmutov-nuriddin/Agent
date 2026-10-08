@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
+from aiogram.types import User, Update
 
 from aicompany import bot as botmod
 from aicompany.approvals import AutoApprover
@@ -100,27 +101,80 @@ def test_next_run_schedule():
     assert next_run(datetime(2026, 10, 8, 8, 0), 9) == datetime(2026, 10, 8, 9, 0)
 
 
-async def test_telegram_approver_approve_deny_timeout(make_app, monkeypatch):
+async def test_approval_center_approve_deny_timeout_and_announce():
+    import asyncio
+    from aicompany.approvals import ApprovalCenter
+    seen = []
+
+    async def announce(aid, task_id, agent, desc):
+        seen.append((aid, agent, desc))
+
+    async def broken(*a):
+        raise RuntimeError("kanal ishlamadi")
+    c = ApprovalCenter(timeout=0.2)
+    c.announcers += [broken, announce]  # buzilgan kanal boshqasini to'sib qo'ymaydi
+
+    t = asyncio.create_task(c.ask(1, 5, "dev", "rm -rf build"))
+    await asyncio.sleep(0.05)
+    assert seen == [(1, "dev", "rm -rf build")] and c.list()[0]["description"] == "rm -rf build"
+    assert c.resolve(1, True) and await t is True and c.list() == []
+
+    t = asyncio.create_task(c.ask(2, 5, "dev", "ls"))
+    await asyncio.sleep(0.05)
+    assert c.resolve(2, False) and await t is False
+    assert not c.resolve(2, True)  # allaqachon hal qilingan
+    assert await c.ask(3, 5, "dev", "slow") is False and c.list() == []  # vaqt tugadi
+
+
+async def test_telegram_callback_resolves_center_and_busy_state(make_app, monkeypatch):
+    import asyncio
+    from aiogram.types import CallbackQuery
     sent = []
 
     async def fake_call(self, method, request_timeout=None):
         sent.append(method)
         return True
     monkeypatch.setattr(Bot, "__call__", fake_call)
-    app, _ = await make_app(scripted_company())
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="111")
     bot = Bot("123456:ABC")
-    ap = botmod.TelegramApprover(bot, 111)
-
-    import asyncio
-    t = asyncio.create_task(ap.ask(1, "dev", "rm -rf build"))
+    dp = botmod.make_dispatcher(app, bot)
+    t = asyncio.create_task(app.center.ask(7, 1, "dev", "echo hi"))
     await asyncio.sleep(0.05)
-    assert sent and ap.resolve(1, True) and await t is True
-
-    t = asyncio.create_task(ap.ask(1, "dev", "ls"))
-    await asyncio.sleep(0.05)
-    assert ap.resolve(2, False) and await t is False
-    assert not ap.resolve(2, True)  # allaqachon hal qilingan
-
-    monkeypatch.setattr(botmod, "APPROVAL_TIMEOUT", 0.05)
-    assert await ap.ask(1, "dev", "slow") is False
+    assert any(getattr(m, "reply_markup", None) for m in sent)  # tugmali xabar yuborildi
+    cb = CallbackQuery(id="1", from_user=User(id=111, is_bot=False, first_name="x"), chat_instance="c", data="ap:7:y")
+    await dp.feed_update(bot, Update(update_id=2, callback_query=cb))
+    assert await t is True
     await bot.session.close()
+
+
+async def test_busy_state_while_agent_runs(make_app):
+    import asyncio
+    gate = asyncio.Event()
+    base = scripted_company()
+
+    async def slow_wait():
+        await gate.wait()
+    app, _ = await make_app(base)
+    orig = app.router.call
+
+    async def slow_call(*a, **k):
+        if k.get("agent") == "researcher":
+            await gate.wait()
+        return await orig(*a, **k)
+    app.router.call = slow_call
+    t = asyncio.create_task(app.orch.run_task("x", 1))
+    for _ in range(50):
+        await asyncio.sleep(0.02)
+        if "researcher" in app.team.busy:
+            break
+    assert "researcher" in app.team.busy and app.team.busy["researcher"]["task_id"]
+    gate.set()
+    await t
+    assert app.team.busy == {}
+
+
+async def test_stale_running_tasks_are_marked_on_startup(make_app):
+    app, _ = await make_app(scripted_company())
+    tid = await app.store.create_task(1, "x")
+    assert await app.store.fail_stale_tasks() == 1
+    assert (await app.store.get_task(tid))["status"] == "interrupted"

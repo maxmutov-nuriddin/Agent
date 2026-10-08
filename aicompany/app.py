@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .approvals import ApprovalCenter
 from .config import Settings, load_settings
 from .db import Store
 from .orchestrator import Orchestrator
@@ -17,6 +18,7 @@ class App:
     router: Router
     team: Team
     orch: Orchestrator
+    center: ApprovalCenter | None = None
 
 
 async def build_app(settings: Settings | None = None, providers=None, approver=None) -> App:
@@ -26,4 +28,7 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     router = Router(settings, store, providers if providers is not None else build_providers(settings))
     team = Team(store, router, settings.max_agents, settings.max_tool_turns)
     await team.ensure_seed()
-    return App(settings, store, router, team, Orchestrator(store, team, settings, settings.max_revisions, approver))
+    await store.fail_stale_tasks()
+    center = ApprovalCenter()
+    orch = Orchestrator(store, team, settings, settings.max_revisions, approver or center)
+    return App(settings, store, router, team, orch, center)

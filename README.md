@@ -19,6 +19,22 @@ Faqat Claude bilan boshlash: `.env` da faqat `ANTHROPIC_API_KEY` ni to'ldiring, 
 ## Telegram
 `/team` `/tasks` `/task <id>` `/budget` `/report` `/memory` `/hire <nom> <sabab>` `/fire <nom>` `/review` `/pause` `/resume`. Oddiy matn = yangi vazifa; fayl yuborsangiz vazifaga ilova bo'ladi. Tayyor fayllar vazifa tugagach Telegramga yuboriladi. Har kuni `REPORT_HOUR` da hisobot keladi (LLM ishlatmaydi, pul sarflamaydi). Bot faqat `OWNER_TELEGRAM_ID` ga javob beradi.
 
+## Veb-panel (PWA) va iPhone
+`python -m aicompany run` Telegram botdan tashqari veb-panelni ham ishga tushiradi (faqat veb: `python -m aicompany web`). Terminalda maxfiy havola chiqadi: `http://...:8080/#token=...`. Kalit birinchi ishga tushirishda avtomatik yaratilib `.env` ga yoziladi.
+
+Panel bo'limlari: **Suhbat** (rahbar bilan, Telegram bilan bir xil suhbat), **Jamoa** (kim ishlayapti, yollash/bo'shatish), **Kartalar** (xavfli buyruqlarga ruxsat), **Vazifalar** (natija, fayllarni yuklab olish), **Hisob** (byudjet, sarf, xotira, to'xtatish).
+
+**iPhone bosh ekraniga o'rnatish:** Safari'da havolani oching → Ulashish → **Bosh ekranga qo'shish**. Ilova kabi to'liq ekranda ochiladi.
+
+**Telefondan ulanish (tanlang):**
+1. *Uy WiFi:* `.env` da `WEB_HOST=0.0.0.0`, havola `http://<kompyuter-IP>:8080/`. Kompyuter yoqilgan bo'lishi kerak. Diqqat: HTTP shifrlanmagan, faqat ishonchli WiFi.
+2. *Tailscale (tavsiya, bepul):* kompyuter va telefonga Tailscale o'rnating, havola `http://<tailscale-IP>:8080/`. Trafik shifrlangan, internetga ochilmaydi.
+3. *Cloudflare Tunnel:* internetdan HTTPS bilan. Faqat `WEB_TOKEN` uzun va maxfiy bo'lsa.
+
+**Vidjet:** iOS'da PWA haqiqiy vidjet bera olmaydi (buning uchun native ilova kerak). Bepul **Scriptable** ilovasiga `docs/widget/ai-jamoa.js` skriptini qo'ying (ichidagi `BASE_URL` va `WIDGET_TOKEN` ni to'ldiring). Bosh ekranda ishlayotgan agentlar, kutayotgan qarorlar, bugungi sarf va qolgan byudjet ko'rinadi. `WIDGET_TOKEN` faqat o'qiydi, boshqarib bo'lmaydi.
+
+**Xavfsizlik:** barcha `/api` so'rovlari `WEB_TOKEN` talab qiladi (8 ta xato urinishdan keyin 1 daqiqa bloklanadi), qat'iy CSP, fayllar faqat workspace ichidan yuklanadi, token yo'q bo'lsa server ishga tushmaydi.
+
 ## Agentlar nima qila oladi (asboblar)
 | Guruh | Asboblar | Eslatma |
 |---|---|---|
