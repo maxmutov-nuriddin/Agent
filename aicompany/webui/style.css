@@ -462,10 +462,10 @@ details.team summary { cursor: pointer; color: var(--muted); font-weight: 700; f
   #view[data-tab="team"] .ov-col { min-height: 0; overflow: hidden; gap: 12px; }
   #view[data-tab="team"] .ov .card { padding: 14px 16px; }
   /* chap */
-  #view[data-tab="team"] .ov-today { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
-  #view[data-tab="team"] .ov-today .orb { flex: 1 1 0; min-height: 90px; width: auto; aspect-ratio: 1; max-height: 230px; align-self: center; margin: 8px auto; }
+  #view[data-tab="team"] .ov-today { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  #view[data-tab="team"] .ov-today .orb { flex: none; width: clamp(110px, 27vh, 290px); height: clamp(110px, 27vh, 290px); align-self: center; margin: 8px auto; }
   #view[data-tab="team"] .ov-quote { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-  #view[data-tab="team"] .ov-col:first-child > .card:last-child { flex: none; max-height: 24%; overflow: hidden; }
+  #view[data-tab="team"] .ov-col:first-child > .card:last-child { flex: 1 1 0; min-height: 70px; overflow: hidden; }
   /* o'rta */
   #view[data-tab="team"] .kpis { gap: 12px; flex: none; }
   #view[data-tab="team"] .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
