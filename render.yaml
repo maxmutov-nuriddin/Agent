@@ -20,8 +20,7 @@ services:
         sync: false
       - key: WIDGET_TOKEN
         sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
+      # ANTHROPIC_API_KEY: ixtiyoriy. Claude kaliti bo'lsa Render -> Environment ga qo'lda qo'shing (shart emas).
       - key: GEMINI_API_KEY
         sync: false
       - key: DATABASE_URL          # Supabase: Connect -> Session pooler (postgresql://...:5432/postgres)
