@@ -18,6 +18,18 @@ from .providers import VoiceError, VoiceUnavailable
 from .team import CORE
 from .util import clip
 
+def _version() -> str:
+    """Ishlayotgan kod versiyasi (git commit): panel eskirganini aniqlash uchun."""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).parent,
+                             capture_output=True, text=True, timeout=3)
+        return out.stdout.strip() or "dev"
+    except (OSError, subprocess.SubprocessError):
+        return "dev"
+
+
+VERSION = _version()
 STATIC = Path(__file__).parent / "webui"
 STATIC_FILES = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css",
                 "/sw.js": "sw.js", "/manifest.webmanifest": "manifest.webmanifest",
@@ -133,6 +145,7 @@ def make_web_app(app: App) -> web.Application:
             "done_today": done_today,
             "running_tasks": [{"id": t["id"], "request": t["request"][:100]} for t in running],
             "pending": len(app.center.list()) if app.center else 0,
+            "version": VERSION,
             "primary": await app.router.primary(),
             "providers": sorted(app.router.providers),
         }

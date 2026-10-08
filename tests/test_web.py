@@ -375,3 +375,10 @@ def test_frontend_has_voice_and_provider_controls():
     root = Path(__file__).parent.parent / "aicompany/webui"
     js, html = (root / "app.js").read_text(), (root / "index.html").read_text()
     assert "chat-mic" in html and "/api/voice" in js and "/provider" in js and "MediaRecorder" in js
+
+
+async def test_state_reports_running_version(web):
+    c, _ = web
+    st = (await get(c, "/api/state"))[1]
+    assert isinstance(st["version"], str) and st["version"]
+    assert "Versiya" in (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()

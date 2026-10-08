@@ -232,3 +232,5 @@ textarea.big { min-height: 140px; }
 @keyframes recpulse { 50% { box-shadow: 0 0 0 8px rgba(255,90,82,.25); } }
 @media (prefers-reduced-motion: reduce) { .mic.rec { animation: none; } }
 @media (max-height: 500px) { .mic { width: 42px; height: 42px; } }
+
+.ver { text-align: center; margin-top: 18px; font-size: 12px; }
