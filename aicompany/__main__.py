@@ -130,11 +130,14 @@ async def amain():
             print_web_info(app.settings)
             listen = asyncio.create_task(app.listener.supervise())
             resume = asyncio.create_task(app.orch.resume_interrupted(panel_sender(app)))
+            from .briefing import morning_loop
+            morning = asyncio.create_task(morning_loop(app, [panel_sender(app)]))
             try:
                 await reminder_loop(app, [panel_sender(app), app.push.reminder_sender()])
             finally:
                 listen.cancel()
                 resume.cancel()
+                morning.cancel()
         else:
             from .bot import run_bot
             from .web import start_web

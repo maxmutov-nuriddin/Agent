@@ -392,10 +392,13 @@ async def run_bot(app: App, extra_senders=()):
                 pass
     resume = asyncio.create_task(app.orch.resume_interrupted(tell, on_result=lambda res: dp["deliver"](s.owner_id, res)))  # uzilgan vazifalar o'zi davom etadi
     report = asyncio.create_task(daily_report_loop(app, send_report))
+    from .briefing import morning_loop
+    morning = asyncio.create_task(morning_loop(app, [send_report, *extra_senders]))  # «O'chiq» rejimda botga yuborilmaydi
     remind = asyncio.create_task(reminder_loop(app, [send_owner, *extra_senders, *([app.push.reminder_sender()] if getattr(app, 'push', None) else [])]))
     try:
         await dp.start_polling(bot)
     finally:
         report.cancel()
+        morning.cancel()
         remind.cancel()
         resume.cancel()

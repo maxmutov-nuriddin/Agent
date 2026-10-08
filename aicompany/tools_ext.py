@@ -550,3 +550,36 @@ TOOLS.update({t.name: t for t in [
          _obj({"chat": {"type": "string"}, "message_ids": {"type": "array", "items": {"type": "integer"}},
                "for_everyone": {"type": "boolean"}}, ["chat", "message_ids"]), tg_delete_messages, "tg"),
 ]})
+
+
+# ---------- ob-havo va valyuta (kalitsiz, bepul manbalar) ----------
+async def weather_tool(env, a):
+    from . import briefing
+    place = (a.get("place") or "").strip()
+    if place:
+        lat, lon, name = await resolve_point(env, place)
+    else:
+        lat, lon, name = await briefing.owner_point(env.store)
+    try:
+        w = await briefing.weather(lat, lon, env.settings.report_tz)
+    except Exception as e:  # noqa: BLE001
+        raise ToolError(f"ob-havo xizmatiga ulanib bo'lmadi: {e}") from e
+    return briefing.weather_text(w, name)
+
+
+async def currency_tool(env, a):
+    from . import briefing
+    try:
+        r = await briefing.rates()
+    except Exception as e:  # noqa: BLE001
+        raise ToolError(f"Markaziy bank kursini olib bo'lmadi: {e}") from e
+    date = next(iter(r.values()))["date"] if r else ""
+    return briefing.rates_text(r) + (f" (Markaziy bank, {date})" if date else "")
+
+
+TOOLS.update({t.name: t for t in [
+    Tool("weather", "web", "Today's weather. place: empty for the owner's home/current location, or a city/address/'lat,lon'.",
+         _obj({"place": {"type": "string"}}, []), weather_tool),
+    Tool("currency_rates", "web", "Official exchange rates of USD, EUR, RUB to Uzbek so'm (Central Bank of Uzbekistan, today).",
+         _obj({}, []), currency_tool),
+]})

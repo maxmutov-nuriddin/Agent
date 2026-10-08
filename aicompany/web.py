@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 from aiohttp import web
 
 from .push import available as push_available
+from .briefing import settings_of as morning_settings
 from .app import App
 from .report import build_report, day_start_utc
 from .providers import ProviderError, VoiceError, VoiceUnavailable, suggest_model
@@ -175,6 +176,7 @@ def make_web_app(app: App) -> web.Application:
             "push": {"available": bool(app.push and push_available()), "prefs": await app.push.prefs() if app.push else {},
                      "devices": len(await app.push.subs()) if app.push else 0},
             "bot_push": (await app.store.get_kv("bot_push")) or "all",
+            "morning": await morning_settings(app.store),
             "today": round(await today_spend(), 4),
             "budgets": [{"provider": n, **v} for n, v in budgets.items()],
             "working": [{"agent": a, "task_id": b["task_id"]} for a, b in app.team.busy.items()],
@@ -844,6 +846,25 @@ def make_web_app(app: App) -> web.Application:
             raise web.HTTPNotFound(reason="kutilayotgan eslatma topilmadi")
         return json_ok({"ok": True})
 
+    async def h_morning(request):
+        d = await body(request)
+        if "on" in d:
+            await app.store.set_kv("morning", "1" if d["on"] else "0")
+        if "time" in d:
+            t = str(d["time"]).strip()
+            if not re.fullmatch(r"([01]?\d|2[0-3]):[0-5]\d", t):
+                raise web.HTTPBadRequest(reason="vaqt HH:MM ko'rinishida bo'lsin (masalan 08:00)")
+            h, m = t.split(":")
+            await app.store.set_kv("morning_time", f"{int(h):02d}:{m}")
+            await app.store.delete_kv("morning_sent")   # yangi vaqt bugun ham ishlashi uchun
+        await app.store.audit("owner", "morning", json.dumps(d, ensure_ascii=False)[:200])
+        return json_ok(await morning_settings(app.store))
+
+    async def h_morning_test(request):
+        from .briefing import send
+        text = await send(app, [lambda t: app.store.add_chat(s.owner_id or 0, "sys", t)])
+        return json_ok({"text": text})
+
     async def h_bot_push(request):
         mode = str((await body(request)).get("mode", ""))
         if mode not in ("all", "result", "off"):
@@ -928,7 +949,7 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/tasks", h_task_submit),
         web.post(r"/api/tasks/{id:\d+}/stop", h_task_stop), web.post(r"/api/tasks/{id:\d+}/archive", h_task_archive),
         web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
-        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/resume", h_resume),
+        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/morning", h_morning), web.post("/api/morning/test", h_morning_test), web.post("/api/resume", h_resume),
         web.post("/api/provider", h_provider), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
