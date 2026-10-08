@@ -18,7 +18,7 @@ from aiohttp import web
 from .app import App
 from .report import build_report, day_start_utc
 from .providers import ProviderError, VoiceError, VoiceUnavailable, suggest_model
-from .tguser import TgError
+from .tguser import TgError, TgStale
 from .tools import ToolError
 from .team import CORE
 from .util import clip
@@ -438,6 +438,10 @@ def make_web_app(app: App) -> web.Application:
             return json_ok({"me": ""})
         try:
             me = await (await app.tg.client()).get_me()
+        except TgStale:  # kirilmagan qoldiq fayl: tozalaymiz, panel kirish qadamlarini ko'rsatadi
+            await app.tg.logout()
+            await app.store.delete_kv("tg_me")
+            return json_ok({"me": "", "stale": True})
         except TgError as e:
             raise web.HTTPBadRequest(reason=str(e))
         app.tg.me = app.tg.name_of(me) + (f" (@{me.username})" if getattr(me, "username", None) else "")

@@ -713,3 +713,16 @@ async def test_tg_me_shows_connected_account(web):
     app.tg = TgUser(app.settings, client_factory=lambda: client)
     app.tg.api_id, app.tg.api_hash = 1, "h"
     assert (await get(c, "/api/tg/me"))[1] == {"me": "Agent (@agent_x)"}
+
+
+async def test_tg_stale_session_is_cleaned_and_login_offered(web, tmp_path):
+    from aicompany.tguser import TgUser, session_file
+    c, app = web
+    stale = LoginClient()                                                      # fayl bor, lekin kirilmagan
+    app.tg = TgUser(dataclasses.replace(app.settings, tg_session=str(tmp_path / "tg")))
+    app.tg.api_id, app.tg.api_hash = 1, "h"
+    app.tg._new_client = lambda: stale
+    session_file(app.tg.s).write_text("x")
+    assert app.tg.configured()
+    assert (await get(c, "/api/tg/me"))[1] == {"me": "", "stale": True}
+    assert not session_file(app.tg.s).exists() and not app.tg.configured()     # endi kirish qadamlari chiqadi

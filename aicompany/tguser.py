@@ -14,6 +14,10 @@ class TgError(Exception):
     """Foydalanuvchiga tushunarli Telegram xatosi."""
 
 
+class TgStale(TgError):
+    """Sessiya fayli bor, lekin ichida kirilgan akkaunt yo'q (tugallanmagan kirish qoldig'i)."""
+
+
 def session_file(settings) -> Path:
     return Path(settings.tg_session + ".session")
 
@@ -54,7 +58,7 @@ class TgUser:
         await client.connect()
         if not await client.is_user_authorized():
             await client.disconnect()
-            raise TgError("Telegram sessiyasi eskirgan: panelda Hisob -> Telegram akkaunt orqali qayta ulang")
+            raise TgStale("Telegram sessiyasi eskirgan: panelda Hisob -> Telegram akkaunt orqali qayta ulang")
         self._client = client
         return self._client
 
