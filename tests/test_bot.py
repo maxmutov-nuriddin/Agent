@@ -35,3 +35,27 @@ async def test_bot_only_obeys_owner(make_app, monkeypatch):
     await dp.feed_update(bot, update(OWNER, "/pause"))
     assert await app.store.get_kv("paused") == "1" and sent
     await bot.session.close()
+
+
+async def test_bot_replies_to_greeting_without_creating_task(make_app, monkeypatch):
+    import asyncio
+    import json
+    sent = []
+
+    async def fake_call(self, method, request_timeout=None):
+        sent.append(getattr(method, "text", None))
+        return True
+    monkeypatch.setattr(Bot, "__call__", fake_call)
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "front desk" in system:
+            return json.dumps({"mode": "chat", "reply": "Salom! Men tayyorman."})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID=str(OWNER))
+    bot = Bot("123456:ABC")
+    dp = make_dispatcher(app, bot)
+    await dp.feed_update(bot, update(OWNER, "salom"))
+    await asyncio.sleep(0.2)
+    assert sent == ["Salom! Men tayyorman."] and await app.store.list_tasks() == []
+    await bot.session.close()

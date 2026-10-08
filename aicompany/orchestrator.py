@@ -32,6 +32,7 @@ class Orchestrator:
                  approver: Approver | None = None):
         self.store, self.team, self.settings, self.max_revisions = store, team, settings, max_revisions
         self.approver = approver or DenyApprover()
+        self.sem = asyncio.Semaphore(getattr(settings, "max_parallel", 2))
 
     async def _check_pause(self):
         if await self.store.get_kv("paused") == "1":
@@ -46,8 +47,67 @@ class Orchestrator:
     def _files(ws: Path) -> list[str]:
         return sorted(str(f.relative_to(ws)) for f in ws.rglob("*") if f.is_file())
 
+    FRONT_DESK = (
+        "You are the front desk of an AI company that works for its owner. Decide how to handle the owner's "
+        "latest message. Return ONLY JSON: {\"mode\": \"chat\" or \"task\", \"reply\": \"...\", \"task\": \"...\"}.\n"
+        "- chat: greetings, thanks, small talk, questions about the company, team, budget or earlier results, "
+        "opinions and advice, or when ONE short clarifying question is needed because missing information would "
+        "waste the work. Put your answer in \"reply\" (short, warm, in the owner's language).\n"
+        "- task: the owner wants real work done (create, write, research, build, analyze, plan...) and the request "
+        "is clear enough. Put a one-line acknowledgement in \"reply\" and a COMPLETE self-contained description of "
+        "the work in \"task\", merging details from earlier messages (including answers to your questions).\n"
+        "If a sensible default exists, do the task instead of asking. Never claim work is done in chat mode. "
+        "Reply in the language the owner uses (Uzbek, Russian or English).")
+
+    async def handle(self, text: str, chat_id: int = 0, notify: Notify = _noop,
+                     attachments: list[Path] | None = None) -> dict:
+        """Oddiy xabarni qabul qiladi: avval suhbat/vazifa ekanini aniqlaydi."""
+        await self.store.add_chat(chat_id, "owner", text)
+        decision = {"mode": "task", "task": text, "reply": ""}
+        if not attachments:  # fayl yuborilgan bo'lsa, bu aniq vazifa
+            decision = await self._front_desk(text, chat_id)
+        if decision["mode"] == "chat":
+            await self.store.add_chat(chat_id, "ceo", decision["reply"])
+            await notify(decision["reply"])
+            return {"kind": "chat", "reply": decision["reply"]}
+        if decision["reply"]:
+            await self.store.add_chat(chat_id, "ceo", decision["reply"])
+            await notify(decision["reply"])
+        res = await self.run_task(decision["task"], chat_id, notify, attachments)
+        summary = f"[Vazifa #{res['task_id']} {res['status']}] " + (res.get("result") or res.get("error") or "")
+        await self.store.add_chat(chat_id, "ceo", summary[:1500])
+        res["kind"] = "task"
+        return res
+
+    async def _front_desk(self, text: str, chat_id: int) -> dict:
+        history = await self.store.recent_chat(chat_id, 8)
+        history = [h for h in history][:-1]  # oxirgisi hozirgi xabarning o'zi
+        hist = "\n".join(f"{'Owner' if h['role'] == 'owner' else 'CEO'}: {clip(h['text'], 600)}" for h in history)
+        mems = await self.store.search_memories(text, 5)
+        memo = "\n".join(f"- {m['text']}" for m in mems)
+        roster = await self.team.roster()
+        prompt = (f"# Team\n{roster}\n\n" + (f"# Memory\n{memo}\n\n" if memo else "") +
+                  (f"# Recent conversation\n{hist}\n\n" if hist else "") + f"# Latest owner message\n{text}")
+        res = await self.team.router.call("cheap", self.FRONT_DESK, [{"role": "user", "content": prompt}],
+                                          agent="ceo-chat")
+        try:
+            d = extract_json(res.text)
+            if d.get("mode") == "task":
+                return {"mode": "task", "reply": str(d.get("reply", "")).strip(),
+                        "task": str(d.get("task", "")).strip() or text}
+            if str(d.get("reply", "")).strip():
+                return {"mode": "chat", "reply": str(d["reply"]).strip(), "task": ""}
+        except (ValueError, TypeError):
+            pass
+        return {"mode": "chat", "reply": res.text.strip() or "Tushunmadim, qaytadan yozing.", "task": ""}
+
     async def run_task(self, request: str, chat_id: int = 0, notify: Notify = _noop,
                        attachments: list[Path] | None = None) -> dict:
+        async with self.sem:
+            return await self._run_task(request, chat_id, notify, attachments)
+
+    async def _run_task(self, request: str, chat_id: int, notify: Notify,
+                        attachments: list[Path] | None) -> dict:
         task_id = await self.store.create_task(chat_id, request)
         ws = self._workspace(task_id)
         for src in attachments or []:

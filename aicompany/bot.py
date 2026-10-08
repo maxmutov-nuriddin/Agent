@@ -18,11 +18,11 @@ log = logging.getLogger("bot")
 APPROVAL_TIMEOUT = 600
 MAX_UPLOAD = 10_000_000
 HELP = (
-    "Men AI kompaniya rahbariman. Vazifani oddiy matn bilan yozing (fayl ham yuborishingiz mumkin), jamoa bajaradi.\n\n"
+    "Men AI kompaniya rahbariman. Menga oddiy yozing: gaplashishingiz, savol berishingiz yoki vazifa topshirishingiz mumkin. Qaysi biri ekanini o'zim tushunaman, kerak bo'lsa aniqlashtiraman. Fayl ham yuborishingiz mumkin.\n\n"
     "/team — jamoa\n/tasks — oxirgi vazifalar\n/task <id> — vazifa natijasi\n"
     "/budget — sarf\n/report — hisobot\n/memory — xotira\n"
     "/hire <nom> <nima uchun> — xodim olish\n/fire <nom> — ishdan bo'shatish\n/review — HR tahlili\n"
-    "/pause — hammasini to'xtatish\n/resume — davom ettirish"
+    "/clear — suhbat tarixini tozalash\n/pause — hammasini to'xtatish\n/resume — davom ettirish"
 )
 
 
@@ -67,7 +67,6 @@ class TelegramApprover(Approver):
 def make_dispatcher(app: App, bot: Bot, approver: TelegramApprover | None = None) -> Dispatcher:
     dp = Dispatcher()
     owner = app.settings.owner_id
-    sem = asyncio.Semaphore(app.settings.max_parallel)
     running: set[asyncio.Task] = set()
 
     async def warn(text: str):
@@ -130,6 +129,11 @@ def make_dispatcher(app: App, bot: Bot, approver: TelegramApprover | None = None
         rows = await app.store.recent_memories(15)
         await m.answer("🧠 Xotira:\n" + "\n".join(f"• {r['text']}" for r in rows) if rows else "Xotira hozircha bo'sh")
 
+    @dp.message(Command("clear"))
+    async def _clear(m: Message):
+        await app.store.clear_chat(m.chat.id)
+        await m.answer("🧹 Suhbat tarixi tozalandi.")
+
     @dp.message(Command("pause"))
     async def _pause(m: Message):
         await app.store.set_kv("paused", "1")
@@ -161,8 +165,9 @@ def make_dispatcher(app: App, bot: Bot, approver: TelegramApprover | None = None
     async def run(chat_id: int, text: str, attachments=None):
         async def notify(s: str):
             await bot.send_message(chat_id, s)
-        async with sem:
-            res = await app.orch.run_task(text, chat_id, notify, attachments)
+        res = await app.orch.handle(text, chat_id, notify, attachments)
+        if res["kind"] == "chat":
+            return  # javob allaqachon yuborilgan
         head = f"🏁 Vazifa #{res['task_id']} — {res['status']}"
         if res.get("error"):
             head += f"\n{res['error']}"

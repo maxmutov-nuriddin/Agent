@@ -84,6 +84,14 @@ approvals = sa.Table(
     sa.Column("created_at", sa.String),
     sa.Column("decided_at", sa.String),
 )
+chat_log = sa.Table(
+    "chat_log", md,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("chat_id", sa.Integer, index=True),
+    sa.Column("role", sa.String),  # owner | ceo
+    sa.Column("text", sa.Text),
+    sa.Column("created_at", sa.String),
+)
 audit_log = sa.Table(
     "audit_log", md,
     sa.Column("id", sa.Integer, primary_key=True),
@@ -246,6 +254,18 @@ class Store:
                 scored.append((score, m["id"], m))
         scored.sort(key=lambda x: (-x[0], -x[1]))
         return [m for _, _, m in scored[:limit]]
+
+    # suhbat tarixi
+    async def add_chat(self, chat_id, role, text):
+        await self._exec(sa.insert(chat_log).values(chat_id=chat_id, role=role, text=text[:4000], created_at=now()))
+
+    async def recent_chat(self, chat_id, n=8):
+        rows = await self._all(sa.select(chat_log).where(chat_log.c.chat_id == chat_id)
+                               .order_by(chat_log.c.id.desc()).limit(n))
+        return list(reversed(rows))
+
+    async def clear_chat(self, chat_id):
+        await self._exec(sa.delete(chat_log).where(chat_log.c.chat_id == chat_id))
 
     # approvals
     async def create_approval(self, task_id, agent, description) -> int:
