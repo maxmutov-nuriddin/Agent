@@ -31,6 +31,7 @@ input, textarea { font: inherit; color: var(--text); }
 .btn.black { background: #0b0b0b; color: #fff; }
 .btn.lime { background: var(--lime); color: var(--on-lime); }
 .btn.outline { background: transparent; box-shadow: inset 0 0 0 2px rgba(0,0,0,.6); color: var(--on-lime); }
+.sheet-body .btn.outline { box-shadow: inset 0 0 0 1.5px var(--line); color: var(--text); }  /* qora oynada ham o'qiladigan */
 .btn.ghost { box-shadow: inset 0 0 0 1.5px var(--line); color: var(--text); background: none; }
 .btn.red { background: rgba(255,90,82,.14); color: var(--red); }
 .btn.full { width: 100%; }

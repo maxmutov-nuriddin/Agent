@@ -13,6 +13,8 @@ from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
 log = logging.getLogger("aicompany.tg")
+# Telegram "Faol seanslar" ro'yxatida shu nom ko'rinadi (aks holda kompyuter turi, masalan "arm64")
+DEVICE_MODEL, SYSTEM_VERSION, APP_VERSION = "AI", "AI Jamoa agent", "1.0"
 CONNECT_TIMEOUT = 25  # soniya: Telegram serveriga ulanib bo'lmasa, abadiy kutmaymiz
 REQUEST_TIMEOUT = 30
 NO_CONNECT = ("Telegram serverlariga ulanib bo'lmadi ({s} soniya). Internet yoki VPN'ni tekshiring. "
@@ -99,7 +101,8 @@ class TgUser:
             from telethon import TelegramClient, connection
         except ImportError as e:
             raise TgError("Telethon o'rnatilmagan: `pip install telethon`") from e
-        kw = {"connection_retries": 1, "retry_delay": 1, "timeout": 10, "request_retries": 2}
+        kw = {"connection_retries": 1, "retry_delay": 1, "timeout": 10, "request_retries": 2,
+              "device_model": DEVICE_MODEL, "system_version": SYSTEM_VERSION, "app_version": APP_VERSION}
         try:
             px = parse_proxy(self.proxy)
         except ValueError as e:

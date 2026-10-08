@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-s";
+const PANEL_V = "2026.10.08-t";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -350,7 +350,7 @@ async function tgSheet() {
   if (t.pending && t.login && t.login.qr) return tgQrSheet(false);
   if (t.pending) return tgCodeStep(again, run, field, t.login || {});
   if (t.configured) {
-    const out = h("button", { class: "btn outline full" }, "Akkauntni uzish");
+    const out = h("button", { class: "btn red full" }, "Akkauntni uzish");
     run(out, async () => { if (!confirm("Telegram akkaunt uziladi. Davom etasizmi?")) return; await post("/tg/logout"); closeSheet(); toast("Uzildi"); refresh(true); });
     const who = h("b", {}, t.me || "aniqlanmoqda...");
     api("/tg/me").then((r) => {

@@ -43,14 +43,15 @@ async def cmd_check(app):
 async def cmd_tglogin(settings):
     """Shaxsiy Telegram akkauntga bir marta kirish (telefon raqami + kod). Parol saqlanmaydi, faqat sessiya fayli."""
     import getpass
-    from .tguser import lock_down, session_file
+    from .tguser import APP_VERSION, DEVICE_MODEL, SYSTEM_VERSION, lock_down, session_file
     if not (settings.tg_api_id and settings.tg_api_hash):
         raise SystemExit("Avval .env ga TG_API_ID va TG_API_HASH ni yozing (https://my.telegram.org → API development tools)")
     try:
         from telethon import TelegramClient
     except ImportError:
         raise SystemExit("Avval: pip install telethon")
-    client = TelegramClient(settings.tg_session, settings.tg_api_id, settings.tg_api_hash)
+    client = TelegramClient(settings.tg_session, settings.tg_api_id, settings.tg_api_hash, device_model=DEVICE_MODEL,
+                            system_version=SYSTEM_VERSION, app_version=APP_VERSION)
     await client.start(phone=lambda: input("Telegram telefon raqamingiz (+998...): ").strip(),
                        code_callback=lambda: input("Telegramga kelgan kod: ").strip(),
                        password=lambda: getpass.getpass("Ikki bosqichli parol (bo'lsa): "))
