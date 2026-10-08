@@ -707,7 +707,7 @@ async def test_tg_keys_from_panel_survive_restart(make_app):
 async def test_tg_me_shows_connected_account(web):
     from aicompany.tguser import TgUser
     c, app = web
-    assert (await get(c, "/api/tg/me"))[1] == {"me": ""}                       # ulanmagan
+    assert (await get(c, "/api/tg/me"))[1] == {"me": "", "pending": False}     # ulanmagan
     client = LoginClient()
     client.authed = True
     app.tg = TgUser(app.settings, client_factory=lambda: client)
@@ -768,3 +768,27 @@ async def test_tg_proxy_saved_from_panel_and_validated(web):
     assert (await get(c, "/api/integrations"))[1]["telegram_account"]["proxy"] is True
     assert (await post(c, "/api/tg/code", {"phone": "+998901234567", "proxy": ""}))[0] == 200
     assert await app.store.get_kv("tg_proxy") is None and not app.tg.proxy
+
+
+async def test_pending_login_is_not_mistaken_for_connected(web, tmp_path):
+    """Telethon kod so'ralganda sessiya faylini yaratadi: panel buni 'ulangan' deb olib, kirishni buzmasligi kerak."""
+    from aicompany.tguser import TgUser, session_file
+    c, app = web
+    tg = TgUser(dataclasses.replace(app.settings, tg_session=str(tmp_path / "tg")))
+    tg.api_id, tg.api_hash = 1, "h"
+    client = LoginClient()
+
+    async def connect():
+        client.connected = True
+        session_file(tg.s).write_text("x")                                     # haqiqiy Telethon kabi
+    client.connect = connect
+    tg._new_client = lambda: client
+    app.tg = tg
+    assert (await post(c, "/api/tg/code", {"phone": "+998901234567"}))[0] == 200
+    ta = (await get(c, "/api/integrations"))[1]["telegram_account"]
+    assert ta["pending"] is True and ta["configured"] is False
+    assert (await get(c, "/api/tg/me"))[1] == {"me": "", "pending": True}      # kirish bekor qilinmadi
+    assert tg.login_pending() and session_file(tg.s).exists()
+    st, d = await post(c, "/api/tg/verify", {"code": "12345"})
+    assert (st, d["status"]) == (200, "ok")
+    assert (await get(c, "/api/integrations"))[1]["telegram_account"]["configured"] is True

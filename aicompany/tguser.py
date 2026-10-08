@@ -68,7 +68,8 @@ class TgUser:
         return self._login is not None
 
     def configured(self) -> bool:
-        return bool(self.has_keys() and (self._factory or session_file(self.s).exists()))
+        # kirish davom etayotganda fayl bor, lekin akkaunt hali ulanmagan: "ulangan" deb hisoblamaymiz
+        return bool(self.has_keys() and not self._login and (self._factory or session_file(self.s).exists()))
 
     def _new_client(self):
         if self._factory:

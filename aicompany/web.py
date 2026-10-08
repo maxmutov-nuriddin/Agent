@@ -448,8 +448,8 @@ def make_web_app(app: App) -> web.Application:
 
     async def h_tg_me(request):
         """Hozir qaysi akkauntga ulanganini ko'rsatadi (eski tglogin sessiyasi bo'lishi mumkin)."""
-        if not app.tg.configured():
-            return json_ok({"me": ""})
+        if app.tg.login_pending() or not app.tg.configured():  # kod kutilayotgan kirishni hech qachon buzmaymiz
+            return json_ok({"me": "", "pending": app.tg.login_pending()})
         try:
             me = await (await app.tg.client()).get_me()
         except TgStale:  # kirilmagan qoldiq fayl: tozalaymiz, panel kirish qadamlarini ko'rsatadi
