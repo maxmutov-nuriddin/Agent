@@ -35,6 +35,7 @@ def _version() -> str:
 
 
 VERSION = _version()
+STARTED = time.monotonic()
 STATIC = Path(__file__).parent / "webui"
 STATIC_FILES = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css",
                 "/sw.js": "sw.js", "/manifest.webmanifest": "manifest.webmanifest",
@@ -693,6 +694,18 @@ def make_web_app(app: App) -> web.Application:
                         "last_task": ({"id": tasks[0]["id"], "status": tasks[0]["status"],
                                        "request": tasks[0]["request"][:60]} if tasks else None)})
 
+    async def h_health(request):
+        """Tokensiz: xosting (Render) va UptimeRobot uchun. Maxfiy ma'lumot qaytarmaydi."""
+        ok = True
+        try:
+            await app.store.get_kv("health")
+        except Exception:  # noqa: BLE001 — baza ishlamasa 503
+            ok = False
+        lst = app.listener
+        return json_ok({"ok": ok, "version": VERSION, "uptime_s": int(time.monotonic() - STARTED),
+                        "running_tasks": len(app.orch.running), "providers": len(app.router.providers),
+                        "telegram_account": bool(lst and lst.active())}, 200 if ok else 503)
+
     a = web.Application(middlewares=[guard], client_max_size=16_000_000)
     for path in STATIC_FILES:
         a.router.add_get(path, static)
@@ -718,7 +731,7 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),
         web.get("/api/reminders", h_reminders), web.post("/api/reminders", h_reminder_add),
         web.delete(r"/api/reminders/{id:\d+}", h_reminder_cancel), web.get("/api/spend", h_agent_spend),
-        web.get("/api/widget", h_widget),
+        web.get("/api/widget", h_widget), web.get("/health", h_health), web.get("/healthz", h_health),
     ])
     return a
 

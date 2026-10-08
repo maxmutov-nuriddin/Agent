@@ -110,11 +110,12 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
         report_tz=env.get("REPORT_TZ", "Asia/Tashkent"),
         max_tool_turns=int(env.get("MAX_TOOL_TURNS", 8)),
         command_timeout=int(env.get("COMMAND_TIMEOUT", 60)),
-        web_host=env.get("WEB_HOST", "127.0.0.1"),
-        web_port=int(env.get("WEB_PORT", 8080)),
+        # Render/Railway kabi xostinglar PORT beradi va tashqaridan ulanish 0.0.0.0 da bo'lishi kerak
+        web_host=env.get("WEB_HOST") or ("0.0.0.0" if env.get("PORT") else "127.0.0.1"),
+        web_port=int(env.get("WEB_PORT") or env.get("PORT") or 8080),
         web_token=env.get("WEB_TOKEN") or None,
         widget_token=env.get("WIDGET_TOKEN") or None,
-        web_public_url=(env.get("WEB_PUBLIC_URL") or "").rstrip("/") or None,
+        web_public_url=(env.get("WEB_PUBLIC_URL") or env.get("RENDER_EXTERNAL_URL") or "").rstrip("/") or None,
         google_maps_key=env.get("GOOGLE_MAPS_API_KEY") or None,
         tg_api_id=int(env["TG_API_ID"]) if str(env.get("TG_API_ID", "")).strip().isdigit() else None,
         tg_api_hash=env.get("TG_API_HASH") or None,
@@ -136,6 +137,8 @@ def ensure_secret(name: str, env_path: Path | None = None) -> str:
     load_dotenv(env_path or ROOT / ".env")  # allaqachon bor kalitni qayta yaratib yubormaslik uchun
     if os.environ.get(name):
         return os.environ[name]
+    if os.environ.get("RENDER"):  # serverda .env har qayta ishga tushganda yo'qoladi: token o'zgarib, havola buzilardi
+        raise SystemExit(f"{name} yo'q: Render -> Environment bo'limida {name} qo'ying (uzun tasodifiy satr)")
     value = secrets.token_urlsafe(32)
     path = env_path or ROOT / ".env"
     text = path.read_text() if path.exists() else ""

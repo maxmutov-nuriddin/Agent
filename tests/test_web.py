@@ -889,3 +889,32 @@ async def test_tg_access_mode_from_panel(web):
     assert (await get(c, "/api/integrations"))[1]["telegram_account"]["mode"] == "full"
     assert (await post(c, "/api/tg/access", {"mode": "ask"}))[0] == 200
     assert (await get(c, "/api/integrations"))[1]["telegram_account"]["mode"] == "ask"
+
+
+async def test_health_is_public_and_minimal(web):
+    c, app = web
+    r = await c.get("/health")                                                 # tokensiz
+    d = await r.json()
+    assert r.status == 200 and d["ok"] is True and "uptime_s" in d and d["telegram_account"] is False
+    assert "token" not in json.dumps(d).lower()
+    assert (await c.head("/health")).status == 200                             # UptimeRobot HEAD so'rovi
+    assert (await c.get("/healthz")).status == 200
+
+
+def test_render_port_host_and_public_url():
+    from .conftest import settings
+    s = settings(PORT="10000", RENDER_EXTERNAL_URL="https://ai-jamoa.onrender.com")
+    assert (s.web_host, s.web_port, s.web_public_url) == ("0.0.0.0", 10000, "https://ai-jamoa.onrender.com")
+    s = settings()
+    assert (s.web_host, s.web_port, s.web_public_url) == ("127.0.0.1", 8080, None)   # lokal o'zgarmaydi
+    s = settings(PORT="10000", WEB_HOST="127.0.0.1", WEB_PORT="9000")
+    assert (s.web_host, s.web_port) == ("127.0.0.1", 9000)                     # aniq sozlama ustun
+
+
+def test_missing_token_on_render_fails_clearly(tmp_path, monkeypatch):
+    from aicompany.config import ensure_secret
+    monkeypatch.delenv("WEB_TOKEN_X", raising=False)
+    monkeypatch.setenv("RENDER", "true")
+    with pytest.raises(SystemExit, match="Render"):
+        ensure_secret("WEB_TOKEN_X", tmp_path / ".env")
+    assert not (tmp_path / ".env").exists()

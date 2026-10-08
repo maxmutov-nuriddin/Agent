@@ -114,6 +114,15 @@ Router vazifa darajasiga (cheap/mid/strong) qarab eng arzon provayderni tanlaydi
 ## Muhim
 `models.yaml` dagi OpenAI/Gemini model nomlari va narxlar tasdiqlanmagan. Kalit qo'ygach `check` ni ishga tushiring.
 
+## Render'ga joylash
+1. Render → **New → Blueprint** → shu repo (`render.yaml` o'zi o'qiladi). Yoki **New → Web Service**: Build `pip install -r requirements.txt`, Start `python -m aicompany run`, Health check path `/health`.
+2. **Environment**: `TELEGRAM_BOT_TOKEN`, `OWNER_TELEGRAM_ID`, `WEB_TOKEN` va `WIDGET_TOKEN` (uzun tasodifiy satr), `ANTHROPIC_API_KEY` va/yoki `GEMINI_API_KEY`. Port va tashqi manzil (`PORT`, `RENDER_EXTERNAL_URL`) avtomatik olinadi.
+3. Panel: `https://<nom>.onrender.com/#token=<WEB_TOKEN>` (HTTPS bo'lgani uchun mikrofon ham ishlaydi).
+4. **Uxlamasligi uchun:** UptimeRobot → HTTP(s) monitor → `https://<nom>.onrender.com/health`, har 5 daqiqa. Javob: `{"ok": true, ...}` (tokensiz, maxfiy ma'lumotsiz).
+5. **Bir vaqtda faqat bitta joyda ishlating:** kompyuterda ham `run` ishlab tursa, Telegram bot ikkalasida ishlamaydi (conflict).
+
+⚠️ **Bepul tarifda disk yo'q:** har deploy yoki qayta ishga tushishda baza (vazifalar, xotira, xarajat hisobi), vazifa fayllari va Telegram akkaunt sessiyasi o'chadi (akkauntni panelda QR bilan qayta ulash kerak bo'ladi). Doimiy saqlash uchun Starter tarif + 1 GB disk (`render.yaml` dagi izohni oching).
+
 ## Hozircha yo'q (navbatda)
 Ovozli javob (TTS) va jonli qo'ng'iroq, Google Kalendar/Gmail, WhatsApp Business, Instagram (Graph API), Telegram qo'ng'iroqlari, agent uchun alohida raqam, Docker sandbox, GitHub asbobi, vektor qidiruv (xotira hozir kalit so'z bo'yicha), VPS/Supabase joylashtirish.
 

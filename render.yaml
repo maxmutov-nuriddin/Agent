@@ -1,0 +1,38 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> shu repo.
+# Maxfiy qiymatlar (sync: false) Render'da qo'lda kiritiladi, git'ga tushmaydi.
+services:
+  - type: web
+    name: ai-jamoa
+    runtime: python
+    plan: free            # bepulda disk yo'q: qayta ishga tushganda baza va Telegram sessiyasi o'chadi (README -> Render)
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m aicompany run
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: OWNER_TELEGRAM_ID
+        sync: false
+      - key: WEB_TOKEN
+        sync: false
+      - key: WIDGET_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: PRIMARY_PROVIDER
+        value: auto
+      - key: TG_MODE
+        value: read
+      - key: REPORT_TZ
+        value: Asia/Tashkent
+    # Pullik tarif (Starter) + disk: ma'lumotlar saqlanib qoladi. Yoqish uchun plan: starter va quyidagini oching:
+    # disk:
+    #   name: data
+    #   mountPath: /opt/render/project/src/data
+    #   sizeGB: 1
+    # va envVars ga: WORKSPACE_DIR = /opt/render/project/src/data/workspace (vazifa fayllari ham diskda tursin)
