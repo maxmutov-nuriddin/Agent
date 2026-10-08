@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-r";
+const PANEL_V = "2026.10.08-s";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -347,6 +347,7 @@ async function tgSheet() {
     btn.disabled = true; if (busy) btn.textContent = busy;
     try { await fn(); } catch (e) { toast(e.message); } finally { btn.disabled = false; btn.textContent = label; }
   });
+  if (t.pending && t.login && t.login.qr) return tgQrSheet(false);
   if (t.pending) return tgCodeStep(again, run, field, t.login || {});
   if (t.configured) {
     const out = h("button", { class: "btn outline full" }, "Akkauntni uzish");
@@ -382,7 +383,10 @@ async function tgSheet() {
       try { await post("/tg/code", data); } catch (e) { err.textContent = "⚠️ " + e.message; throw e; }
       again();
     }, "Telegramga ulanmoqda… (30 soniyagacha)");
+    const qrBtn = h("button", { class: "btn outline full", onclick: () => tgQrSheet(true) }, "📷 QR-kod bilan kirish (kod/SMS shart emas)");
     return openSheet(h("h2", {}, "Telegram akkaunt: 2/3"),
+      h("p", { class: "muted" }, "Eng oson yo'l: QR-kod. Ortiqcha akkaunt ochiq turgan telefon bilan skanerlaysiz."), qrBtn,
+      h("div", { class: "label" }, "yoki telefon raqami + kod"),
       h("p", { class: "muted" }, "Ortiqcha akkaunt raqamini yozing. Telegram shu akkauntning Telegram ilovasiga (yoki SMS bilan) kod yuboradi."), l, phone,
       lx, proxy, h("p", { class: "hint" }, "Odatda bo'sh qoldiring. Faqat \"ulanib bo'lmadi\" xatosi chiqsa: Telegram ilovangiz Sozlamalar → Ma'lumotlar va xotira → Proksi dagi havolani shu yerga qo'ying."),
       err, h("div", { class: "label" }), go);
@@ -404,7 +408,42 @@ function tgCodeStep(again, run, field, info) {
     h("p", { class: "muted" }, "📨 Kod yuborildi: ", h("b", {}, info.via || "Telegram ilovasiga")),
     h("p", { class: "hint" }, "Telegram ilovasiga desa: kod ortiqcha akkauntning o'zida, \"Telegram\" (ko'k belgili rasmiy) chatida bo'ladi. U akkaunt biror telefonda ochiq bo'lishi kerak. Kodni hech kimga bermang."),
     lc, code, lp, pw, h("div", { class: "label" }), go, info.next ? h("div", { class: "acts" }, resend) : null,
+    h("div", { class: "acts" }, h("button", { class: "btn outline", onclick: () => tgQrSheet(true) }, "📷 Kod kelmayaptimi? QR bilan kiring")),
     h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: async () => { try { await post("/tg/logout"); again(); } catch (e) { toast(e.message); } } }, "↺ Boshqa raqam / qayta")));
+}
+let qrPoll = 0;
+async function tgQrSheet(start) {
+  const my = ++qrPoll;                                   // eski kuzatuvchi to'xtaydi
+  const img = h("img", { alt: "QR", class: "qr" });
+  const status = h("p", { class: "muted" }, "QR tayyorlanmoqda…");
+  const pw = h("input", { type: "password", placeholder: "Ikki bosqichli parol", autocomplete: "off", hidden: true });
+  const pwBtn = h("button", { class: "btn lime full", hidden: true }, "Kirish");
+  const retry = h("button", { class: "btn outline full", hidden: true, onclick: () => tgQrSheet(true) }, "↺ Yangi QR");
+  pwBtn.addEventListener("click", async () => {
+    pwBtn.disabled = true;
+    try { const r = await post("/tg/verify", { password: pw.value }); closeSheet(); toast("✅ Ulandi: " + r.me); refresh(true); }
+    catch (e) { toast(e.message); } finally { pwBtn.disabled = false; }
+  });
+  openSheet(h("h2", {}, "QR bilan kirish"),
+    h("p", { class: "hint" }, "Ortiqcha akkaunt ochiq turgan telefonda: Telegram → Sozlamalar → Qurilmalar → «Kompyuterni ulash» (Link Desktop Device) → shu QR-kodni skanerlang."),
+    img, status, pw, pwBtn, retry);
+  const show = (st) => {
+    if (st.svg) { img.src = st.svg; img.hidden = false; } else img.hidden = true;
+    if (st.status === "waiting") status.textContent = "Skanerlashni kutyapman… (QR o'zi yangilanib turadi)";
+    else if (st.status === "password") { status.textContent = "Skanerlandi ✓. Akkauntda ikki bosqichli parol bor: kiriting."; pw.hidden = pwBtn.hidden = false; }
+    else if (st.status === "expired") { status.textContent = "Vaqt tugadi (5 daqiqa)."; retry.hidden = false; }
+    else if (st.status === "error") { status.textContent = "⚠️ " + (st.error || "xato"); retry.hidden = false; }
+  };
+  let st;
+  try { st = start ? await post("/tg/qr") : await api("/tg/qr"); } catch (e) { status.textContent = "⚠️ " + e.message; retry.hidden = false; return; }
+  show(st);
+  while (my === qrPoll && !$("sheet").hidden && st.status === "waiting") {
+    await new Promise((r) => setTimeout(r, 2000));
+    if (my !== qrPoll || $("sheet").hidden) return;
+    try { st = await api("/tg/qr"); } catch (e) { continue; }
+    if (st.status === "ok") { closeSheet(); toast("✅ Ulandi: " + (st.me || "")); refresh(true); return; }
+    show(st);
+  }
 }
 function reminderAdd() {
   const text = h("input", { placeholder: "Nimani eslatay? (masalan: Aliga qo'ng'iroq qilish)" });

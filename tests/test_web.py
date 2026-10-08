@@ -811,3 +811,70 @@ async def test_tg_shows_where_code_went_and_resends(web):
     await post(c, "/api/tg/verify", {"code": "55555"})
     assert ("sign_in", "+998901234567", "55555", "H2", None) in client.log    # qayta yuborilgan kod xeshi
     assert (await post(c, "/api/tg/resend"))[0] == 400                        # kirish tugagan
+
+
+class FakeQR:
+    def __init__(self, outcome):
+        self.outcome, self.n = outcome, 0
+
+    @property
+    def url(self):
+        return f"tg://login?token=T{self.n}"
+
+    async def recreate(self):
+        self.n += 1
+
+    async def wait(self, timeout=None):
+        if self.outcome == "timeout":
+            await asyncio.sleep(timeout)
+            raise asyncio.TimeoutError
+        await asyncio.sleep(0.05)
+        if self.outcome == "password":
+            raise type("SessionPasswordNeededError", (Exception,), {})()
+
+
+async def test_tg_qr_login_success_and_2fa(web):
+    from aicompany.tguser import TgUser
+    c, app = web
+    for outcome in ("ok", "password"):
+        client = LoginClient()
+        qr = FakeQR(outcome)
+
+        async def qr_login(qr=qr):
+            return qr
+        client.qr_login = qr_login
+        app.tg = TgUser(app.settings, client_factory=lambda client=client: client)
+        app.tg.api_id, app.tg.api_hash = 1, "h"
+        st, d = await post(c, "/api/tg/qr")
+        assert st == 200 and d["status"] == "waiting" and d["svg"].startswith("data:image/svg+xml;base64,")
+        assert (await get(c, "/api/integrations"))[1]["telegram_account"]["login"]["qr"] is True
+        await asyncio.sleep(0.2)
+        d = (await get(c, "/api/tg/qr"))[1]
+        if outcome == "ok":
+            assert d["status"] == "ok" and d["me"] == "Agent (@agent_x)" and app.tg.configured()
+            assert await app.store.get_kv("tg_me") == "Agent (@agent_x)"
+        else:
+            assert d["status"] == "password" and "svg" not in d
+            st, d = await post(c, "/api/tg/verify", {"password": "sir"})
+            assert (st, d["status"]) == (200, "ok") and ("sign_in", None, None, None, "sir") in client.log
+
+
+async def test_tg_qr_refreshes_token_and_restart_cancels_old(make_app):
+    from aicompany.tguser import TgUser
+    app, _ = await make_app(front())
+    client = LoginClient()
+    qr = FakeQR("timeout")
+
+    async def qr_login():
+        return qr
+    client.qr_login = qr_login
+    tg = TgUser(app.settings, client_factory=lambda: client)
+    tg.api_id, tg.api_hash = 1, "h"
+    await tg.qr_start()
+    task = tg._login["task"]
+    task.cancel()                                                              # haqiqiy kutishni qisqa variant bilan almashtiramiz
+    login = tg._login
+    await tg._qr_wait(login, total=0.35, step=0.1)
+    assert qr.n >= 2 and login["status"] == "expired"                        # token yangilanib turdi, keyin muddat tugadi
+    await tg._drop_login()
+    assert not tg.login_pending() and not client.connected

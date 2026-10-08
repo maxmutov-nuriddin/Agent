@@ -195,7 +195,7 @@ class TgUser:
     def login_info(self) -> dict:
         if not self._login:
             return {}
-        return {k: self._login.get(k) for k in ("via", "next", "timeout")}
+        return {**{k: self._login.get(k) for k in ("via", "next", "timeout")}, "qr": "qr" in self._login}
 
     async def login_resend(self) -> dict:
         """Kodni keyingi yo'l bilan qayta yuborish (Telethon shu mijozda ResendCodeRequest qiladi)."""
@@ -235,15 +235,84 @@ class TgUser:
                     raise self._friendly(e2) from e2
             else:
                 raise self._friendly(e) from e
+        await self._finish(client)
+        return "ok"
+
+    async def _finish(self, client):
         me = await client.get_me()
         self._client, self._login = client, None
         if not self._factory:
             lock_down(session_file(self.s))
         self.me = self.name_of(me) + (f" (@{me.username})" if getattr(me, "username", None) else "")
-        return "ok"
+
+    # ---------- QR orqali kirish (kod/SMS kerak emas) ----------
+    async def qr_start(self) -> dict:
+        if not self.has_keys():
+            raise TgError("Avval TG_API_ID va TG_API_HASH ni kiriting")
+        await self.close()
+        await self._drop_login()
+        self._remove_files()
+        client = self._new_client()
+        await self._connect(client)
+        try:
+            qr = await asyncio.wait_for(client.qr_login(), REQUEST_TIMEOUT)
+        except asyncio.TimeoutError as e:
+            await self._quiet_disconnect(client)
+            raise TgError("Telegram javob bermadi: qayta urining") from e
+        except Exception as e:  # noqa: BLE001
+            log.warning("Telegram qr_login failed: %r", e)
+            await self._quiet_disconnect(client)
+            raise self._friendly(e) from e
+        self._login = {"client": client, "phone": None, "qr": qr, "status": "waiting", "via": "QR"}
+        self._login["task"] = asyncio.create_task(self._qr_wait(self._login))
+        return self.qr_state()
+
+    async def _qr_wait(self, login, total: float = 300, step: float = 25):
+        """QR skanerlanishini kutadi; token eskirsa yangisini chiqaradi (5 daqiqagacha)."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + total
+        qr, client = login["qr"], login["client"]
+        while loop.time() < deadline:
+            try:
+                await qr.wait(timeout=step)
+            except asyncio.TimeoutError:
+                try:
+                    await asyncio.wait_for(qr.recreate(), REQUEST_TIMEOUT)
+                except Exception as e:  # noqa: BLE001
+                    login["status"], login["error"] = "error", str(self._friendly(e))
+                    return
+                continue
+            except Exception as e:  # noqa: BLE001
+                if type(e).__name__ == "SessionPasswordNeededError":
+                    login["status"] = "password"
+                else:
+                    log.warning("Telegram QR wait failed: %r", e)
+                    login["status"], login["error"] = "error", str(self._friendly(e))
+                return
+            if self._login is login:
+                await self._finish(client)
+            login["status"] = "ok"
+            return
+        login["status"] = "expired"
+
+    def qr_state(self) -> dict:
+        """Panel uchun: {"status": waiting|password|ok|expired|error|none, "url": ..., "error": ...}"""
+        lg = self._login
+        if lg and "qr" in lg:
+            st = {"status": lg["status"], "error": lg.get("error", "")}
+            if lg["status"] == "waiting":
+                try:
+                    st["url"] = lg["qr"].url
+                except Exception:  # noqa: BLE001
+                    st["url"] = ""
+            return st
+        return {"status": "ok" if self.configured() else "none"}
 
     async def _drop_login(self):
         if self._login:
+            task = self._login.get("task")
+            if task and not task.done():
+                task.cancel()
             await self._quiet_disconnect(self._login["client"])
             self._login = None
 

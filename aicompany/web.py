@@ -434,6 +434,35 @@ def make_web_app(app: App) -> web.Application:
             raise web.HTTPBadRequest(reason=str(e))
         return json_ok({"ok": True, **app.tg.login_info()})
 
+    def qr_payload(st: dict) -> dict:
+        if st.get("url"):
+            try:
+                import io
+
+                import segno
+            except ImportError:
+                raise web.HTTPBadRequest(reason="QR uchun: pip install segno")
+            buf = io.BytesIO()
+            segno.make(st["url"], error="m").save(buf, kind="svg", scale=6, border=3, dark="#000", light="#fff")
+            import base64
+            st = {**st, "svg": "data:image/svg+xml;base64," + base64.b64encode(buf.getvalue()).decode()}
+            st.pop("url")
+        return st
+
+    async def h_tg_qr_start(request):
+        try:
+            st = await app.tg.qr_start()
+        except TgError as e:
+            raise web.HTTPBadRequest(reason=str(e))
+        return json_ok(qr_payload(st))
+
+    async def h_tg_qr(request):
+        st = app.tg.qr_state()
+        if st["status"] == "ok":
+            await app.store.set_kv("tg_me", app.tg.me)
+            st["me"] = app.tg.me
+        return json_ok(qr_payload(st))
+
     async def h_tg_resend(request):
         try:
             return json_ok({"ok": True, **await app.tg.login_resend()})
@@ -638,7 +667,8 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
-        web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend), web.post("/api/tg/logout", h_tg_logout), web.get("/api/tg/me", h_tg_me),
+        web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend),
+        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),
