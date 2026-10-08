@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-l";
+const PANEL_V = "2026.10.09-m";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -740,6 +740,39 @@ async function showAudit() {
       ...rows.map((r) => h("div", { class: "step" }, h("b", {}, `${r.actor} · ${r.action}`), h("div", {}, `${ago(r.ts)} oldin · ${r.detail}`))));
   } catch (e) { toast(e.message); }
 }
+// --- Yangilash: kuchli yangilash, yangi versiya aniqlash, pastga tortib yangilash ---
+async function hardRefresh() {
+  toast("Yangilanmoqda…");
+  try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map((r) => r.unregister())); } catch (_) { /* SW yo'q */ }
+  try { const ks = await caches.keys(); await Promise.all(ks.map((k) => caches.delete(k))); } catch (_) { /* kesh yo'q */ }
+  location.replace(location.pathname + "?r=" + Date.now());   // kirish kaliti (localStorage) saqlanib qoladi
+}
+function showUpdate() {
+  if (document.getElementById("updbar")) return;
+  document.body.append(h("button", { id: "updbar", class: "updbar", onclick: hardRefresh }, "🔄 Yangi versiya bor. Yangilash"));
+}
+let lastUpdCheck = 0;
+async function checkUpdate() {
+  if (Date.now() - lastUpdCheck < 120000) return;
+  lastUpdCheck = Date.now();
+  try {
+    const t = await (await fetch("/app.js", { cache: "no-store" })).text();
+    const m = t.match(/PANEL_V = "([^"]+)"/);
+    if (m && m[1] !== PANEL_V) showUpdate();
+  } catch (_) { /* aloqa yo'q */ }
+}
+function setupPullToRefresh() {
+  const v = $("view"); if (!v || !matchMedia("(pointer: coarse)").matches) return;
+  const ind = h("div", { class: "ptr" }, "↓ Yangilash uchun torting"); document.body.append(ind);
+  let y0 = 0, dy = 0, on = false;
+  v.addEventListener("touchstart", (e) => { on = v.scrollTop <= 0 && !S.chatOpen && $("sheet").hidden; if (on) y0 = e.touches[0].clientY; }, { passive: true });
+  v.addEventListener("touchmove", (e) => {
+    if (!on) return; dy = e.touches[0].clientY - y0;
+    if (dy > 12) { ind.style.opacity = Math.min(1, dy / 90); ind.style.transform = `translate(-50%, ${Math.min(dy, 120) / 2}px)`; ind.textContent = dy > 90 ? "↻ Qo'yib yuboring" : "↓ Yangilash uchun torting"; }
+  }, { passive: true });
+  v.addEventListener("touchend", () => { const go_ = on && dy > 90; on = false; dy = 0; ind.style.opacity = 0; if (go_) hardRefresh(); });
+}
+
 // --- Push-bildirishnomalar ---
 const PUSH_KINDS = [["done", "✅ Vazifa tayyor bo'lganda"], ["failed", "⚠️ Vazifa bajarilmaganda"], ["approval", "🔐 Ruxsat so'ralganda"], ["reminder", "⏰ Eslatma vaqtida"]];
 let pushOn = null;  // shu qurilmada obuna bormi (null = hali bilmaymiz)
@@ -1033,6 +1066,8 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     pause, h("div", { class: "label" }),
     h("button", { class: "btn ghost full", onclick: () => { localStorage.removeItem("aij_token"); localStorage.removeItem("aij_cache"); S.token = ""; location.reload(); } }, "Chiqish"),
     h("div", { class: "label" }, "Telefonga o'rnatish"), installCard(),
+    h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: hardRefresh }, "🔄 Kuchli yangilash")),
+    h("p", { class: "hint" }, "Yangi versiya chiqqanda eski nusxa qolib ketsa, shuni bosing: kesh tozalanadi, kirish saqlanadi. Telefonda ekranni tepadan pastga tortsangiz ham yangilanadi."),
     h("p", { class: "hint ver" }, "Versiya: " + (state.version || "?") + " · panel " + PANEL_V), h("p", { class: "hint ver" }, viewportInfo())];
 }
 
@@ -1154,6 +1189,8 @@ async function poll() {
     if (S.chatOpen) { await chat; S.state = await api("/state"); $("chat-sub").textContent = S.state.paused ? "pauza" : S.state.working.length ? S.state.working.map((w) => w.agent).join(", ") + " ishlayapti" : "onlayn"; if (!S.state.working.length && !S.state.running_tasks.length) document.querySelectorAll(".typing").forEach((n) => n.remove()); }
     else await Promise.all([chat, refresh(false)]);
     saveCache();
+    if (S.state && S.state.version) { if (!S.ver) S.ver = S.state.version; else if (S.ver !== S.state.version) showUpdate(); }
+    checkUpdate();
   } catch (e) { if (e.message !== "auth") toast("Aloqa yo'q…"); }
   finally { polling = false; }
 }
@@ -1163,6 +1200,7 @@ function nextDelay() {  // ish bor yoki chat ochiq: tez; bo'sh turganda: sekinro
   return S.chatOpen || S.typing || (st && (st.working.length || st.running_tasks.length || st.pending)) ? 3000 : 8000;
 }
 function start() {
+  setupPullToRefresh();
   renderTabs(); poll().then(() => refresh(true)).then(prefetch);
   (async function loop() { for (;;) { await sleep(nextDelay()); await poll(); } })();
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });

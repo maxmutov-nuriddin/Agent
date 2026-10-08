@@ -492,3 +492,8 @@ details.team summary { cursor: pointer; color: var(--muted); font-weight: 700; f
   #view[data-tab="team"] .kpis .muted.sm { display: none; }
   #view[data-tab="team"] .ov-chart { min-height: 110px; }
 }
+
+.updbar { position: fixed; left: 50%; top: calc(var(--sat, 0px) + 10px); transform: translateX(-50%); z-index: 60; padding: 11px 18px; border-radius: 999px;
+  background: var(--lime); color: var(--on-lime); font-weight: 800; font-size: 14px; box-shadow: 0 8px 28px rgba(0,0,0,.5); }
+.ptr { position: fixed; left: 50%; top: calc(var(--sat, 0px) + 4px); transform: translateX(-50%); z-index: 50; opacity: 0; pointer-events: none;
+  padding: 7px 14px; border-radius: 999px; background: var(--s3); color: var(--text); font-size: 13px; font-weight: 700; }

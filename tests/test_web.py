@@ -1000,4 +1000,4 @@ async def test_push_subscribe_prefs_and_delivery(web, monkeypatch):
 async def test_push_assets_and_ui(web):
     js = (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()
     sw = (Path(__file__).parent.parent / "aicompany/webui/sw.js").read_text()
-    assert "voiceCapture" in js and "pushManager.subscribe" in js and "/push/prefs" in js and 'addEventListener("push"' in sw and "notificationclick" in sw
+    assert "hardRefresh" in js and "checkUpdate" in js and "setupPullToRefresh" in js and "voiceCapture" in js and "pushManager.subscribe" in js and "/push/prefs" in js and 'addEventListener("push"' in sw and "notificationclick" in sw
