@@ -145,7 +145,10 @@ class Orchestrator:
         "- inside \"reminder\": \"call\": true when the owner wants the reminder delivered as a phone call ('tel qilib eslat').\n"
         "- \"plan\": {\"period\": \"day\"|\"week\"|\"month\"|\"year\"|\"other\", \"title\": \"...\", \"items\": [\"...\", ...]} when the owner dictates "
         "THEIR OWN daily/weekly/monthly plan or to-do list ('bugungi rejam: ...', 'haftalik reja tuz'). It is saved to their Plans page. "
-        "This is not for work you should do: that is a task.")
+        "This is not for work you should do: that is a task.\n"
+        "- \"watch\": {\"kind\": \"tg\"|\"price\", \"target\": \"@channel, t.me link or product URL\", \"keywords\": [\"...\"], "
+        "\"description\": \"what exactly to look for\", \"target_price\": number or null} when the owner asks to MONITOR a Telegram "
+        "channel for posts or to track a product's price. Confirm it briefly in the reply.")
 
     TALK_STYLE = (
         "\n\nCONVERSATION STYLE: the owner may just want to talk (feelings, ideas, life, plans). Then be a warm, "
@@ -296,6 +299,9 @@ class Orchestrator:
             reply = str(d.get("reply", "")).strip()
             based_on = await self._valid_task_id(d.get("based_on"))
             await self._save_pref(d.get("remember"))
+            watch = await self._save_watch(d.get("watch"))
+            if watch and not reply:
+                reply = f"🔔 Kuzatuv qo'shildi: {watch}. Rejalar → Kuzatuv bo'limida ko'rasiz."
             plan = await self._save_plan(d.get("plan"))
             if plan and not reply:
                 reply = f"📋 Reja saqlandi: {plan['title']} ({len(plan['items'])} band). Rejalar sahifasida ko'rasiz."
@@ -376,6 +382,24 @@ class Orchestrator:
             except Exception:  # noqa: BLE001 — vektor bo'lmasa kalit so'z qidiruvi yetadi
                 qvec = None
         return await self.store.search_memories(text, k, qvec)
+
+    async def _save_watch(self, value):
+        """Egasi so'ragan kuzatuv (Telegram kanal yoki narx) yaratiladi; kuzatuvning o'zi AI'siz ishlaydi."""
+        if not isinstance(value, dict) or value.get("kind") not in ("tg", "price"):
+            return None
+        target = str(value.get("target") or "").strip()[:500]
+        if not target or (value["kind"] == "price" and not target.startswith(("http://", "https://"))):
+            return None
+        kws = value.get("keywords") or []
+        kws = ", ".join(str(k).strip() for k in (kws if isinstance(kws, list) else [kws]) if str(k).strip())[:500]
+        try:
+            tp = float(value["target_price"]) if value.get("target_price") not in (None, "") else None
+        except (TypeError, ValueError):
+            tp = None
+        title = (target if value["kind"] == "tg" else "Narx: " + target.split("/")[2])[:60]
+        await self.store.add_watch(kind=value["kind"], title=title, target=target, keywords=kws,
+                                   description=" ".join(str(value.get("description") or "").split())[:500], target_price=tp)
+        return title
 
     async def _save_plan(self, value):
         """Egasi aytgan o'z rejasi (kunlik/haftalik...) Rejalar sahifasiga yoziladi. AI vazifa rejalari bu yerga tushmaydi."""

@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-q";
+const PANEL_V = "2026.10.09-r";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -688,8 +688,8 @@ async function download(id, path) {
 // --- Eslatmalar va rejalar (egasining o'z rejalari; AI vazifa rejalari bu yerga tushmaydi, ular vazifaning ichida) ---
 const PERIODS = [["day", "Kunlik"], ["week", "Haftalik"], ["month", "Oylik"], ["year", "Yillik"], ["other", "Boshqa"]];
 async function loadPlans() {
-  const [state, rems, plans] = await Promise.all([api("/state"), api("/reminders?all=1"), api("/plans")]);
-  S.state = state; renderTabs(); return { rems, plans };
+  const [state, rems, plans, watch] = await Promise.all([api("/state"), api("/reminders?all=1"), api("/plans"), api("/watches")]);
+  S.state = state; renderTabs(); return { rems, plans, watch, smart: !!state.watch_smart };
 }
 function planSheet(plan) {
   let period = plan ? plan.period : "day";
@@ -708,9 +708,61 @@ function planSheet(plan) {
   openSheet(h("h2", {}, plan ? "Rejani tahrirlash" : "Yangi reja"), h("label", {}, "Davr"), seg, h("label", {}, "Nomi"), title,
     h("label", {}, "Sana (ixtiyoriy)"), target, h("label", {}, "Bandlar"), items, h("div", { class: "label" }), btn);
 }
-function drawPlans({ rems, plans }) {
+function watchSheet(w) {
+  let kind = w ? w.kind : "tg";
+  const target = h("input", { value: w ? w.target : "", autocapitalize: "off" });
+  const title = h("input", { value: w ? w.title : "", placeholder: "Nomi (ixtiyoriy)" });
+  const kws = h("input", { value: w ? w.keywords : "", placeholder: "frontend, vakansiya, remote" });
+  const desc = h("textarea", { rows: "3", placeholder: "Masalan: Toshkentdagi junior frontend ish e'lonlari, maosh ko'rsatilgan" }, w ? w.description : "");
+  const price = h("input", { inputmode: "decimal", value: w && w.target_price ? w.target_price : "", placeholder: "masalan 9000000" });
+  const box = h("div");
+  const seg = h("div", { class: "seg" });
+  const draw = () => {
+    seg.replaceChildren(...[["tg", "📡 Telegram kanal"], ["price", "🏷 Narx"]].map(([k, l]) => h("button", { type: "button", class: kind === k ? "on" : "", onclick: () => { kind = k; draw(); } }, l)));
+    target.placeholder = kind === "tg" ? "@kanal_nomi yoki t.me/kanal" : "https://... mahsulot sahifasi";
+    box.replaceChildren(...(kind === "tg"
+      ? [h("label", {}, "Kalit so'zlar (vergul bilan) — AI'siz, bepul"), kws,
+         h("label", {}, "Nimani izlayapsiz (aqlli kuzatuv uchun)"), desc,
+         h("p", { class: "hint" }, "Kalit so'z bo'lsa, faqat shu so'z bor postlar keladi. «Aqlli kuzatuv» yoqilgan bo'lsa, ular AI bilan qo'shimcha tekshiriladi (kalit so'zsiz ham ishlaydi).")]
+      : [h("label", {}, "Kutilgan narx (ixtiyoriy)"), price,
+         h("p", { class: "hint" }, "Narx tushsa yoki shu narxdan pastga tushsa xabar keladi. Har 6 soatda tekshiriladi. Ba'zi saytlar avtomatik o'qishga ruxsat bermaydi.")]));
+  };
+  draw();
+  const btn = h("button", { class: "btn lime full" }, w ? "Saqlash" : "Kuzatuvni qo'shish");
+  btn.addEventListener("click", async () => {
+    const d = { kind, target: target.value, title: title.value || target.value, keywords: kws.value, description: desc.value, target_price: price.value };
+    try { const r = await post(w ? "/watches/" + w.id : "/watches", d); closeSheet(); toast("Saqlandi. Tekshirilmoqda…");
+      try { await post("/watches/" + r.id + "/check"); } catch (_) { /* xato kartada ko'rinadi */ } refresh(true); } catch (e) { toast(e.message); }
+  });
+  openSheet(h("h2", {}, w ? "Kuzatuvni tahrirlash" : "Yangi kuzatuv"), seg, h("label", {}, "Manba"), target, h("label", {}, "Nomi"), title, box, h("div", { class: "label" }), btn);
+}
+function watchSection({ watch, smart }, on) {
+  const ago_ = (iso) => (iso ? ago(iso) : "hali tekshirilmagan");
+  const card = (w) => h("div", { class: "card plan" + (w.enabled ? "" : " fin") },
+    h("div", { class: "row-b" }, h("div", { class: "grow" }, h("p", { class: "kick" }, (w.kind === "tg" ? "📡 Telegram" : "🏷 Narx") + " · " + ago_(w.last_check)),
+      h("b", { class: "ptitle" }, w.title)),
+      h("div", { class: "acts-i" },
+        h("button", { class: "linkbtn", title: "Hozir tekshirish", onclick: async () => { try { const r = await post("/watches/" + w.id + "/check"); toast(r.hits.length ? r.hits.length + " ta topildi" : r.watch.error ? "⚠️ " + r.watch.error : "Yangi narsa yo'q"); refresh(true); } catch (e) { toast(e.message); } } }, "🔄"),
+        h("button", { class: "linkbtn", onclick: () => watchSheet(w) }, "✏️"),
+        h("button", { class: "linkbtn", onclick: async () => { if (!confirm("Kuzatuv o'chirilsinmi?")) return; try { await api("/watches/" + w.id, { method: "DELETE" }); refresh(true); } catch (e) { toast(e.message); } } }, "🗑"))),
+    h("p", { class: "muted sm" }, w.kind === "tg" ? (w.keywords ? "Kalit so'zlar: " + w.keywords : "Kalit so'z yo'q") + (w.description ? " · AI: " + w.description : "")
+      : (w.price ? "Hozirgi narx: " + w.price.toLocaleString("ru-RU") + (w.min && w.min < w.price ? " · eng past: " + w.min.toLocaleString("ru-RU") : "") : "Narx hali olinmagan") + (w.target_price ? " · kutilgan: " + w.target_price.toLocaleString("ru-RU") : "")),
+    w.error ? h("p", { class: "note red" }, "⚠️ " + w.error) : null,
+    h("div", { class: "row-b" }, h("span", { class: "tag-s " + (w.enabled ? "ok" : "") }, w.enabled ? "● Kuzatilyapti" : "To'xtatilgan"),
+      h("button", { class: "btn ghost sm", onclick: async () => { try { await post("/watches/" + w.id, { enabled: !w.enabled }); refresh(true); } catch (e) { toast(e.message); } } },
+        w.enabled ? "⏸ To'xtatish" : "▶ Yoqish")));
+  return h("section", { class: "plans-sec watch-sec" + (on ? " on" : "") },
+    h("div", { class: "row-b" }, h("p", { class: "kick" }, "Kuzatuv"), h("button", { class: "btn lime sm", onclick: () => watchSheet() }, "+ Kuzatuv")),
+    h("p", { class: "hint" }, smart ? "🧠 Aqlli kuzatuv yoqilgan (AI mos postlarni tekshiradi). O'chirish: Hisob → Sozlamalar." : "Kalit so'z rejimi (AI'siz, bepul). Aqlli kuzatuvni Hisob → Sozlamalar da yoqasiz."),
+    watch.watches.length ? watch.watches.map(card) : h("p", { class: "muted sm" }, "Kuzatuv yo'q. Telegram kanal (ish e'lonlari, narxlar, yangiliklar) yoki mahsulot narxini qo'shing. Chatda «@kanalni frontend so'zi bo'yicha kuzat» deb yozsangiz ham bo'ladi."),
+    watch.hits.length ? h("p", { class: "kick sub" }, "Oxirgi topilganlar") : null,
+    watch.hits.slice(0, 10).map((x) => h("div", { class: "prow" }, h("span", { class: "bul amber" }),
+      h("div", { class: "grow" }, h("b", {}, x.watch), h("p", { class: "muted sm clampx" }, x.text)),
+      x.url ? h("a", { class: "linkbtn", href: x.url, target: "_blank", rel: "noopener" }, "↗") : null)));
+}
+function drawPlans({ rems, plans, watch, smart }) {
   const tab = S.planTab, filter = S.planFilter;
-  const seg = h("div", { class: "seg plans-seg" }, [["rems", "Eslatmalar"], ["plans", "Rejalar"]].map(([k, l]) =>
+  const seg = h("div", { class: "seg plans-seg" }, [["rems", "Eslatmalar"], ["plans", "Rejalar"], ["watch", "Kuzatuv"]].map(([k, l]) =>
     h("button", { class: tab === k ? "on" : "", onclick: () => { S.planTab = k; refresh(true); } }, l)));
   // --- eslatmalar ---
   const pending = rems.filter((r) => r.status === "pending"), past = rems.filter((r) => r.status !== "pending");
@@ -745,7 +797,7 @@ function drawPlans({ rems, plans }) {
   const planSec = h("section", { class: "plans-sec" + (tab === "plans" ? " on" : "") },
     h("div", { class: "row-b" }, h("p", { class: "kick" }, "Rejalar"), h("button", { class: "btn lime sm", onclick: () => planSheet() }, "+ Reja")), chips,
     shown.length ? shown.map(card) : h("p", { class: "muted sm" }, "Reja yo'q. «+ Reja» bilan qo'shing yoki chatda «bugungi rejam: …» deb yozing. Bu sizning shaxsiy rejalaringiz; AI vazifalarining rejasi esa vazifaning ichida ko'rinadi."));
-  return [head("Eslatma va rejalar", liveTag()), seg, h("div", { class: "plans-wrap" }, remSec, planSec)];
+  return [head("Eslatma va rejalar", liveTag()), seg, h("div", { class: "plans-wrap" }, remSec, planSec, watch ? watchSection({ watch, smart }, tab === "watch") : null)];
 }
 async function loadStats() {
   const [state, spend, mem, integ, loc] = await Promise.all([api("/state"), api("/spend"), api("/memory"), api("/integrations"), api("/location")]);
@@ -854,7 +906,7 @@ function morningBlock(state) {
 }
 
 // --- Push-bildirishnomalar ---
-const PUSH_KINDS = [["done", "✅ Vazifa tayyor bo'lganda"], ["failed", "⚠️ Vazifa bajarilmaganda"], ["approval", "🔐 Ruxsat so'ralganda"], ["reminder", "⏰ Eslatma vaqtida"], ["morning", "☀️ Ertalabki xulosa"]];
+const PUSH_KINDS = [["done", "✅ Vazifa tayyor bo'lganda"], ["failed", "⚠️ Vazifa bajarilmaganda"], ["approval", "🔐 Ruxsat so'ralganda"], ["reminder", "⏰ Eslatma vaqtida"], ["morning", "☀️ Ertalabki xulosa"], ["watch", "🔔 Kuzatuv topganda"]];
 let pushOn = null;  // shu qurilmada obuna bormi (null = hali bilmaymiz)
 const b64u = (s) => Uint8Array.from(atob((s + "=".repeat((4 - s.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 async function pushSub() {
@@ -1151,6 +1203,12 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
       : "Sifat rejimi: rahbar o'rta/kuchli modeldan foydalanadi, QA e'tirozida eng kuchli model qayta yozadi. Murakkab ishlar uchun."),
     h("div", { class: "label" }, "Bildirishnomalar (telefonga)"), ...pushBlock(),
     h("div", { class: "label" }, "Ertalabki xulosa"), ...morningBlock(state),
+    h("div", { class: "label" }, "Aqlli kuzatuv (AI)"),
+    h("div", { class: "seg" }, [[true, "🧠 Yoqilgan"], [false, "O'chiq"]].map(([v, l]) => h("button", { class: !!state.watch_smart === v ? "on" : "", onclick: async () => {
+      try { await post("/watch_smart", { enabled: v }); toast(v ? "Aqlli kuzatuv yoqildi" : "Faqat kalit so'z rejimi"); refresh(true); } catch (e) { toast(e.message); } } }, l))),
+    h("p", { class: "hint" }, state.watch_smart
+      ? "Kalit so'zga mos postlar (yoki kalit so'z berilmagan kuzatuvda yangi postlar) arzon AI bilan tekshiriladi. Narx tuzilgan ma'lumotda bo'lmasa, AI bir marta topadi. Taxminan oyiga $0.3–1."
+      : "Faqat kalit so'z va sahifadagi tuzilgan narx: AI ishlatilmaydi, bepul."),
     h("div", { class: "label" }, "Bot xabarlari"),
     h("div", { class: "seg" },
       [["all", "Hammasi"], ["result", "Faqat natija"], ["off", "O'chiq"]].map(([v, l]) => h("button", { class: (state.bot_push || "all") === v ? "on" : "", onclick: async () => {

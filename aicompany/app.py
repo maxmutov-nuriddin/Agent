@@ -26,6 +26,7 @@ class App:
     tg: TgUser | None = None
     listener: object | None = None  # TgListener: agent akkaunti egasiga bot kabi javob beradi
     push: object | None = None      # PushService: PWA bildirishnomalar
+    watch: object | None = None     # Watcher: Telegram kanal va narx kuzatuvi
     calls: object | None = None     # CallService: Telegram ovozli qo'ng'iroq (ixtiyoriy)
 
 
@@ -86,6 +87,8 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     app.listener = TgListener(app)
     from .calls import CallService
     app.calls = CallService(app)
+    from .watch import Watcher
+    app.watch = Watcher(app)
     from .push import PushService
     app.push = PushService(app)
     center.announcers.append(app.push.approval)

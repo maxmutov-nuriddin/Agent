@@ -526,12 +526,19 @@ details.team summary { cursor: pointer; color: var(--muted); font-weight: 700; f
   .plans-wrap { display: grid; grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); gap: 28px; align-items: start; }
   .plans-sec, .plans-sec.on { display: block; }
   .plans-sec > .card.plan { display: block; }
-  #view[data-tab="plans"] .plans-sec.on:last-child { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; align-items: start; }
-  #view[data-tab="plans"] .plans-sec:last-child > .row-b, #view[data-tab="plans"] .plans-sec:last-child > .plans-filter, #view[data-tab="plans"] .plans-sec:last-child > p { grid-column: 1 / -1; }
-  #view[data-tab="plans"] .plans-sec:last-child { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; align-items: start; }
-  #view[data-tab="plans"] .plans-sec:last-child .card.plan { margin: 0; }
+  #view[data-tab="plans"] .plans-sec.on:nth-child(2) { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; align-items: start; }
+  #view[data-tab="plans"] .plans-sec:nth-child(2) > .row-b, #view[data-tab="plans"] .plans-sec:nth-child(2) > .plans-filter, #view[data-tab="plans"] .plans-sec:nth-child(2) > p { grid-column: 1 / -1; }
+  #view[data-tab="plans"] .plans-sec:nth-child(2) { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; align-items: start; }
+  #view[data-tab="plans"] .plans-sec:nth-child(2) .card.plan { margin: 0; }
 }
 
 .card.checks { margin-top: 10px; }
 .card.checks .kv span:last-child { text-align: right; }
 #view[data-tab="stats"] > .seg { margin-bottom: 18px; }
+
+.clampx { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+@media (min-width: 1100px) {
+  #view[data-tab="plans"] .plans-wrap > .watch-sec { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; align-items: start; }
+  #view[data-tab="plans"] .plans-wrap > .watch-sec > :not(.card) { grid-column: 1 / -1; }
+  #view[data-tab="plans"] .plans-wrap > .watch-sec .card.plan { margin: 0; }
+}

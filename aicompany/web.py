@@ -178,6 +178,7 @@ def make_web_app(app: App) -> web.Application:
                      "devices": len(await app.push.subs()) if app.push else 0},
             "bot_push": (await app.store.get_kv("bot_push")) or "all",
             "morning": await morning_settings(app.store),
+            "watch_smart": (await app.store.get_kv("watch_smart")) == "1",
             "today": round(await today_spend(), 4),
             "budgets": [{"provider": n, **v} for n, v in budgets.items()],
             "working": [{"agent": a, "task_id": b["task_id"]} for a, b in app.team.busy.items()],
@@ -847,6 +848,84 @@ def make_web_app(app: App) -> web.Application:
             raise web.HTTPNotFound(reason="kutilayotgan eslatma topilmadi")
         return json_ok({"ok": True})
 
+    def watch_out(w):
+        try:
+            st = json.loads(w["state"] or "{}")
+        except ValueError:
+            st = {}
+        return {"id": w["id"], "kind": w["kind"], "title": w["title"], "target": w["target"], "keywords": w["keywords"] or "",
+                "description": w["description"] or "", "target_price": w["target_price"], "enabled": bool(w["enabled"]),
+                "price": st.get("price"), "min": st.get("min"), "last_check": w["last_check"], "error": w["last_error"]}
+
+    async def h_watches(request):
+        hits = await app.store.watch_hits_recent(30)
+        titles = {w["id"]: w["title"] for w in await app.store.list_watches()}
+        return json_ok({"watches": [watch_out(w) for w in await app.store.list_watches()],
+                        "hits": [{"watch": titles.get(h["watch_id"], "?"), "text": h["text"], "url": h["url"], "ts": h["ts"]} for h in hits]})
+
+    def watch_fields(d, partial=False) -> dict:
+        f = {}
+        if not partial or "kind" in d:
+            if d.get("kind") not in ("tg", "price"):
+                raise web.HTTPBadRequest(reason="tur: tg yoki price")
+            f["kind"] = d["kind"]
+        if not partial or "target" in d:
+            t = str(d.get("target", "")).strip()
+            if not t:
+                raise web.HTTPBadRequest(reason="kanal (@nom) yoki mahsulot havolasini yozing")
+            if (d.get("kind") or "") == "price" and not t.startswith(("http://", "https://")):
+                raise web.HTTPBadRequest(reason="mahsulot havolasi http(s):// bilan boshlansin")
+            f["target"] = t[:500]
+        for k, n in (("title", 120), ("keywords", 500), ("description", 500)):
+            if k in d:
+                f[k] = " ".join(str(d[k] or "").split())[:n]
+        if "target_price" in d:
+            try:
+                f["target_price"] = float(d["target_price"]) if d["target_price"] not in (None, "") else None
+            except (TypeError, ValueError):
+                raise web.HTTPBadRequest(reason="kutilgan narx son bo'lsin")
+        if "enabled" in d:
+            f["enabled"] = 1 if d["enabled"] else 0
+        return f
+
+    async def h_watch_add(request):
+        d = await body(request)
+        f = watch_fields(d)
+        f.setdefault("title", f["target"][:60])
+        if not f.get("title"):
+            f["title"] = f["target"][:60]
+        wid = await app.store.add_watch(**f)
+        await app.store.audit("owner", "watch_add", f"{f['kind']}: {f['target']}"[:200])
+        return json_ok(watch_out(await app.store.get_watch(wid)))
+
+    async def h_watch_update(request):
+        wid = int(request.match_info["id"])
+        if not await app.store.get_watch(wid):
+            raise web.HTTPNotFound(reason="kuzatuv topilmadi")
+        f = watch_fields(await body(request), partial=True)
+        if f:
+            await app.store.update_watch(wid, **f)
+        return json_ok(watch_out(await app.store.get_watch(wid)))
+
+    async def h_watch_delete(request):
+        if not await app.store.delete_watch(int(request.match_info["id"])):
+            raise web.HTTPNotFound(reason="kuzatuv topilmadi")
+        return json_ok({"ok": True})
+
+    async def h_watch_check(request):
+        w = await app.store.get_watch(int(request.match_info["id"]))
+        if not w:
+            raise web.HTTPNotFound(reason="kuzatuv topilmadi")
+        hits = await app.watch.check(w)
+        w = await app.store.get_watch(w["id"])
+        return json_ok({"hits": hits, "watch": watch_out(w)})
+
+    async def h_watch_smart(request):
+        on = bool((await body(request)).get("enabled"))
+        await app.store.set_kv("watch_smart", "1" if on else "0")
+        await app.store.audit("owner", "watch_smart", "yoqildi" if on else "o'chirildi")
+        return json_ok({"watch_smart": on})
+
     async def h_morning(request):
         d = await body(request)
         if "on" in d:
@@ -1003,7 +1082,7 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/tasks", h_task_submit),
         web.post(r"/api/tasks/{id:\d+}/stop", h_task_stop), web.post(r"/api/tasks/{id:\d+}/archive", h_task_archive),
         web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
-        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/morning", h_morning), web.post("/api/morning/test", h_morning_test), web.post("/api/resume", h_resume),
+        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/morning", h_morning), web.get("/api/watches", h_watches), web.post("/api/watches", h_watch_add), web.post(r"/api/watches/{id:\d+}", h_watch_update), web.delete(r"/api/watches/{id:\d+}", h_watch_delete), web.post(r"/api/watches/{id:\d+}/check", h_watch_check), web.post("/api/watch_smart", h_watch_smart), web.post("/api/morning/test", h_morning_test), web.post("/api/resume", h_resume),
         web.post("/api/provider", h_provider), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),

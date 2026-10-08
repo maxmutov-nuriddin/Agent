@@ -119,6 +119,31 @@ plans = sa.Table(
     sa.Column("created_at", sa.String),
     sa.Column("updated_at", sa.String),
 )
+# Kuzatuvlar: Telegram kanallar (kalit so'z / aqlli filtr) va mahsulot narxi
+watches = sa.Table(
+    "watches", md,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("kind", sa.String),                 # tg | price
+    sa.Column("title", sa.Text),
+    sa.Column("target", sa.Text),                 # @kanal / t.me havola yoki mahsulot URL
+    sa.Column("keywords", sa.Text, server_default=""),   # vergul bilan
+    sa.Column("description", sa.Text, server_default=""),  # aqlli filtr uchun: nimani qidirish (oddiy tilda)
+    sa.Column("target_price", sa.Float),
+    sa.Column("enabled", sa.Integer, server_default=sa.text("1")),
+    sa.Column("state", sa.Text, server_default="{}"),     # JSON: oxirgi post id, oxirgi narx, narx atrofidagi matn...
+    sa.Column("last_check", sa.String),
+    sa.Column("last_error", sa.Text),
+    sa.Column("created_at", sa.String),
+)
+watch_hits = sa.Table(
+    "watch_hits", md,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("watch_id", sa.Integer, index=True),
+    sa.Column("ts", sa.String),
+    sa.Column("text", sa.Text),
+    sa.Column("url", sa.Text),
+    sa.Column("value", sa.Float),
+)
 # Vazifa fayllari bazada ham (Render kabi disksiz serverda qayta ishga tushganda yo'qolmasin)
 task_files = sa.Table(
     "task_files", md,
@@ -577,6 +602,34 @@ class Store:
         pend = await self._all(sa.select(reminders).where(reminders.c.status == "pending").order_by(reminders.c.due_at).limit(limit))
         past = await self._all(sa.select(reminders).where(reminders.c.status != "pending").order_by(reminders.c.id.desc()).limit(15))
         return pend + past
+
+    # kuzatuvlar
+    async def add_watch(self, **fields) -> int:
+        res = await self._exec(sa.insert(watches).values(created_at=now(), **fields))
+        return res.inserted_primary_key[0]
+
+    async def list_watches(self, enabled_only=False):
+        q = sa.select(watches).order_by(watches.c.id.desc())
+        return await self._all(q.where(watches.c.enabled == 1) if enabled_only else q)
+
+    async def get_watch(self, wid):
+        return await self._one(sa.select(watches).where(watches.c.id == wid))
+
+    async def update_watch(self, wid, **fields) -> bool:
+        res = await self._exec(sa.update(watches).where(watches.c.id == wid).values(**fields))
+        return res.rowcount > 0
+
+    async def delete_watch(self, wid) -> bool:
+        async with self.engine.begin() as c:
+            await c.execute(sa.delete(watch_hits).where(watch_hits.c.watch_id == wid))
+            res = await c.execute(sa.delete(watches).where(watches.c.id == wid))
+        return res.rowcount > 0
+
+    async def add_watch_hit(self, wid, text, url=None, value=None):
+        await self._exec(sa.insert(watch_hits).values(watch_id=wid, ts=now(), text=text[:2000], url=url, value=value))
+
+    async def watch_hits_recent(self, limit=30):
+        return await self._all(sa.select(watch_hits).order_by(watch_hits.c.id.desc()).limit(limit))
 
     # rejalar
     async def add_plan(self, period, title, items, target=None) -> int:
