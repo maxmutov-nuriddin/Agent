@@ -220,6 +220,26 @@ def _tg(env: ToolEnv):
     return env.tg
 
 
+_REDACT = [
+    (re.compile(r"(?<![\d])(?:\d[ -]?){13,19}(?![\d])"), "[karta/raqam yashirildi]"),
+    (re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"), "[hisob raqami yashirildi]"),
+    (re.compile(r"(?i)\b(parol|пароль|password|passcode|pin|пин)\b(\s*[:=\-]?\s*)\S+"), r"\1\2[yashirildi]"),
+    (re.compile(r"(?i)\b(kod\w*|код\w*|code|otp|cvv|cvc)\b([^\n\d]{0,20})\d{3,8}\b"), r"\1\2[yashirildi]"),
+    (re.compile(r"\b(?:sk-[A-Za-z0-9_\-]{16,}|AIza[0-9A-Za-z_\-]{20,}|AQ\.[0-9A-Za-z_\-]{20,}|\d{8,10}:[A-Za-z0-9_\-]{30,}|[A-Za-z0-9_\-]{40,})\b"), "[kalit yashirildi]"),
+]
+
+
+def redact_private(text: str) -> str:
+    """Maxfiy bo'lmagan AI'ga ketadigan Telegram matnidan karta, parol, bir martalik kod va kalitlarni yashiradi."""
+    for rx, rep in _REDACT:
+        text = rx.sub(rep, text)
+    return text
+
+
+def _priv(env, text: str) -> str:
+    return redact_private(text) if getattr(env, "redact", False) else text
+
+
 def _tg_err(e: TgError):
     return ToolError(str(e))
 
@@ -240,7 +260,7 @@ async def tg_chats(env, a):
         un = getattr(d.entity, "username", None)
         lines.append(f"- {d.name}{' @' + un if un else ''} (id {d.id}){f', {d.unread_count} ta o`qilmagan' if d.unread_count else ''}"
                      f"{': ' + last[:60].replace(chr(10), ' ') if last else ''}")
-    return untrusted("\n".join(lines))
+    return untrusted(_priv(env, "\n".join(lines)))
 
 
 async def tg_contacts(env, a):
@@ -271,7 +291,7 @@ async def tg_read(env, a):
         body = (getattr(m, "message", "") or "").strip() or ("[" + ("media" if getattr(m, "media", None) else "bo'sh") + "]")
         when = m.date.strftime("%d.%m %H:%M") if getattr(m, "date", None) else ""
         lines.append(f"[#{getattr(m, 'id', '?')} {when}] {who}: {body[:500]}")
-    return untrusted("\n".join(lines) or "xabar yo'q")
+    return untrusted(_priv(env, "\n".join(lines) or "xabar yo'q"))
 
 
 async def tg_send(env, a):

@@ -62,6 +62,8 @@ Yangi xodim **assistant** shu imkoniyatlarga ega.
 
 **Ruxsat rejimlari** (Hisob → Telegram akkaunt): «Faqat o'qish», «Tasdiq bilan» (har amal sizdan so'raladi), «Cheklovsiz» (tasdiqsiz, limitsiz). Qo'shimcha asboblar: `tg_create_group` (guruh/kanal), `tg_add_members`, `tg_join`, `tg_leave`, `tg_forward`, `tg_delete_messages`, `tg_send_file`, `tg_mark_read`.
 
+**Maxfiylik rejimi:** `PRIVATE_PROVIDERS=anthropic` qo'ysangiz, shaxsiy Telegram yozishmalari avvalo faqat shu AI'ga ketadi. U ulanmagan yoki limiti tugagan bo'lsa (`PRIVATE_MODE=prefer`, standart) tizim **to'xtamaydi**: matn boshqa AI'ga ketadi, lekin karta, parol, bir martalik kod va kalitlar yashiriladi va sizga ogohlantirish keladi (jurnalga ham yoziladi). To'liq qat'iylik kerak bo'lsa `PRIVATE_MODE=strict`: maxfiy AI bo'lmasa Telegram ishlari to'xtaydi.
+
 **Xavfsizlik va maxfiylik (muhim):**
 - `data/tg.session` fayli akkauntingizga **to'liq kirish** beradi: git'ga tushmaydi, 600 ruxsat bilan turadi, hech kimga bermang. Chiqarish: Telegram → Sozlamalar → Qurilmalar.
 - Shaxsiy yozishmalar matni AI xizmatiga yuboriladi. **Bepul Gemini kaliti ma'lumotni o'qitishda ishlatishi mumkin**, shuning uchun `PRIVATE_PROVIDERS=anthropic` kabi qilib shaxsiy chat faqat ishonchli provayderga yuborilsin (aks holda hamma ulangan AI'ga ketadi).

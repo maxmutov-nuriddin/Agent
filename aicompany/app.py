@@ -47,7 +47,8 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     store = Store(settings.database_url)
     await store.init()
     router = Router(settings, store, providers if providers is not None else build_providers(settings))
-    team = Team(store, router, settings.max_agents, settings.max_tool_turns, settings.private_providers)
+    team = Team(store, router, settings.max_agents, settings.max_tool_turns, settings.private_providers,
+                settings.private_mode)
     await team.ensure_seed()
     await store.fail_stale_tasks()
     clean_inbox(settings.workspace_dir)

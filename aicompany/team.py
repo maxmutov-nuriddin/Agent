@@ -40,9 +40,10 @@ def system_prompt(name: str, role: str) -> str:
 
 class Team:
     def __init__(self, store: Store, router: Router, max_agents: int, max_tool_turns: int = 8,
-                 private_providers: tuple = ()):
+                 private_providers: tuple = (), private_mode: str = "prefer"):
         self.store, self.router, self.max_agents, self.max_tool_turns = store, router, max_agents, max_tool_turns
-        self.private_providers = frozenset(private_providers)  # shaxsiy chat matni faqat shularga yuboriladi
+        self.private_providers = frozenset(private_providers)  # shaxsiy chat matni avvalo shularga yuboriladi
+        self.private_mode = private_mode
         self.busy: dict[str, dict] = {}  # agent -> {"count": n, "task_id": id}: hozir kim ishlayapti
 
     async def ensure_seed(self):
@@ -66,25 +67,52 @@ class Team:
         system = agent["system_prompt"] + (TOOL_RULES if defs else "")
         if env:
             env.agent = agent["name"]
-        excluded: set[str] = set()
-        if self.private_providers and any(t.group == "telegram" for t in tools):
-            # shaxsiy yozishmalar (masalan bepul Gemini kalitiga yuborilmasin): ruxsat etilmagan provayderlar chiqariladi
-            excluded = {p for p in self.router.providers if p not in self.private_providers}
-            if len(excluded) >= len(self.router.providers):
-                raise BudgetExhausted("shaxsiy yozishmalar uchun PRIVATE_PROVIDERS dagi provayder ulanmagan")
+        failed: set[str] = set()   # bu ish davomida yiqilgan provayderlar
+        private_run = bool(self.private_providers) and any(t.group == "telegram" for t in tools)
+        trusted = {p for p in self.router.providers if p in self.private_providers}
+        fallback = False           # maxfiy AI ishlamayapti: boshqasiga o'tildi (maxfiy ma'lumot yashirilgan holda)
+
+        async def go_fallback(why: str):
+            """prefer rejimi: to'xtamaymiz. Telegram matni boshqa AI'ga ketadi, lekin karta/parol/kod yashiriladi va egasi ogohlantiriladi."""
+            nonlocal fallback
+            if self.private_mode == "strict":
+                raise BudgetExhausted(f"shaxsiy yozishmalar uchun PRIVATE_PROVIDERS dagi provayder {why}")
+            fallback = True
+            if env:
+                env.redact = True
+            await self.store.audit("team", "private_fallback", f"{agent['name']}: {why}")
+            if env and env.notify:
+                try:
+                    await env.notify("⚠️ Maxfiy AI (" + ", ".join(sorted(self.private_providers)) + f") {why}: Telegram matni boshqa AI'ga ketadi. "
+                                     "Karta, parol va kodlar yashirildi.")
+                except Exception:  # noqa: BLE001
+                    pass
+
+        if private_run and not trusted:
+            await go_fallback("ulanmagan")
         b = self.busy.setdefault(agent["name"], {"count": 0, "task_id": task_id})
         b["count"] += 1  # band hisoblagichi faqat try/finally ichida: xato bo'lsa ham kamayadi
         b["task_id"] = task_id
         try:
             while True:
+                excluded = set(failed)
+                if private_run and not fallback:
+                    excluded |= {p for p in self.router.providers if p not in self.private_providers}
                 try:  # asbob sikli bitta provayderda boshdan oxirigacha; u yiqilsa, ish boshqasida qayta boshlanadi
                     text = await self._loop(agent, tier, system, content, defs, by_name, env, task_id, frozenset(excluded))
                     break
+                except BudgetExhausted:
+                    if private_run and not fallback and self.private_mode != "strict":
+                        await go_fallback("javob bermadi (limit yoki xato)")  # maxfiy AI limiti tugadi: to'xtamaymiz
+                        continue
+                    raise
                 except PinnedUnavailable as e:
-                    excluded.add(e.provider)
+                    failed.add(e.provider)
                     await self.store.audit("team", "provider_switch", f"{agent['name']}: {e}"[:300])
-                    if len(excluded) >= len(self.router.providers):
+                    if len(failed) >= len(self.router.providers):
                         raise BudgetExhausted(str(e)) from e
+                    if private_run and not fallback and trusted <= failed:
+                        await go_fallback("javob bermadi")
         finally:
             b["count"] -= 1
             if b["count"] <= 0:

@@ -62,6 +62,7 @@ class Settings:
     tg_proxy: str | None = None
     secret_key: str | None = None  # Telegram sessiyasini bazada shifrlash (bo'lmasa WEB_TOKEN)  # tg://proxy?... (MTProxy) yoki socks5://host:port
     private_providers: tuple = ()
+    private_mode: str = "prefer"  # prefer: maxfiy AI bo'lmasa ham ishlaydi (xabar ogohlantiradi, maxfiy ma'lumot yashiriladi) | strict: to'xtaydi
     tier_providers: dict = field(default_factory=dict)
 
 
@@ -129,6 +130,7 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
         tg_max_sends=int(env.get("TG_MAX_SENDS_PER_HOUR", 10)),
         tg_proxy=(env.get("TG_PROXY") or "").strip() or None,
         secret_key=env.get("SECRET_KEY") or None,
+        private_mode="strict" if (env.get("PRIVATE_MODE") or "").strip().lower() == "strict" else "prefer",
         private_providers=tuple(x.strip().lower() for x in (env.get("PRIVATE_PROVIDERS") or "").split(",") if x.strip()),
         primary_provider=(env.get("PRIMARY_PROVIDER") or "auto").strip().lower(),
         tier_providers=parse_tier_providers(env.get("PROVIDER_BY_TIER", "")),

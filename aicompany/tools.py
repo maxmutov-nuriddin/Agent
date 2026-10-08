@@ -35,6 +35,7 @@ class ToolEnv:
     http: httpx.AsyncClient | None = None
     notify: Any = None  # async (matn) -> None: egasiga xabar (Telegram/panel)
     tg: Any = None      # TgUser (shaxsiy Telegram akkaunt) yoki None
+    redact: bool = False  # maxfiy AI yo'q: Telegram matnidagi karta/parol/kod/kalitlar yashiriladi
 
 
 @dataclass(frozen=True)

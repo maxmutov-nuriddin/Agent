@@ -291,7 +291,8 @@ async def test_private_providers_keep_telegram_content_off_other_providers(make_
 
 
 async def test_private_providers_missing_fails_closed(make_app, tmp_path):
-    app, _ = await make_app(lambda *a: "ok", names=("gemini",), PRIVATE_PROVIDERS="anthropic", TG_API_ID="1", TG_API_HASH="h")
+    app, _ = await make_app(lambda *a: "ok", names=("gemini",), PRIVATE_PROVIDERS="anthropic", PRIVATE_MODE="strict",
+                           TG_API_ID="1", TG_API_HASH="h")
     env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings,
                          tg=TgUser(app.settings, client_factory=lambda: None))
     with pytest.raises(BudgetExhausted, match="PRIVATE_PROVIDERS"):
@@ -430,3 +431,47 @@ async def test_tg_group_tools_respect_access_and_call_telegram(tgenv):
     import sqlalchemy as sa
     n = (await env.store._all(sa.text("select count(*) c from audit_log where action='tg_action'")))[0]["c"]
     assert n >= 7                                                                   # har amal jurnalda
+
+
+def test_redact_private_hides_secrets_but_keeps_normal_text():
+    t = ("Karta 8600 1234 5678 9012 ga o'tkaz. parol: Qwerty123 . Tasdiqlash kodi 482913. "
+         "kalit sk-ant-api03-abcdefghijklmnop12345 va uchrashuv ertaga 10:00 da, tel +998901234567")
+    out = tools_ext.redact_private(t)
+    assert "8600" not in out and "Qwerty123" not in out and "482913" not in out and "abcdefghijklmnop" not in out
+    assert "uchrashuv ertaga 10:00" in out and "+998901234567" in out         # oddiy matn va telefon qoladi
+
+
+async def test_prefer_mode_works_without_private_provider_and_warns(make_app, tmp_path):
+    app, provs = await make_app(lambda *a: "tayyor", names=("gemini",), PRIVATE_PROVIDERS="anthropic", TG_API_ID="1", TG_API_HASH="h")
+    notes = []
+
+    async def notify(s):
+        notes.append(s)
+    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings, notify=notify,
+                  tg=TgUser(app.settings, client_factory=lambda: None))
+    assert app.settings.private_mode == "prefer"
+    assert await app.team.run_agent("assistant", "o'qi", env=env) == "tayyor"      # to'xtamadi
+    assert env.redact is True and any("Maxfiy AI" in n and "yashirildi" in n for n in notes)
+    import sqlalchemy as sa
+    n = (await app.store._all(sa.text("select count(*) c from audit_log where action='private_fallback'")))[0]["c"]
+    assert n == 1
+
+
+async def test_prefer_mode_uses_private_provider_when_available_without_redaction(make_app, tmp_path):
+    app, provs = await make_app(lambda *a: "ok", names=("anthropic", "gemini"), PRIVATE_PROVIDERS="anthropic", TG_API_ID="1", TG_API_HASH="h")
+    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings, tg=TgUser(app.settings, client_factory=lambda: None))
+    await app.team.run_agent("assistant", "o'qi", env=env)
+    assert provs["gemini"].calls == [] and provs["anthropic"].calls and env.redact is False
+
+
+async def test_prefer_mode_falls_back_when_private_provider_fails(make_app, tmp_path):
+    from aicompany.providers import ProviderError
+    from .conftest import MockProvider
+
+    def handler(system, user, model):
+        return "gemini javobi"
+    app, provs = await make_app(handler, names=("anthropic", "gemini"), PRIVATE_PROVIDERS="anthropic", TG_API_ID="1", TG_API_HASH="h")
+    provs["anthropic"].handler = lambda *a: ProviderError("anthropic: limit")      # maxfiy AI ishlamaydi
+    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings, tg=TgUser(app.settings, client_factory=lambda: None))
+    assert await app.team.run_agent("assistant", "o'qi", env=env) == "gemini javobi"
+    assert env.redact is True
