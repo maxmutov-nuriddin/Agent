@@ -6,11 +6,12 @@ Maqsad: bitta vazifa beriladi, AI jamoa (rahbar, HR, dasturchi, marketolog, QA v
 | Mavzu | Qaror |
 |---|---|
 | Modellar | Claude + GPT + Gemini, bitta umumiy adapter orqali |
+| Byudjet | Claude, ChatGPT, Gemini: har biriga 5$ (keyin 10$), `.env` dagi `BUDGET_USD_*` |
 | Tejamkorlik | Model kaskadi (arzon -> qimmat), prompt caching, natija keshi, qisqa kontekst, qattiq byudjet limiti |
 | Til | Python (yadro), keyinroq TypeScript (veb-panel) |
 | Interfeys | Telegram bot (aiogram), faqat egasining ID'iga javob beradi |
 | Boshqaruv | Foydalanuvchi faqat CEO-agent bilan gaplashadi |
-| Xotira ("miya") | Postgres: lokalda Docker, keyinroq Supabase; pgvector xotira uchun |
+| Xotira ("miya") | SQLAlchemy: lokalda SQLite (Docker shart emas), keyinroq Supabase/Postgres (faqat `DATABASE_URL`); pgvector 2-bosqichda |
 | Ishga tushirish | Hozir lokal, loyiha tayyor bo'lgach VPS |
 | Asboblar | MCP asosida kengayuvchan; agent yetishmagan ruxsatni tasdiqlash kartasi orqali so'raydi |
 | Xavfsizlik | O'qish: erkin. Yozish: jurnal bilan. Qaytarib bo'lmaydigan amal: tasdiq bilan |
@@ -41,7 +42,7 @@ Egasi (Telegram) <-> Bot <-> CEO-agent <-> HR / Dasturchi / Marketolog / QA ...
 - Sifat: QA agent va testsiz natija "tayyor" hisoblanmaydi.
 - Xavfsizlik: kod izolyatsiyalangan muhitda; kalitlar agentga to'g'ridan-to'g'ri berilmaydi.
 
-## Ochiq savollar
-- Birinchi haqiqiy vazifa nima? (tizimni shu bilan sinaymiz)
-- Egasining qurilmalari (iPhone/Android, Windows/Mac) — qurilma agenti uchun.
-- Kunlik/oylik byudjet chegarasi qancha?
+## Holat
+- 1-bosqich MVP qurildi (kod + testlar). Haqiqiy kalitlar bilan sinash hali qilinmagan.
+- Ochiq: birinchi haqiqiy vazifa; OpenAI/Gemini model ID va narxlarini `check` bilan tasdiqlash.
+- Qurilmalar haqidagi ma'lumot faqat 4-5-bosqichda kerak.

@@ -1,0 +1,23 @@
+# Narxlar: USD / 1M token. "cache_read" = keshdan o'qilgan kirish tokeni narxi.
+# DIQQAT: narxlar xavfsizlik uchun yuqoriroq/konservativ olingan. Rasmiy sahifadan tekshiring:
+#   Anthropic: https://platform.claude.com/docs/en/about-claude/pricing
+#   OpenAI:    https://developers.openai.com/api/docs/pricing
+#   Gemini:    https://ai.google.dev/gemini-api/docs/pricing
+# `python -m aicompany check` kalitlar bilan model ID'larni haqiqiy ro'yxat bilan solishtiradi.
+# Tier: cheap = oddiy ishlar, mid = asosiy ish, strong = murakkab/qayta urinish.
+providers:
+  anthropic:
+    models:
+      cheap:  {id: claude-haiku-5-5,  in: 0.10, out: 0.50,  cache_read: 0.01, effort: low}
+      mid:    {id: claude-sonnet-5-5, in: 2.00, out: 10.00, cache_read: 0.20, effort: low}
+      strong: {id: claude-opus-5-5,   in: 4.00, out: 20.00, cache_read: 0.20, effort: medium}
+  openai:   # VERIFY: model nomlari manbalarda bir-biriga zid, `check` bilan tekshiring
+    models:
+      cheap:  {id: gpt-5.6-luna,  in: 0.20, out: 1.20,  cache_read: 0.02}
+      mid:    {id: gpt-5.6-terra, in: 2.00, out: 12.00, cache_read: 0.20}
+      strong: {id: gpt-5.6-sol,   in: 5.00, out: 30.00, cache_read: 0.50}
+  gemini:   # VERIFY
+    models:
+      cheap:  {id: gemini-3.1-flash-lite, in: 0.25, out: 1.50, cache_read: 0.025}
+      mid:    {id: gemini-3-flash,        in: 0.50, out: 3.00, cache_read: 0.05}
+      strong: {id: gemini-3.5-flash,      in: 1.50, out: 9.00, cache_read: 0.15}
