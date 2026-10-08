@@ -386,6 +386,12 @@ class Store:
                                .values(status="interrupted", finished_at=now()))
         return res.rowcount
 
+    async def interrupted_since(self, iso_ts: str):
+        return await self._all(sa.select(tasks).where(tasks.c.status == "interrupted", tasks.c.finished_at >= iso_ts).order_by(tasks.c.id))
+
+    async def audit_since(self, iso_ts: str, limit: int = 300):
+        return await self._all(sa.select(audit_log).where(audit_log.c.ts >= iso_ts).order_by(audit_log.c.id.desc()).limit(limit))
+
     async def agent_message_counts(self):
         rows = await self._all(sa.select(messages.c.agent, sa.func.count().label("n")).group_by(messages.c.agent))
         return {r["agent"]: r["n"] for r in rows}

@@ -26,9 +26,46 @@ async def build_report(app: App, since: datetime, title: str) -> str:
             lines.append(f"  {name}: {v['spent']:.2f}$ / {v['budget']:.2f}$ (qoldi {v['budget'] - v['spent']:.2f}$)")
     agents = await app.store.list_agents()
     lines.append(f"Jamoa: {len(agents)} xodim")
+    lines += await audit_highlights(app, iso)
     if await app.store.get_kv("paused") == "1":
         lines.append("⏸ Tizim to'xtatilgan (/resume)")
     return "\n".join(lines)
+
+
+def _one(detail: str, n: int = 90) -> str:
+    return " ".join((detail or "").split())[:n]
+
+
+async def audit_highlights(app: App, iso: str) -> list[str]:
+    """Nazorat: muhim amallar jurnaldan (LLM'siz). Egasi har safar jurnalni ochmasligi uchun."""
+    rows = await app.store.audit_since(iso)
+    by: dict[str, list] = {}
+    for r in rows:
+        by.setdefault(r["action"], []).append(r)
+    out = []
+    sent = by.get("tg_send", [])
+    ok = [r for r in sent if not (r["detail"] or "").startswith(("DENIED", "EXPIRED"))]
+    if sent:
+        out.append(f"📨 Telegram xabarlari: {len(ok)} ta yuborildi" + (f", {len(sent) - len(ok)} ta rad/muddati o'tgan" if len(sent) > len(ok) else ""))
+        out += [f"   • {_one(r['detail'])}" for r in ok[:5]]
+    acts = by.get("tg_action", [])
+    if acts:
+        out.append(f"🛠 Telegram amallari (guruh, forward, o'chirish…): {len(acts)} ta")
+        out += [f"   • {_one(r['detail'])}" for r in acts[:5]]
+    cmds = by.get("run_command", [])
+    if cmds:
+        bad = [r for r in cmds if (r["detail"] or "").startswith(("DENIED", "EXPIRED"))]
+        out.append(f"💻 Buyruqlar: {len(cmds) - len(bad)} ta bajarildi" + (f", {len(bad)} ta rad etildi" if bad else ""))
+        out += [f"   • {_one(r['detail'])}" for r in cmds[:3]]
+    if by.get("private_fallback"):
+        out.append(f"🛡 Maxfiy AI ishlamadi: {len(by['private_fallback'])} marta (matn boshqa AI'ga ketdi, maxfiy ma'lumotlar yashirilgan)")
+    errs = by.get("task_error", []) + by.get("resume_error", [])
+    if errs:
+        out.append(f"❌ Xatolar: {len(errs)} ta (oxirgisi: {_one(errs[0]['detail'], 70)})")
+    changed = [r for a in ("tg_access", "tg_listen", "tg_keys", "tg_login", "tg_logout", "hire", "fire") for r in by.get(a, [])]
+    if changed:
+        out.append("⚙️ O'zgarishlar: " + "; ".join(sorted({f"{r['action']}" for r in changed})))
+    return (["", "🔎 Nazorat (muhim amallar)"] + out) if out else ["", "🔎 Nazorat: muhim amal bo'lmadi ✓"]
 
 
 def next_run(now_local: datetime, hour: int) -> datetime:

@@ -327,6 +327,13 @@ async def run_bot(app: App, extra_senders=()):
     async def send_owner(text):
         await bot.send_message(s.owner_id, text)
     from .reminders import reminder_loop
+    async def tell(text):
+        for send in (send_owner, *extra_senders):
+            try:
+                await send(text)
+            except Exception:  # noqa: BLE001
+                pass
+    resume = asyncio.create_task(app.orch.resume_interrupted(tell))  # uzilgan vazifalar o'zi davom etadi
     report = asyncio.create_task(daily_report_loop(app, send_owner))
     remind = asyncio.create_task(reminder_loop(app, [send_owner, *extra_senders]))
     try:
@@ -334,3 +341,4 @@ async def run_bot(app: App, extra_senders=()):
     finally:
         report.cancel()
         remind.cancel()
+        resume.cancel()

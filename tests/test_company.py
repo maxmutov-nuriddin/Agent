@@ -289,3 +289,42 @@ async def test_packaging_falls_back_when_ceo_ignores_format(make_app):
     assert res["status"] == "done" and res["result"] == "FINAL DELIVERABLE"        # natija yo'qolmaydi
     repro = (ws / "PROMPT.md").read_text()
     assert "reja tuz" in repro and "FINAL DELIVERABLE" in repro                     # zaxira prompt so'rov + namunadan
+
+
+async def test_interrupted_task_is_resumed_once_after_restart(make_app):
+    app, _ = await make_app(scripted_company())
+    tid = await app.store.create_task(0, "sayt yasab ber")            # server o'rtada o'chgan: running qolgan
+    assert await app.store.fail_stale_tasks() == 1
+    notes = []
+
+    async def notify(s):
+        notes.append(s)
+    await app.orch.resume_interrupted(notify, delay=0)
+    tasks = {t["id"]: t for t in await app.store.list_tasks(10)}
+    assert len(tasks) == 2 and tasks[tid]["status"] == "interrupted" and "avtomatik" in tasks[tid]["note"]
+    new = tasks[max(tasks)]
+    assert new["status"] == "done" and new["based_on"] == tid
+    assert any("avtomatik qayta boshlandi" in n for n in notes)
+    await app.orch.resume_interrupted(notify, delay=0)               # ikkinchi qayta ishga tushish: takrorlamaydi
+    assert len(await app.store.list_tasks(10)) == 2
+    # nusxa ham uzilsa, cheksiz takrorlanmaydi
+    await app.store.update_task(new["id"], status="interrupted", finished_at=__import__("aicompany.db", fromlist=["now"]).now())
+    await app.orch.resume_interrupted(notify, delay=0)
+    assert len(await app.store.list_tasks(10)) == 2
+
+
+async def test_daily_report_lists_important_actions(make_app):
+    from datetime import datetime, timedelta, timezone
+    from aicompany.report import build_report
+    app, _ = await make_app(scripted_company())
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    quiet = await build_report(app, since, "Hisobot")
+    assert "muhim amal bo'lmadi" in quiet
+    await app.store.audit("assistant", "tg_send", "APPROVED: Kimga: Ali\n\nErtaga ko'rishamiz")
+    await app.store.audit("assistant", "tg_send", "DENIED: Kimga: Vali\n\nsalom")
+    await app.store.audit("developer", "run_command", "APPROVED: npm install")
+    await app.store.audit("team", "private_fallback", "assistant: ulanmagan")
+    await app.store.audit("orchestrator", "task_error", "#3: boom")
+    text = await build_report(app, since, "Hisobot")
+    assert "1 ta yuborildi, 1 ta rad" in text and "Ali" in text and "npm install" in text
+    assert "Maxfiy AI ishlamadi: 1 marta" in text and "Xatolar: 1" in text

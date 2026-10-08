@@ -158,6 +158,30 @@ class Orchestrator:
         res["kind"] = "task"
         return res
 
+    async def resume_interrupted(self, notify: Notify, *, max_age_h: float = 6, limit: int = 3, delay: float = 15):
+        """Server qayta ishga tushganda (Render uyquga ketishi/yangi versiya) uzilgan vazifalarni bir marta o'zi qayta boshlaydi."""
+        from datetime import datetime, timedelta, timezone
+        await asyncio.sleep(delay)
+        since = (datetime.now(timezone.utc) - timedelta(hours=max_age_h)).isoformat()
+        started = 0
+        for t in await self.store.interrupted_since(since):
+            if started >= limit:
+                break
+            if await self.store.get_kv(f"resumed:{t['id']}"):
+                continue
+            if t["based_on"] and await self.store.get_kv(f"resumed:{t['based_on']}"):
+                continue  # bu allaqachon avtomatik qayta boshlangan vazifaning nusxasi: cheksiz takrorlanmasin
+            await self.store.set_kv(f"resumed:{t['id']}", "1")
+            await self.store.update_task(t["id"], note=(f"Server qayta ishga tushgani uchun avtomatik qayta boshlandi.")[:400])
+            started += 1
+            try:
+                await _safe(notify)(f"♻️ Server qayta ishga tushgani uchun #{t['id']} vazifa avtomatik qayta boshlandi.")
+                await self.submit_task(t["request"], t["chat_id"] or 0, notify, None, based_on=t["id"])
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                await self.store.audit("orchestrator", "resume_error", f"#{t['id']}: {e!r}"[:300])
+
     def stop_task(self, task_id: int) -> bool:
         t = self.running.get(task_id)
         if not t or t.done():
