@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-h";
+const PANEL_V = "2026.10.08-j";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -88,7 +88,7 @@ async function refresh(force) {
     if (!force && S.sig[S.tab] === sig) return;
     S.sig[S.tab] = sig;
     const v = $("view"), top = v.scrollTop;
-    v.replaceChildren(...draw(data)); v.scrollTop = top;
+    v.replaceChildren(...draw(data).filter((n) => n != null && n !== false)); v.scrollTop = top;
   } catch (e) { if (e.message !== "auth") $("view").replaceChildren(h("div", { class: "empty" }, e.message)); }
 }
 function head(title, extra) { return h("div", { class: "head" }, h("h1", { class: "title" }, title), extra); }
@@ -130,8 +130,16 @@ function drawTeam({ state, team, ceo }) {
       h("div", { class: "grow" }, h("h3", {}, a.name), h("p", {}, a.busy ? "ishlayapti · vazifa #" + a.task_id : a.role)),
       h("span", { class: "dot" + (a.busy ? " on" : "") }))),
     h("div", { class: "label" }),
-    h("button", { class: "btn ghost full", onclick: hireSheet }, "+ Xodim yollash"),
+    h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: hireSheet }, "+ Xodim yollash"),
+      h("button", { class: "btn ghost", onclick: hrReview }, "🧑‍💼 HR tahlili")),
   ];
+}
+async function hrReview() {
+  try {
+    const r = await post("/team/review");
+    toast(r.fired.length ? "Bo'shatildi: " + r.fired.join(", ") : r.tasks < 10 ? `Tahlil uchun 10 ta vazifa kerak (hozir ${r.tasks})` : "Hamma xodim kerak, hech kim bo'shatilmadi");
+    refresh(true);
+  } catch (e) { toast(e.message); }
 }
 function agentSheet(a) {
   const fire = async () => { if (!confirm(a.name + " ishdan bo'shatilsinmi?")) return;
@@ -143,15 +151,30 @@ function agentSheet(a) {
 }
 function taskSheet() {
   const text = h("textarea", { class: "big", rows: "5", placeholder: "Nima qilish kerak? Qanchalik aniq bo'lsa, shuncha yaxshi." });
+  const picker = h("input", { type: "file", multiple: "multiple", hidden: "hidden" });
+  const chips = h("div", { class: "pills" });
+  const uploaded = [];
+  picker.addEventListener("change", async () => {
+    for (const f of picker.files) {
+      if (f.size > 10_000_000) { toast(f.name + ": 10MB dan katta"); continue; }
+      try {
+        const r = await fetch("/api/upload?name=" + encodeURIComponent(f.name), { method: "POST", headers: { Authorization: "Bearer " + S.token }, body: f });
+        const d = await r.json(); if (!r.ok) throw new Error(d.error || "Yuklanmadi");
+        uploaded.push(d.id); chips.append(h("span", { class: "pill lime" }, d.name));
+      } catch (e) { toast(e.message); }
+    }
+    picker.value = "";
+  });
   const btn = h("button", { class: "btn lime full" }, "Topshirish");
   btn.addEventListener("click", async () => {
     if (!text.value.trim()) return toast("Vazifani yozing");
     btn.disabled = true;
-    try { await post("/tasks", { text: text.value }); closeSheet(); toast("Vazifa topshirildi"); if (!S.chatOpen) go("tasks"); }
+    try { await post("/tasks", { text: text.value, files: uploaded }); closeSheet(); toast("Vazifa topshirildi"); if (!S.chatOpen) go("tasks"); }
     catch (e) { toast(e.message); btn.disabled = false; }
   });
   openSheet(h("h2", {}, "Yangi vazifa"), h("p", { class: "muted" }, "Jamoa mustaqil bajaradi va natijani sizga topshiradi."),
-    h("div", { class: "label" }), text, h("div", { class: "label" }), btn);
+    h("div", { class: "label" }), text, h("div", { class: "label" }), chips, picker,
+    h("button", { class: "btn ghost full", onclick: () => picker.click() }, "📎 Fayl biriktirish"), h("div", { class: "label" }), btn);
   setTimeout(() => text.focus(), 50);
 }
 function hireSheet() {
@@ -255,8 +278,47 @@ async function download(id, path) {
 }
 
 // --- Hisob ---
-async function loadStats() { const [state, spend, mem] = await Promise.all([api("/state"), api("/spend"), api("/memory")]); S.state = state; renderTabs(); return { state, spend, mem }; }
-function drawStats({ state, spend, mem }) {
+async function loadStats() {
+  const [state, spend, mem, integ, loc] = await Promise.all([api("/state"), api("/spend"), api("/memory"), api("/integrations"), api("/location")]);
+  S.state = state; renderTabs(); return { state, spend, mem, integ, loc };
+}
+const tick = (ok) => (ok ? "✓" : "✕");
+function shareLocation() {
+  if (!navigator.geolocation) return toast("Brauzer joylashuvni qo'llamaydi");
+  navigator.geolocation.getCurrentPosition(
+    async (p) => { try { await post("/location", { lat: p.coords.latitude, lon: p.coords.longitude }); toast("Joylashuv saqlandi"); refresh(true); } catch (e) { toast(e.message); } },
+    () => toast("Joylashuv ruxsati yo'q (HTTPS kerak). Telegramdan yuborishingiz mumkin"), { enableHighAccuracy: true, timeout: 10000 });
+}
+function placeSheet(loc) {
+  const addr = h("input", { placeholder: "Manzil yoki «lat,lon» (masalan: Chilonzor 9, Toshkent)", autocapitalize: "off" });
+  const save = async (address) => {
+    try { const r = await post("/place", { name: "home", address }); closeSheet(); toast(r.message); refresh(true); } catch (e) { toast(e.message); }
+  };
+  openSheet(h("h2", {}, "Uy manzili"), h("p", { class: "muted" }, loc.places.home ? "Hozir: " + loc.places.home.label : "Hali saqlanmagan"),
+    h("label", {}, "Manzil"), addr, h("div", { class: "acts" },
+      h("button", { class: "btn lime", onclick: () => addr.value.trim() ? save(addr.value.trim()) : toast("Manzilni yozing") }, "Saqlash"),
+      h("button", { class: "btn", onclick: () => save("me") }, "Hozirgi joylashuvim")));
+}
+async function showReport() {
+  try { const r = await api("/report"); openSheet(h("h2", {}, "Hisobot"), h("div", { class: "pre" }, r.text)); } catch (e) { toast(e.message); }
+}
+async function showAudit() {
+  try {
+    const rows = await api("/audit");
+    openSheet(h("h2", {}, "Jurnal"), h("p", { class: "muted" }, "Agentlar va siz qilgan muhim amallar (so'nggi 60 ta)"),
+      ...rows.map((r) => h("div", { class: "step" }, h("b", {}, `${r.actor} · ${r.action}`), h("div", {}, `${ago(r.ts)} oldin · ${r.detail}`))));
+  } catch (e) { toast(e.message); }
+}
+function memoryAdd() {
+  const ta = h("textarea", { rows: "3", placeholder: "Masalan: Men Toshkentda kofexona ochmoqchiman. Narxlarni so'mda yoz." });
+  const btn = h("button", { class: "btn lime full" }, "Saqlash");
+  btn.addEventListener("click", async () => {
+    if (!ta.value.trim()) return toast("Matn yozing");
+    try { await post("/memory", { text: ta.value }); closeSheet(); toast("Xotiraga saqlandi"); refresh(true); } catch (e) { toast(e.message); }
+  });
+  openSheet(h("h2", {}, "Xotiraga qo'shish"), h("p", { class: "muted" }, "Agentlar bu ma'lumotni keyingi vazifalarda eslab qoladi."), h("div", { class: "label" }), ta, h("div", { class: "label" }), btn);
+}
+function drawStats({ state, spend, mem, integ, loc }) {
   const on = state.budgets.filter((b) => b.enabled);
   const left = on.reduce((a, b) => a + b.budget - b.spent, 0);
   const provs = on.map((b) => {
@@ -265,31 +327,51 @@ function drawStats({ state, spend, mem }) {
     return h("div", { class: "prov" }, h("div", { class: "row" }, h("span", {}, PROV[b.provider] || b.provider), h("small", {}, `${usd(b.spent)} / ${usd(b.budget)}`)),
       h("div", { class: "bar " + (pct > 90 ? "bad" : pct > 70 ? "warn" : "") }, fill));
   });
-  const pause = h("button", { class: "btn full " + (state.paused ? "lime" : "red"), onclick: async () => { await post(state.paused ? "/resume" : "/pause"); refresh(true); } },
-    state.paused ? "▶ Davom ettirish" : "⏸ Hammasini to'xtatish");
   // Tanlov doim ko'rinadi; kaliti yo'q AI xira va bosilganda tushuntiradi
   const known = ["anthropic", "gemini"];
   const have = new Set(state.providers);
   const setPrimary = async (v) => { try { await post("/provider", { primary: v }); toast("Asosiy AI: " + PROV[v]); refresh(true); } catch (e) { toast(e.message); } };
   const opt = (c) => {
     const enabled = c === "auto" || have.has(c), active = (state.primary || "auto") === c;
-    const b = h("button", { class: (active ? "on " : "") + (enabled ? "" : "off"), onclick: () => (enabled ? setPrimary(c) : toast(PROV[c] + " kaliti yo'q: .env ga qo'shing")) }, PROV[c] + (enabled ? "" : " ✕"));
-    return b;
+    return h("button", { class: (active ? "on " : "") + (enabled ? "" : "off"), onclick: () => (enabled ? setPrimary(c) : toast(PROV[c] + " kaliti yo'q: .env ga qo'shing")) }, PROV[c] + (enabled ? "" : " ✕"));
   };
   const connected = known.filter((k) => have.has(k)).map((k) => PROV[k]);
   const primary = h("div", {}, h("div", { class: "label" }, "Asosiy AI"),
     h("div", { class: "seg" }, ["auto", ...known].map(opt)),
     h("p", { class: "hint" }, (connected.length ? "Ulangan: " + connected.join(", ") + ". " : "Hech qanday AI ulanmagan. ") +
-      (connected.length < known.length ? "Ikkinchisini qo'shish uchun .env ga kalit qo'ying. " : "") +
-      "Avto = eng arzonidan boshlaydi; tanlangani birinchi, boshqasi zaxira."));
+      (connected.length < known.length ? "Ikkinchisini qo'shish uchun .env ga kalit qo'ying. " : "") + "Avto = eng arzonidan boshlaydi; tanlangani birinchi, boshqasi zaxira."));
+  const ta = integ.telegram_account;
+  const links = h("div", { class: "card" },
+    ...[["Telegram bot", integ.telegram_bot, ""],
+        ["Telegram akkaunt", ta.configured, ta.configured ? (ta.mode === "write" ? "o'qish + yuborish (tasdiq bilan)" : "faqat o'qish") : "ulash: python -m aicompany tglogin"],
+        ["Xarita", true, integ.maps === "google" ? "Google (tirbandlik bilan)" : "OpenStreetMap (bepul, tirbandliksiz)"],
+        ["Ovozni tushunish", integ.voice, integ.voice ? "Gemini" : "GEMINI_API_KEY kerak"],
+        ["Veb-qidiruv", true, integ.search === "brave" ? "Brave" : "DuckDuckGo"],
+        ["Maxfiy chat uchun AI", ta.private_providers.length > 0, ta.private_providers.length ? ta.private_providers.join(", ") : "cheklanmagan (PRIVATE_PROVIDERS)"],
+       ].map(([name, ok, note]) => h("div", { class: "kv" }, h("span", {}, `${tick(ok)} ${name}`), h("span", { class: "muted" }, note))));
+  const home = loc.places.home;
+  const where = h("div", { class: "card" },
+    h("div", { class: "kv" }, h("span", {}, "📍 Joylashuv"), h("span", { class: "muted" }, loc.last ? `${loc.last.age}${loc.last.live ? " (jonli)" : ""}` : "yuborilmagan")),
+    h("div", { class: "kv" }, h("span", {}, "🏠 Uy"), h("span", { class: "muted" }, home ? home.label : "saqlanmagan")),
+    h("div", { class: "acts" }, h("button", { class: "btn", onclick: shareLocation }, "📍 Joylashuvimni yuborish"), h("button", { class: "btn", onclick: () => placeSheet(loc) }, "🏠 Uyni belgilash")));
+  const pause = h("button", { class: "btn full " + (state.paused ? "lime" : "red"), onclick: async () => { await post(state.paused ? "/resume" : "/pause"); refresh(true); } },
+    state.paused ? "▶ Davom ettirish" : "⏸ Hammasini to'xtatish");
+  const delMem = async (id) => { try { await api("/memory/" + id, { method: "DELETE" }); toast("O'chirildi"); refresh(true); } catch (e) { toast(e.message); } };
   return [head("Hisob", liveTag()),
     h("div", { class: "money" }, h("b", {}, usd(left)), h("span", {}, `qolgan byudjet · bugun ${usd(state.today)}`)), ...provs,
     primary,
+    h("div", { class: "label" }, "Ulanishlar"), links,
+    h("div", { class: "label" }, "Joylashuv"), where,
     spend.length ? h("div", { class: "label" }, "Agentlar sarfi") : null,
     ...spend.slice(0, 6).map((r) => h("div", { class: "item" }, h("div", { class: "grow" }, h("h3", {}, r.agent)), h("span", { class: "muted" }, usd(r.cost)))),
-    mem.length ? h("div", { class: "label" }, "Xotira") : null,
-    ...mem.slice(0, 5).map((m) => h("div", { class: "item" }, h("div", { class: "grow" }, h("p", {}, m.text)))),
-    h("div", { class: "label" }), pause, h("div", { class: "label" }),
+    h("div", { class: "label" }, "Xotira"),
+    ...mem.slice(0, 8).map((m) => h("div", { class: "item" }, h("div", { class: "grow" }, h("p", {}, m.text)),
+      h("button", { class: "btn red sm", onclick: () => delMem(m.id), "aria-label": "O'chirish" }, "✕"))),
+    mem.length ? null : h("p", { class: "hint" }, "Hozircha bo'sh."),
+    h("button", { class: "btn ghost full", onclick: memoryAdd }, "+ Xotiraga qo'shish"),
+    h("div", { class: "label" }, "Boshqaruv"),
+    h("div", { class: "acts" }, h("button", { class: "btn", onclick: showReport }, "📊 Hisobot"), h("button", { class: "btn", onclick: showAudit }, "🧾 Jurnal")),
+    pause, h("div", { class: "label" }),
     h("button", { class: "btn ghost full", onclick: () => { localStorage.removeItem("aij_token"); S.token = ""; location.reload(); } }, "Chiqish"),
     h("p", { class: "hint ver" }, "Versiya: " + (state.version || "?") + " · panel " + PANEL_V)];
 }
@@ -383,6 +465,10 @@ $("chat-mic").append(svg(IC.mic));
 $("chat-mic").addEventListener("click", toggleMic);
 $("chat-back").addEventListener("click", closeChat);
 $("chat-task").addEventListener("click", taskSheet);
+$("chat-clear").addEventListener("click", async () => {
+  if (!confirm("Suhbat tarixi tozalansinmi? (Vazifalar va natijalar o'chmaydi)")) return;
+  try { await post("/chat/clear"); S.chat = []; S.lastChat = 0; openChat(false); toast("Suhbat tozalandi"); } catch (e) { toast(e.message); }
+});
 $("chat-send").append(svg(IC.send));
 $("chat-send").addEventListener("click", sendChat);
 $("chat-input").addEventListener("input", (e) => { const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 140) + "px"; });

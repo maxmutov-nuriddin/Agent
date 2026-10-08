@@ -174,6 +174,9 @@ class Store:
             await c.execute(sa.delete(kv).where(kv.c.key == key))
             await c.execute(sa.insert(kv).values(key=key, value=str(value)))
 
+    async def delete_kv(self, key):
+        await self._exec(sa.delete(kv).where(kv.c.key == key))
+
     # agents
     async def list_agents(self, active_only=True):
         q = sa.select(agents).order_by(agents.c.id)
@@ -322,6 +325,17 @@ class Store:
 
     async def clear_chat(self, chat_id):
         await self._exec(sa.delete(chat_log).where(chat_log.c.chat_id == chat_id))
+
+    async def delete_memory(self, memory_id) -> bool:
+        res = await self._exec(sa.delete(memories).where(memories.c.id == memory_id))
+        return res.rowcount > 0
+
+    async def kv_prefix(self, prefix) -> dict:
+        rows = await self._all(sa.select(kv).where(kv.c.key.like(prefix + "%")))
+        return {r["key"][len(prefix):]: r["value"] for r in rows}
+
+    async def recent_audit(self, limit=60):
+        return await self._all(sa.select(audit_log).order_by(audit_log.c.id.desc()).limit(limit))
 
     # approvals
     async def create_approval(self, task_id, agent, description, kind="command") -> int:

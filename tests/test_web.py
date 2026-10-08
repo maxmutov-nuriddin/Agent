@@ -435,3 +435,100 @@ async def test_telegram_approval_card_has_its_own_kind(web):
     assert await t is True
     js = (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()
     assert "Telegramda shu xabarni yuborishga ruxsat" in js
+
+
+# ---------- panel: avval faqat Telegram/terminalda bo'lgan imkoniyatlar ----------
+async def test_integrations_overview(web2):
+    c, app, provs = web2
+    d = (await get(c, "/api/integrations"))[1]
+    assert d["telegram_account"] == {"configured": False, "mode": "read", "allowed": [], "private_providers": []}
+    assert d["voice"] is True and d["maps"] == "osm" and d["search"] == "duckduckgo" and d["primary"] == "auto"
+    assert [(p["name"], p["enabled"]) for p in d["providers"]] == [("anthropic", True), ("openai", False), ("gemini", True)]
+    app.settings = dataclasses.replace(app.settings, google_maps_key="k", brave_key="b", tg_mode="write", tg_allowed=("ali",))
+    c2 = TestClient(TestServer(make_web_app(app)))          # sozlamalar server yaratilganda o'qiladi
+    await c2.start_server()
+    try:
+        d = (await get(c2, "/api/integrations"))[1]
+        assert d["maps"] == "google" and d["search"] == "brave" and d["telegram_account"]["allowed"] == ["ali"]
+        assert d["telegram_account"]["mode"] == "write"
+    finally:
+        await c2.close()
+
+
+async def test_location_and_home_from_the_panel(web):
+    c, app = web
+    assert (await get(c, "/api/location"))[1] == {"last": None, "places": {}}
+    await post(c, "/api/location", {"lat": 41.3, "lon": 69.2})
+    assert (await post(c, "/api/place", {"name": "home", "address": "me"}))[0] == 200            # hozirgi joylashuv = uy
+    d = (await get(c, "/api/location"))[1]
+    assert d["last"]["lat"] == 41.3 and d["last"]["age"] and d["places"]["home"]["lat"] == 41.3
+    assert (await post(c, "/api/place", {"name": "work", "address": "41.1,69.0"}))[1]["ok"] is True
+    assert (await post(c, "/api/place", {"name": "<x>", "address": "me"}))[0] == 400
+    assert (await c.delete("/api/place/work", headers=TOK)).status == 200
+    assert set((await get(c, "/api/location"))[1]["places"]) == {"home"}
+    await app.store.delete_kv("loc:last")
+    assert (await post(c, "/api/place", {"name": "home", "address": "me"}))[0] == 400             # joylashuv yo'q: tushunarli xato
+
+
+async def test_hr_review_report_and_audit_from_the_panel(web):
+    c, app = web
+    r = (await post(c, "/api/team/review"))[1]
+    assert r == {"fired": [], "tasks": 0}
+    await app.orch.run_task("x", 1)
+    text = (await get(c, "/api/report"))[1]["text"]
+    assert "Hisobot" in text and "done: 1" in text and "anthropic" in text
+    await app.store.audit("assistant", "tg_send", "APPROVED: Kimga: Ali")
+    rows = (await get(c, "/api/audit"))[1]
+    assert rows[0]["action"] == "tg_send" and rows[0]["actor"] == "assistant" and "Ali" in rows[0]["detail"]
+
+
+async def test_memory_add_and_delete_from_the_panel(web):
+    c, app = web
+    assert (await post(c, "/api/memory", {"text": "Uy: Chilonzor 9"}))[0] == 200
+    mem = (await get(c, "/api/memory"))[1]
+    assert mem[0]["text"] == "Uy: Chilonzor 9" and mem[0]["source"] == "owner"
+    assert (await post(c, "/api/memory", {"text": ""}))[0] == 400
+    assert (await c.delete(f"/api/memory/{mem[0]['id']}", headers=TOK)).status == 200
+    assert (await get(c, "/api/memory"))[1] == []
+    assert (await c.delete("/api/memory/999", headers=TOK)).status == 404
+
+
+async def test_clear_chat_from_the_panel(web):
+    c, app = web
+    await post(c, "/api/chat", {"text": "salom"})
+    await wait_rows(c, 2)
+    assert (await post(c, "/api/chat/clear"))[0] == 200
+    assert (await get(c, "/api/chat"))[1] == []
+
+
+async def test_upload_then_task_with_attachment(web):
+    c, app = web
+    r = await c.post("/api/upload?name=../../brif.txt", headers={**TOK, "Content-Type": "application/octet-stream"}, data=b"salom")
+    d = await r.json()
+    assert r.status == 200 and d["name"] == "brif.txt" and d["size"] == 5               # yo'l qismi olib tashlandi
+    assert (await post(c, "/api/tasks", {"text": "briefni o'qi", "files": [d["id"]]}))[0] == 200
+    for _ in range(200):
+        await asyncio.sleep(0.05)
+        t = await app.store.get_task(1)
+        if t and t["status"] == "done":
+            break
+    assert (app.settings.workspace_dir / "task_1" / "brif.txt").read_bytes() == b"salom"
+    assert "brif.txt" in (await get(c, "/api/tasks/1"))[1]["files"]
+
+
+async def test_upload_validation(web):
+    c, _ = web
+    assert (await c.post("/api/upload?name=a.txt", headers=TOK, data=b"")).status == 400
+    assert (await c.post("/api/upload?name=a.txt", headers=TOK, data=b"x" * 10_000_001)).status == 400
+    assert (await c.post("/api/upload?name=a.txt", data=b"x")).status == 401
+    for bad in ("../../etc", "zzzzzzzz", "12345678"):                                   # noto'g'ri yoki mavjud emas
+        assert (await post(c, "/api/tasks", {"text": "x", "files": [bad]}))[0] == 400
+
+
+def test_panel_exposes_the_new_features():
+    js = (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()
+    html = (Path(__file__).parent.parent / "aicompany/webui/index.html").read_text()
+    for needle in ("/integrations", "/location", "/place", "/team/review", "/report", "/audit", "/memory", "/chat/clear", "/upload",
+                   "navigator.geolocation", "Ulanishlar", "HR tahlili", "Jurnal", "Xotiraga qo'shish", "Fayl biriktirish"):
+        assert needle in js, needle
+    assert "chat-clear" in html

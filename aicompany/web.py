@@ -4,6 +4,8 @@ import asyncio
 import hmac
 import json
 import logging
+import re
+import secrets
 import shutil
 import socket
 import time
@@ -14,8 +16,9 @@ from zoneinfo import ZoneInfo
 from aiohttp import web
 
 from .app import App
-from .report import day_start_utc
+from .report import build_report, day_start_utc
 from .providers import VoiceError, VoiceUnavailable
+from .tools import ToolError
 from .team import CORE
 from .util import clip
 
@@ -280,12 +283,14 @@ def make_web_app(app: App) -> web.Application:
         return json_ok({"ok": True})
 
     async def h_task_submit(request):
-        """«Vazifa berish»: to'g'ridan-to'g'ri vazifa (suhbatsiz)."""
-        text = text_of(await body(request))
+        """«Vazifa berish»: to'g'ridan-to'g'ri vazifa (suhbatsiz), ixtiyoriy biriktirilgan fayllar bilan."""
+        d = await body(request)
+        text = text_of(d)
+        attachments = uploads_for(d.get("files"))
 
         async def job():
             try:
-                await post_result(await app.orch.submit_task(text, chat_id, notify))
+                await post_result(await app.orch.submit_task(text, chat_id, notify, attachments or None))
             except Exception as e:  # noqa: BLE001
                 await report_failure(e)
         spawn(job())
@@ -365,6 +370,98 @@ def make_web_app(app: App) -> web.Application:
         await save_location(app.store, lat, lon, bool(d.get("live")))
         return json_ok({"ok": True})
 
+    # ---------- ulanishlar, joylashuv, hisobot, jurnal, xotira, fayl ----------
+    def tool_env():
+        from .tools import ToolEnv
+        return ToolEnv(workspace=s.workspace_dir, store=app.store, settings=s)
+
+    async def h_integrations(request):
+        tg = app.tg
+        return json_ok({
+            "telegram_bot": bool(s.telegram_token),
+            "telegram_account": {"configured": bool(tg and tg.configured()), "mode": s.tg_mode, "allowed": list(s.tg_allowed),
+                                 "private_providers": list(s.private_providers)},
+            "maps": "google" if s.google_maps_key else "osm",
+            "voice": any(p.supports_audio for p in app.router.providers.values()),
+            "search": "brave" if s.brave_key else "duckduckgo",
+            "providers": [{"name": n, "enabled": n in app.router.providers} for n in s.providers],
+            "primary": await app.router.primary(),
+        })
+
+    async def h_location_get(request):
+        from .tools_ext import age_text, last_location
+        loc = await last_location(app.store)
+        places = {k: json.loads(v) for k, v in (await app.store.kv_prefix("place:")).items()}
+        return json_ok({"last": ({**loc, "age": age_text(loc["ts"])} if loc else None),
+                        "places": {k: {"label": p.get("label"), "lat": p["lat"], "lon": p["lon"]} for k, p in places.items()}})
+
+    async def h_place(request):
+        """Joy saqlash: {"name": "home", "address": "me" | manzil | "lat,lon"}"""
+        from .tools_ext import save_place
+        d = await body(request)
+        try:
+            msg = await save_place(tool_env(), {"name": str(d.get("name", "")), "address": str(d.get("address", ""))})
+        except ToolError as e:
+            raise web.HTTPBadRequest(reason=str(e))
+        return json_ok({"ok": True, "message": msg})
+
+    async def h_place_delete(request):
+        await app.store.delete_kv(f"place:{request.match_info['name'].lower()}")
+        return json_ok({"ok": True})
+
+    async def h_review(request):
+        n = len(await app.store.recent_task_ids(10))
+        fired = await app.team.review(10)
+        return json_ok({"fired": fired, "tasks": n})
+
+    async def h_report(request):
+        from datetime import timezone as _tz
+        text = await build_report(app, datetime.now(_tz.utc) - timedelta(days=1), "Hisobot (so'nggi 24 soat)")
+        return json_ok({"text": text})
+
+    async def h_audit(request):
+        rows = await app.store.recent_audit(60)
+        return json_ok([{"ts": r["ts"], "actor": r["actor"], "action": r["action"], "detail": (r["detail"] or "")[:300]} for r in rows])
+
+    async def h_memory_add(request):
+        text = text_of(await body(request))
+        await app.store.add_memory(text, source="owner")
+        return json_ok({"ok": True})
+
+    async def h_memory_delete(request):
+        if not await app.store.delete_memory(int(request.match_info["id"])):
+            raise web.HTTPNotFound(reason="topilmadi")
+        return json_ok({"ok": True})
+
+    async def h_chat_clear(request):
+        await app.store.clear_chat(chat_id)
+        return json_ok({"ok": True})
+
+    async def h_upload(request):
+        """Vazifaga fayl biriktirish: tana = fayl baytlari, ?name=asl nom. Kod qaytaradi."""
+        raw = request.query.get("name", "file")
+        safe = re.sub(r"[^\w.\- ]", "_", Path(raw).name)[:100] or "file"
+        data = await request.read()
+        if not data or len(data) > 10_000_000:
+            raise web.HTTPBadRequest(reason="fayl 1 baytdan 10MB gacha bo'lishi kerak")
+        token = secrets.token_hex(4)
+        d = s.workspace_dir / "inbox" / token
+        d.mkdir(parents=True, exist_ok=True)
+        (d / safe).write_bytes(data)
+        return json_ok({"id": token, "name": safe, "size": len(data)})
+
+    def uploads_for(ids) -> list[Path]:
+        out = []
+        for token in (ids or [])[:8]:
+            if not re.fullmatch(r"[0-9a-f]{8}", str(token)):
+                raise web.HTTPBadRequest(reason="fayl kodi noto'g'ri")
+            d = s.workspace_dir / "inbox" / token
+            files = [f for f in d.iterdir() if f.is_file()] if d.is_dir() else []
+            if not files:
+                raise web.HTTPBadRequest(reason="yuklangan fayl topilmadi")
+            out.append(files[0])
+        return out
+
     async def h_pause(request):
         await app.store.set_kv("paused", "1")
         return json_ok({"paused": True})
@@ -404,7 +501,11 @@ def make_web_app(app: App) -> web.Application:
         web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
         web.post("/api/pause", h_pause), web.post("/api/resume", h_resume),
         web.post("/api/provider", h_provider), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
-        web.get("/api/memory", h_memory), web.get("/api/spend", h_agent_spend),
+        web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
+        web.get("/api/integrations", h_integrations), web.get("/api/location", h_location_get),
+        web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
+        web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
+        web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload), web.get("/api/spend", h_agent_spend),
         web.get("/api/widget", h_widget),
     ])
     return a
