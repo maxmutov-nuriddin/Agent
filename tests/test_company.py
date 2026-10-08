@@ -29,6 +29,7 @@ async def test_full_task_flow(make_app):
 async def test_qa_failure_triggers_revision_on_strong_tier(make_app):
     handler = scripted_company(qa=[{"verdict": "fail", "issues": ["no pricing"]}, {"verdict": "pass", "issues": []}])
     app, provs = await make_app(handler)
+    await app.store.set_kv("eco", "0")                      # sifat rejimi
     res = await app.orch.run_task("x", 1)
     assert res["status"] == "done"
     assert "claude-opus-5-5" in provs["anthropic"].calls  # qayta ishlash strong modelda
@@ -369,3 +370,36 @@ async def test_paused_tasks_continue_after_resume_once(make_app):
     tasks = await app.store.list_tasks(10)
     assert len(tasks) == 2 and {t["status"] for t in tasks} == {"paused", "done"}
     assert any("davom ettirilmoqda" in n for n in notes) and any("🏁" in n for n in notes)
+
+
+async def test_eco_mode_is_default_and_never_uses_the_strongest_tier(make_app):
+    handler = scripted_company(plan={"summary": "t", "new_roles": [], "steps": [
+        {"id": "s1", "agent": "researcher", "task": "a", "tier": "strong", "depends_on": []},
+        {"id": "s2", "agent": "marketer", "task": "b", "tier": "strong", "depends_on": ["s1"]}]},
+        qa=[{"verdict": "fail", "issues": ["x"]}, {"verdict": "pass", "issues": []}])
+    app, provs = await make_app(handler)
+    res = await app.orch.run_task("x", 1)
+    assert res["status"] == "done"
+    assert "claude-opus-5-5" not in provs["anthropic"].calls            # strong qadam va QA qayta yozishi ham o'rta darajada
+    assert provs["anthropic"].calls[0] == "claude-haiku-5-5"             # reja arzon modelda
+    await app.store.set_kv("eco", "0")
+    provs["anthropic"].calls.clear()
+    await app.orch.run_task("y", 1)
+    assert "claude-opus-5-5" in provs["anthropic"].calls                 # sifat rejimida strong ishlaydi
+
+
+async def test_eco_single_step_skips_the_rewrite_call(make_app):
+    one = {"summary": "t", "new_roles": [], "steps": [{"id": "s1", "agent": "researcher", "task": "a", "depends_on": []}]}
+    app, provs = await make_app(scripted_company(plan=one))
+    calls = []
+    orig = app.orch._synthesize
+
+    async def spy(*a, **k):
+        calls.append(1)
+        return await orig(*a, **k)
+    app.orch._synthesize = spy
+    res = await app.orch.run_task("x", 1)
+    assert res["status"] == "done" and calls == []                       # qayta yozish chaqirilmadi
+    await app.store.set_kv("eco", "0")
+    await app.orch.run_task("y", 1)
+    assert calls == [1]

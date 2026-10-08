@@ -333,7 +333,8 @@ class Orchestrator:
             await notify("🧑‍💼 HR tahlili: ishsiz qolgan xodimlar bo'shatildi: " + ", ".join(fired))
 
     async def _run(self, task_id: int, request: str, notify: Notify, env: ToolEnv) -> str:
-        plan = await self._plan(task_id, request, env)
+        eco = await self.store.get_kv("eco") != "0"  # tejamkor rejim (standart: yoqilgan)
+        plan = await self._plan(task_id, request, env, eco)
         await self.store.update_task(task_id, plan=json.dumps(plan, ensure_ascii=False))
 
         for role in plan.get("new_roles", [])[:2]:
@@ -355,7 +356,10 @@ class Orchestrator:
 
             async def work(s):
                 ctx = "\n\n".join(f"## {d}\n{clip(outputs[d])}" for d in s.get("depends_on", []) if d in outputs)
-                out = await self.team.run_agent(s["agent"], s["task"], ctx, task_id=task_id, tier=s.get("tier"), env=env)
+                tier = s.get("tier")
+                if eco and tier == "strong":
+                    tier = "mid"  # eng qimmat daraja faqat «sifat» rejimida
+                out = await self.team.run_agent(s["agent"], s["task"], ctx, task_id=task_id, tier=tier, env=env)
                 await notify(f"✅ {s['agent']} tugatdi ({s['id']})")
                 return s["id"], out
 
@@ -363,7 +367,10 @@ class Orchestrator:
                 outputs[sid] = out
                 remaining.pop(sid)
 
-        deliverable = await self._synthesize(task_id, request, outputs, None, "mid", env)
+        if eco and len(outputs) == 1:  # bitta qadam: uni qayta yozishning keragi yo'q (pul va vaqt tejaladi)
+            deliverable = next(iter(outputs.values()))
+        else:
+            deliverable = await self._synthesize(task_id, request, outputs, None, "mid", env)
         for attempt in range(self.max_revisions + 1):
             await self._check_pause()
             verdict = await self._review(task_id, request, deliverable, env)
@@ -372,11 +379,11 @@ class Orchestrator:
                     deliverable += "\n\n⚠️ QA hali ham e'tiroz bildirgan:\n- " + "\n- ".join(verdict.get("issues", []))
                 break
             await notify(f"🔎 QA {len(verdict.get('issues', []))} ta muammo topdi, tuzatilyapti...")
-            deliverable = await self._synthesize(task_id, request, outputs, verdict.get("issues", []), "strong", env,
+            deliverable = await self._synthesize(task_id, request, outputs, verdict.get("issues", []), "mid" if eco else "strong", env,
                                                  previous=deliverable)
-        return await self._package(task_id, request, deliverable, env)
+        return await self._package(task_id, request, deliverable, env, eco)
 
-    async def _package(self, task_id, request, deliverable, env) -> str:
+    async def _package(self, task_id, request, deliverable, env, eco: bool = False) -> str:
         """Yakuniy qadoqlash: NATIJA.md (to'liq tayyor natija), PROMPT.md (boshqa AI uchun to'liq prompt)
         va qaytariladigan qisqa, aniq javob (paneldagi «Natija»)."""
         ws = env.workspace
@@ -398,7 +405,7 @@ class Orchestrator:
                   "made, the exact structure/sections/files to produce, the style and language, and acceptance criteria to "
                   "check the result. Do not refer to 'the team' or 'the files above'; include all needed details inline.")
         try:
-            raw = await self.team.run_agent("ceo", prompt, task_id=task_id, tier="mid", env=env)
+            raw = await self.team.run_agent("ceo", prompt, task_id=task_id, tier="cheap" if eco else "mid", env=env)
         except (BudgetExhausted, TaskBudgetExceeded):
             raw = ""  # limit tugasa ham tayyor natija yo'qolmaydi
         if "===ANSWER===" not in raw and "===PROMPT===" not in raw:
@@ -425,7 +432,7 @@ class Orchestrator:
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
 
-    async def _plan(self, task_id, request, env) -> dict:
+    async def _plan(self, task_id, request, env, eco: bool = False) -> dict:
         roster = await self.team.roster()
         mems = await self.store.search_memories(request, 5)
         memo = ("# Relevant memory about the owner/business\n" + "\n".join(f"- {m['text']}" for m in mems) + "\n\n") if mems else ""
@@ -439,8 +446,9 @@ class Orchestrator:
                   '"task": "self-contained instruction", "tier": "cheap|mid|strong", "depends_on": []}], '
                   '"new_roles": [{"name": "snake_case_name", "why": "..."}]}')
         last_err = None
-        for _ in range(2):
-            raw = await self.team.run_agent("ceo", prompt, task_id=task_id, env=env)
+        for attempt in range(2):
+            # tejamkor rejimda reja arzon modelda; yaroqsiz chiqsa, ikkinchi urinish o'rta darajada
+            raw = await self.team.run_agent("ceo", prompt, task_id=task_id, tier="cheap" if eco and attempt == 0 else None, env=env)
             try:
                 plan = normalize_plan(extract_json(raw))
                 if plan["steps"]:

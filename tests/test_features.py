@@ -19,6 +19,7 @@ def plan_with(step_tier):
 
 async def test_per_step_tier_is_respected(make_app):
     app, provs = await make_app(scripted_company(plan=plan_with("strong")))
+    await app.store.set_kv("eco", "0")                      # sifat rejimi
     await app.orch.run_task("x", 1)
     assert "claude-opus-5-5" in provs["anthropic"].calls  # researcher odatda cheap, bu qadam strong
 

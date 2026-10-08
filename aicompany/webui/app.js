@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-e";
+const PANEL_V = "2026.10.09-f";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -931,6 +931,13 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
   return [head("Hisob", liveTag()),
     h("div", { class: "money" }, h("b", {}, usd(left)), h("span", {}, `qolgan byudjet · bugun ${usd(state.today)}`)), ...provs,
     primary,
+    h("div", { class: "label" }, "Xarajat"),
+    h("div", { class: "seg" },
+      [[true, "💰 Tejamkor"], [false, "💎 Sifat"]].map(([v, l]) => h("button", { class: (state.eco !== false) === v ? "on" : "", onclick: async () => {
+        try { await post("/eco", { enabled: v }); toast(v ? "Tejamkor rejim" : "Sifat rejimi"); refresh(true); } catch (e) { toast(e.message); } } }, l))),
+    h("p", { class: "hint" }, state.eco !== false
+      ? "Reja va yakuniy qadoqlash arzon modelda, eng qimmat daraja ishlatilmaydi, bitta qadamli ishda qayta yozish yo'q. Odatda ~2 barobar arzon."
+      : "Sifat rejimi: rahbar o'rta/kuchli modeldan foydalanadi, QA e'tirozida eng kuchli model qayta yozadi. Murakkab ishlar uchun."),
     h("div", { class: "label" }, "Ulanishlar"), links,
     h("div", { class: "label" }, "Limitlar"), limits,
     h("div", { class: "label" }, "Joylashuv"), where,
@@ -1071,9 +1078,14 @@ async function poll() {
   } catch (e) { if (e.message !== "auth") toast("Aloqa yo'q…"); }
   finally { polling = false; }
 }
+function nextDelay() {  // ish bor yoki chat ochiq: tez; bo'sh turganda: sekinroq (server va bazaga yuk kamayadi)
+  if (document.hidden) return 30000;
+  const st = S.state;
+  return S.chatOpen || S.typing || (st && (st.working.length || st.running_tasks.length || st.pending)) ? 3000 : 8000;
+}
 function start() {
   renderTabs(); poll().then(() => refresh(true)).then(prefetch);
-  setInterval(poll, 3000);
+  (async function loop() { for (;;) { await sleep(nextDelay()); await poll(); } })();
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 }
 window.addEventListener("hashchange", () => location.reload());

@@ -119,6 +119,7 @@ async def test_state_team_and_hire_fire(web):
     assert st["paused"] is False and st["pending"] == 0 and st["budgets"][0]["provider"] == "anthropic"
     assert st["done_today"] == 0
     await app.orch.run_task("x", 1)
+    await post(c, "/api/resume")                              # yozuv so'rovi qisqa keshni tozalaydi
     assert (await get(c, "/api/state"))[1]["done_today"] == 1
     _, team = await get(c, "/api/team")
     assert {a["name"] for a in team} >= {"ceo", "developer"} and next(a for a in team if a["name"] == "ceo")["core"]
@@ -939,3 +940,15 @@ async def test_overview_has_everything_for_desktop_dashboard(web):
     assert len(d["daily"]) == 14 and d["daily"][-1]["done"] >= 1 and d["daily"][-1]["cost"] > 0
     assert d["tasks"][0]["cost"] > 0 and d["counts"]["done"] >= 1
     assert any(a["name"] == "ceo" for a in d["team"])
+
+
+async def test_static_files_are_compressed_and_cached_with_etag(web):
+    c, _ = web
+    r = await c.get("/app.js", headers={"Accept-Encoding": "gzip"}, skip_auto_headers=("Accept-Encoding",))
+    raw = await r.read()
+    assert r.status == 200 and r.headers.get("Content-Encoding") == "gzip" and r.headers.get("ETag")
+    etag = r.headers["ETag"]
+    r2 = await c.get("/app.js", headers={"If-None-Match": etag})
+    assert r2.status == 304                                              # o'zgarmagan: qayta yuklanmaydi
+    big = await c.get("/api/overview", headers={**TOK, "Accept-Encoding": "gzip"}, skip_auto_headers=("Accept-Encoding",))
+    assert big.status == 200 and len(await big.read()) > 0

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
@@ -102,12 +103,17 @@ def make_web_app(app: App) -> web.Application:
             if not want or not hmac.compare_digest(want.encode(), got.encode()):
                 fail(ip)
                 return json_ok({"error": "ruxsat yo'q"}, 401)
+        if request.method != "GET":
+            _cache.clear()
         try:
             resp = await handler(request)
         except web.HTTPException as e:
             if not path.startswith("/api/"):
                 raise
             resp = json_ok({"error": e.reason}, e.status)
+        if path.startswith("/api/") and isinstance(resp, web.Response) and resp.body is not None and len(resp.body) > 1024 \
+                and "gzip" in request.headers.get("Accept-Encoding", ""):
+            resp.enable_compression()
         resp.headers["Content-Security-Policy"] = CSP
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Referrer-Policy"] = "no-referrer"
@@ -129,16 +135,34 @@ def make_web_app(app: App) -> web.Application:
     async def static(request):
         name = STATIC_FILES[request.path]
         f = STATIC / name
-        return web.Response(body=f.read_bytes(), content_type=CTYPES[f.suffix].split(";")[0],
+        body = f.read_bytes()
+        etag = '"' + hashlib.md5(body).hexdigest()[:16] + '"'
+        if request.headers.get("If-None-Match") == etag:
+            return web.Response(status=304, headers={"ETag": etag, "Cache-Control": "no-cache"})  # o'zgarmagan: qayta yuklanmaydi
+        resp = web.Response(body=body, content_type=CTYPES[f.suffix].split(";")[0],
                             charset="utf-8" if f.suffix != ".png" else None,
-                            headers={"Cache-Control": "no-cache"})
+                            headers={"Cache-Control": "no-cache", "ETag": etag})
+        if f.suffix in (".js", ".css", ".html", ".webmanifest", ".json") and len(body) > 1024:
+            resp.enable_compression()  # gzip: LTE'da 3-4 barobar kam trafik
+        return resp
 
     # ---------- ma'lumot ----------
     async def today_spend() -> float:
         tz = ZoneInfo(s.report_tz)
         return await app.store.spent_since(day_start_utc(datetime.now(tz)).isoformat())
 
+    _cache: dict = {}
+
     async def state_data() -> dict:
+        """Panel har 3-8 soniyada so'raydi: 1.5 soniyalik kesh bazaga yukni kamaytiradi (yozuvlar keshni tozalaydi)."""
+        hit = _cache.get("state")
+        if hit and time.monotonic() - hit[0] < 1.5:
+            return hit[1]
+        data = await _state_data()
+        _cache["state"] = (time.monotonic(), data)
+        return data
+
+    async def _state_data() -> dict:
         budgets = await app.router.status()
         recent = await app.store.list_tasks(100)
         running = [t for t in recent if t["status"] == "running"]
@@ -146,6 +170,7 @@ def make_web_app(app: App) -> web.Application:
         done_today = sum(1 for t in recent if t["status"] == "done" and (t["finished_at"] or "") >= day_iso)
         return {
             "paused": await app.store.get_kv("paused") == "1",
+            "eco": await app.store.get_kv("eco") != "0",
             "today": round(await today_spend(), 4),
             "budgets": [{"provider": n, **v} for n, v in budgets.items()],
             "working": [{"agent": a, "task_id": b["task_id"]} for a, b in app.team.busy.items()],
@@ -704,6 +729,12 @@ def make_web_app(app: App) -> web.Application:
             raise web.HTTPNotFound(reason="kutilayotgan eslatma topilmadi")
         return json_ok({"ok": True})
 
+    async def h_eco(request):
+        on = bool((await body(request)).get("enabled"))
+        await app.store.set_kv("eco", "1" if on else "0")
+        await app.store.audit("owner", "eco", "tejamkor rejim " + ("yoqildi" if on else "o'chirildi (sifat rejimi)"))
+        return json_ok({"eco": on})
+
     async def h_pause(request):
         await app.store.set_kv("paused", "1")
         return json_ok({"paused": True})
@@ -760,7 +791,7 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/tasks", h_task_submit),
         web.post(r"/api/tasks/{id:\d+}/stop", h_task_stop), web.post(r"/api/tasks/{id:\d+}/archive", h_task_archive),
         web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
-        web.post("/api/pause", h_pause), web.post("/api/resume", h_resume),
+        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/resume", h_resume),
         web.post("/api/provider", h_provider), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
