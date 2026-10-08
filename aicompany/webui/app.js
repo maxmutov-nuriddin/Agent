@@ -215,6 +215,7 @@ $("sheet-bg").addEventListener("click", closeSheet);
 
 // ---------- pastki menyu ----------
 function renderTabs() {
+  $("view").dataset.tab = S.tab;
   const nav = $("tabs"); nav.replaceChildren();
   for (const [id, label] of TABS) {
     const b = h("button", { class: "tab" + (S.tab === id ? " on" : ""), onclick: () => go(id), "aria-label": label },
@@ -230,6 +231,7 @@ function paint(tab, data) {
   S.sig[tab] = JSON.stringify(data);
 }
 function go(tab) {
+  const v = $("view"); v.classList.remove("swap"); void v.offsetWidth; v.classList.add("swap");  // sahifa almashganda yumshoq paydo bo'lish
   S.tab = tab; renderTabs();
   if (S.cache[tab]) paint(tab, S.cache[tab]);
   else { $("view").replaceChildren(h("div", { class: "empty" }, "Yuklanmoqda…")); S.sig[tab] = null; }
@@ -277,11 +279,17 @@ async function loadTeam() {
   const ceo = [...S.chat].reverse().find((m) => m.role === "ceo");
   return { state, team, ceo: ceo ? ceo.text : "" };
 }
+function noKeyBanner(state) {
+  if (state.providers && state.providers.length) return null;
+  return h("div", { class: "warnbox", onclick: () => go("stats") }, h("b", {}, "⚠️ AI kaliti ulanmagan"),
+    h("span", {}, "Server hech qaysi AI'ni ko'rmayapti, shuning uchun chat va vazifalar ishlamaydi. Render → Environment ga GEMINI_API_KEY (yoki ANTHROPIC_API_KEY) qo'shing va qayta ishga tushiring."));
+}
 function drawTeam({ state, team, ceo }) {
   const sorted = [...team].sort((a, b) => b.busy - a.busy);
   const quote = ceo && !ceo.startsWith("[Vazifa") ? ceo : "Salom! Men Rahbarman. Suhbatlashing yoki «Vazifa berish» tugmasini bosing.";
   return [
     head("Jamoa", liveTag()),
+    noKeyBanner(state),
     h("div", { class: "label" }, "Hozir ishda"),
     sorted.some((a) => a.busy)
       ? h("div", { class: "avatars" }, sorted.filter((a) => a.busy).map((a) => h("div", { class: "av busy" }, h("i", {}, initials(a.name)), h("span", { class: "nm" }, a.name))))
@@ -460,7 +468,7 @@ function drawOverview(d) {
         h("i", { class: "av-c" + (a.busy ? " on" : "") }, agentName(a.name)[0].toUpperCase()),
         h("div", { class: "grow" }, h("b", {}, agentName(a.name)), h("p", { class: "muted sm clamp1" }, a.busy ? `vazifa #${a.task_id} ustida` : a.role)),
         h("div", { class: "r" }, h("span", { class: "tag-s " + (a.busy ? "run" : "") }, a.busy ? "ishlayapti" : "bo'sh"), h("span", { class: "muted xs" }, a.steps + " qadam"))))));
-  return [h("div", { class: "ov" }, head, h("div", { class: "ov-grid" }, left, middle, right))];
+  return [h("div", { class: "ov" }, head, noKeyBanner(st), h("div", { class: "ov-grid" }, left, middle, right))];
 }
 async function hrReview() {
   try {
@@ -959,7 +967,7 @@ async function pollChat() {
   }
 }
 function openChat(focus) {
-  S.chatOpen = true; $("chat").hidden = false;
+  S.chatOpen = true; $("chat").hidden = false; $("chat-bg").hidden = false;
   const box = $("msgs"); box.replaceChildren();
   if (!S.chat.length) box.append(h("div", { class: "empty" }, "Rahbar bilan oddiy suhbat: savol bering, maslahatlashing. Ish topshirish uchun «+ Vazifa» tugmasi."));
   S.chat.forEach((m) => box.append(msgEl(m)));
@@ -967,7 +975,12 @@ function openChat(focus) {
   box.scrollTop = box.scrollHeight;
   if (focus) $("chat-input").focus();
 }
-function closeChat() { S.chatOpen = false; $("chat").hidden = true; refresh(true); }
+function closeChat() { S.chatOpen = false; $("chat").hidden = true; $("chat-bg").hidden = true; refresh(true); }
+$("chat-bg").addEventListener("click", closeChat);
+document.addEventListener("keydown", (e) => {  // Esc: avval oyna, keyin chat yopiladi (kompyuterda qulay)
+  if (e.key !== "Escape") return;
+  if (!$("sheet").hidden) closeSheet(); else if (S.chatOpen) closeChat();
+});
 async function sendChat() {
   const ta = $("chat-input"), text = ta.value.trim(); if (!text) return;
   ta.value = ""; ta.style.height = "auto";

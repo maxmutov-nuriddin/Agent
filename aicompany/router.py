@@ -157,6 +157,8 @@ class Router:
             return res
         if only:  # ish o'rtasida: qayta boshlash uchun maxsus xato
             raise PinnedUnavailable(only, "; ".join(errors) or "ulanmagan")
+        if not self.providers:
+            raise BudgetExhausted("hech qaysi AI kaliti ulanmagan: GEMINI_API_KEY yoki ANTHROPIC_API_KEY ni Render Environment (yoki .env) ga qo'ying")
         raise BudgetExhausted("; ".join(errors) or "provayder ulanmagan")
 
     async def transcribe(self, audio: bytes, mime: str, *, task_id=None) -> str:

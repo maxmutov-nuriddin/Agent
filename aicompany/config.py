@@ -93,7 +93,7 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
             name=name,
             budget_usd=float(env.get(f"BUDGET_USD_{name.upper()}", 5)),
             models=models,
-            api_key=env.get(KEY_ENV[name]) or None,
+            api_key=(env.get(KEY_ENV[name]) or "").strip().strip("'\"").strip() or None,  # nusxalashda qo'shtirnoq/bo'sh joy qolsa ham
         )
     owner = env.get("OWNER_TELEGRAM_ID")
     return Settings(

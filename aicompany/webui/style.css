@@ -207,7 +207,7 @@ input, textarea { font: inherit; color: var(--text); }
   .cap { display: none; }
 }
 @media (min-width: 900px) {
-  #app, .chatpage { border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+  #app { border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
   .sheet { align-items: center; }
   .sheet-body { border-radius: 30px; }
 }
@@ -305,7 +305,13 @@ details.team summary { cursor: pointer; color: var(--muted); font-weight: 700; f
   #view { padding: 22px 36px 40px; }
   /* boshqa sahifalar: o'rtada, o'qishga qulay kenglikda */
   #view > :not(.ov) { max-width: 980px; margin-left: auto; margin-right: auto; }
-  .chatpage { max-width: 860px; border-left: 1px solid var(--line); border-right: 1px solid var(--line); }
+  /* chat: dashboard ustida markazda suzuvchi oyna, orqasi xiralashadi (avval butun balandlikda dashboardni yopib, menyuni kesib qo'yardi) */
+  .chat-bg { position: fixed; inset: 0; z-index: 14; background: rgba(0,0,0,.62); backdrop-filter: blur(6px); }
+  .chat-bg[hidden] { display: none; }
+  .chatpage { inset: auto; top: 5vh; bottom: 5vh; left: 50%; right: auto; width: min(780px, 92vw); max-width: none; margin: 0; transform: translateX(-50%);
+    padding: 0 22px; background: var(--s1); border: 1px solid var(--line); border-radius: 28px; box-shadow: 0 30px 80px rgba(0,0,0,.65); overflow: hidden; }
+  .chat-top { padding-top: 18px; }
+  .msg { max-width: 78%; }
   .sheet-body { max-width: 680px; }
   .item:hover, .tcard:hover, .ov-row:hover, .ov-agent:hover { background: var(--s2); }
 }
@@ -422,8 +428,16 @@ details.team summary { cursor: pointer; color: var(--muted); font-weight: 700; f
 
 /* Vazifalar sahifasi kompyuterda: kartalar to'ri (mobilda .tlist oddiy blok, ko'rinish o'zgarmaydi) */
 @media (min-width: 1100px) {
-  #view > .tlist { max-width: 1280px; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; margin-top: 6px; }
-  #view > .head, #view > .seg, #view > .empty { max-width: 1280px; }
+  #view[data-tab="tasks"] > .tlist { max-width: 1280px; display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; margin-top: 6px; }
+  #view[data-tab="tasks"] > .head, #view[data-tab="tasks"] > .seg, #view[data-tab="tasks"] > .empty { max-width: 1280px; }
   .tlist .item { margin: 0; padding: 18px; border: 1px solid var(--line); border-radius: 20px; background: linear-gradient(180deg, rgba(25,27,29,.92), rgba(16,17,18,.92)); align-items: stretch; }
   .tlist .item h3 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 2.5em; }
 }
+
+/* AI kaliti yo'q ogohlantirishi (har ikkala ko'rinishda) */
+.warnbox { display: flex; flex-direction: column; gap: 4px; margin: 0 0 16px; padding: 14px 16px; border-radius: 18px; cursor: pointer;
+  background: rgba(255,176,58,.1); border: 1px solid rgba(255,176,58,.45); color: var(--amber); }
+.warnbox span { color: var(--text); font-size: 14px; line-height: 1.4; }
+/* Sahifalar orasida o'tish: kompyuterda yumshoq paydo bo'lish (mobil o'zgarmaydi) */
+@keyframes viewin { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (min-width: 1100px) and (prefers-reduced-motion: no-preference) { #view.swap > * { animation: viewin .26s ease both; } }
