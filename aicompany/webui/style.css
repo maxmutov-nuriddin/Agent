@@ -306,6 +306,7 @@ details.team summary { cursor: pointer; color: var(--muted); font-weight: 700; f
   #view { padding: 22px 36px 40px; }
   /* boshqa sahifalar: o'rtada, o'qishga qulay kenglikda */
   #view > :not(.ov) { max-width: 980px; margin-left: auto; margin-right: auto; }
+  #view > .btn { display: flex; }   /* inline-flex tugma auto chetlari bilan o'rtaga chiqmay, chapga yopishib qolardi */
   /* chat: dashboard ustida markazda suzuvchi oyna, orqasi xiralashadi (avval butun balandlikda dashboardni yopib, menyuni kesib qo'yardi) */
   .chat-bg { position: fixed; inset: 0; z-index: 14; background: rgba(0,0,0,.62); backdrop-filter: blur(6px); }
   .chat-bg[hidden] { display: none; }
