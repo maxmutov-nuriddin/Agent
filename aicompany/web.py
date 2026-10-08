@@ -384,7 +384,7 @@ def make_web_app(app: App) -> web.Application:
         tg = app.tg
         return json_ok({
             "telegram_bot": bool(s.telegram_token),
-            "telegram_account": {"configured": bool(tg and tg.configured()), "mode": s.tg_mode,
+            "telegram_account": {"configured": bool(tg and tg.configured()), "mode": (await tg.access(app.store, s) if tg else "read"),
                                  "keys": bool(tg and tg.has_keys()), "pending": bool(tg and tg.login_pending()),
                                  "proxy": bool(tg and tg.proxy), "login": (tg.login_info() if tg else {}),
                                  "me": (tg.me if tg and tg.configured() else ""), "allowed": list(s.tg_allowed),
@@ -496,6 +496,14 @@ def make_web_app(app: App) -> web.Application:
         app.tg.me = app.tg.name_of(me) + (f" (@{me.username})" if getattr(me, "username", None) else "")
         await app.store.set_kv("tg_me", app.tg.me)
         return json_ok({"me": app.tg.me})
+
+    async def h_tg_access(request):
+        mode = str((await body(request)).get("mode", ""))
+        if mode not in ("read", "ask", "full"):
+            raise web.HTTPBadRequest(reason="rejim read, ask yoki full bo'lishi kerak")
+        await app.store.set_kv("tg_access", mode)
+        await app.store.audit("owner", "tg_access", f"Telegram ruxsati: {mode}")
+        return json_ok({"ok": True, "mode": mode})
 
     async def h_tg_logout(request):
         await app.tg.logout()
@@ -668,7 +676,7 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
         web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend),
-        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.get("/api/tg/me", h_tg_me),
+        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),

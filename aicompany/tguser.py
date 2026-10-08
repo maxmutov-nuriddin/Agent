@@ -413,6 +413,13 @@ class TgUser:
             raise TgError("bir nechta mos chat: " + ", ".join(d.name for d in matches[:6]) + ". Aniqroq yozing yoki @username ishlating")
         return matches[0].entity
 
+    async def access(self, store, settings=None) -> str:
+        """Joriy ruxsat: 'read' | 'ask' (har xabar tasdiq bilan) | 'full' (cheklovsiz). Panel tanlovi (kv) > .env."""
+        v = await store.get_kv("tg_access") if store is not None else None
+        if v in ("read", "ask", "full"):
+            return v
+        return {"write": "ask", "full": "full"}.get((settings or self.s).tg_mode, "read")
+
     def allowed(self, entity, display: str) -> bool:
         """TG_ALLOWED bo'sh bo'lsa hamma (baribir tasdiq bilan); to'ldirilgan bo'lsa faqat shular."""
         if not self.s.tg_allowed:

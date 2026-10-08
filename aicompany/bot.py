@@ -174,8 +174,10 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
         s = app.settings
         if not app.tg or not app.tg.configured():
             return await m.answer("Telegram akkaunt ulanmagan. Panelda: Hisob -> Telegram akkaunt (yoki kompyuterda: python -m aicompany tglogin)")
-        await m.answer(f"📨 Telegram akkaunt ulangan.\nRejim: {'o`qish va yuborish (tasdiq bilan)' if s.tg_mode == 'write' else 'faqat o`qish'}\n"
-                       f"Ruxsat etilgan kontaktlar: {', '.join(s.tg_allowed) or 'cheklanmagan (har xabar tasdiqlanadi)'}\n"
+        acc = await app.tg.access(app.store)
+        mode = {"read": "faqat o`qish", "ask": "o`qish va yuborish (har xabar tasdiq bilan)", "full": "CHEKLOVSIZ (tasdiqsiz yuboradi)"}[acc]
+        await m.answer(f"📨 Telegram akkaunt ulangan.\nRejim: {mode} (o`zgartirish: panel → Hisob → Telegram akkaunt)\n"
+                       f"Ruxsat etilgan kontaktlar: {', '.join(s.tg_allowed) or 'cheklanmagan'}\n"
                        f"Maxfiy yozishmalar faqat: {', '.join(s.private_providers) or 'barcha AI provayderlarga yuborilishi mumkin'}")
 
     @dp.message(Command("reminders", "eslatma"))

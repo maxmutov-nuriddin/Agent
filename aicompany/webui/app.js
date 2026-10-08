@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-t";
+const PANEL_V = "2026.10.08-u";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -357,8 +357,18 @@ async function tgSheet() {
       if (r.stale) { toast("Akkaunt aslida ulanmagan edi: telefon raqami bilan kiring"); refresh(true); return again(); }
       who.textContent = r.me || "noma'lum";
     }).catch((e) => { who.textContent = "aniqlab bo'lmadi (" + e.message + ")"; });
-    return openSheet(h("h2", {}, "Telegram akkaunt"), h("p", { class: "muted" }, "✅ Ulangan: ", who, ". Rejim: " + (t.mode === "write" ? "o'qish + yuborish (har xabar tasdiq bilan)" : "faqat o'qish") + "."),
-      h("p", { class: "hint" }, "Yuborishni yoqish: .env da TG_MODE=write. Kirishni to'xtatish: Telegram → Sozlamalar → Qurilmalar."), h("div", { class: "label" }), out);
+    const MODES = [["read", "Faqat o'qish", "Chatlarni o'qiydi, qidiradi. Hech narsa yubormaydi."],
+                   ["ask", "Tasdiq bilan", "Yuborishdan oldin har bir xabarni sizdan so'raydi (Kartalar/bot). Soatiga limit va ruxsat ro'yxati amal qiladi."],
+                   ["full", "Cheklovsiz", "Tasdiqsiz, limitsiz yuboradi (xabar, fayl). Hamma amal jurnalga yoziladi."]];
+    const setMode = async (m) => {
+      if (m === "full" && !confirm("Cheklovsiz rejim: agent so'ralganda xabarlarni sizdan so'ramasdan yuboradi. Chatda kimdir yozgan matn orqali agentni aldab xabar yubortirishi ehtimoli bor. Yoqilsinmi?")) return;
+      try { await post("/tg/access", { mode: m }); toast("Rejim: " + MODES.find((x) => x[0] === m)[1]); tgSheet(); refresh(true); } catch (e) { toast(e.message); }
+    };
+    const seg = h("div", { class: "seg" }, MODES.map(([k, name]) => h("button", { class: t.mode === k ? "on" : "", onclick: () => setMode(k) }, name)));
+    const note = MODES.find((x) => x[0] === t.mode) || MODES[0];
+    return openSheet(h("h2", {}, "Telegram akkaunt"), h("p", { class: "muted" }, "✅ Ulangan: ", who),
+      h("div", { class: "label" }, "Agentga ruxsat"), seg, h("p", { class: "hint" }, note[2]),
+      h("p", { class: "hint" }, "Kirishni to'xtatish: Telegram → Sozlamalar → Qurilmalar."), h("div", { class: "label" }), out);
   }
   if (!t.keys) {
     const [l1, id] = field("api_id", { placeholder: "masalan 1234567", inputmode: "numeric" });
@@ -489,7 +499,7 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
   const ta = integ.telegram_account;
   const links = h("div", { class: "card" },
     ...[["Telegram bot", integ.telegram_bot, ""],
-        ["Telegram akkaunt", ta.configured, ta.configured ? (ta.me ? ta.me + " · " : "") + (ta.mode === "write" ? "o'qish + yuborish (tasdiq bilan)" : "faqat o'qish") : "ulanmagan"],
+        ["Telegram akkaunt", ta.configured, ta.configured ? (ta.me ? ta.me + " · " : "") + ({ ask: "o'qish + yuborish (tasdiq bilan)", full: "CHEKLOVSIZ", read: "faqat o'qish" }[ta.mode] || "faqat o'qish") : "ulanmagan"],
         ["Xarita", true, integ.maps === "google" ? "Google (tirbandlik bilan)" : "OpenStreetMap (bepul, tirbandliksiz)"],
         ["Ovozni tushunish", integ.voice, integ.voice ? "Gemini" : "GEMINI_API_KEY kerak"],
         ["Veb-qidiruv", true, integ.search === "brave" ? "Brave" : "DuckDuckGo"],

@@ -451,7 +451,7 @@ async def test_integrations_overview(web2):
     try:
         d = (await get(c2, "/api/integrations"))[1]
         assert d["maps"] == "google" and d["search"] == "brave" and d["telegram_account"]["allowed"] == ["ali"]
-        assert d["telegram_account"]["mode"] == "write"
+        assert d["telegram_account"]["mode"] == "ask"
     finally:
         await c2.close()
 
@@ -878,3 +878,13 @@ async def test_tg_qr_refreshes_token_and_restart_cancels_old(make_app):
     assert qr.n >= 2 and login["status"] == "expired"                        # token yangilanib turdi, keyin muddat tugadi
     await tg._drop_login()
     assert not tg.login_pending() and not client.connected
+
+
+async def test_tg_access_mode_from_panel(web):
+    c, app = web
+    assert (await get(c, "/api/integrations"))[1]["telegram_account"]["mode"] == "read"
+    assert (await post(c, "/api/tg/access", {"mode": "kuch"}))[0] == 400
+    assert (await post(c, "/api/tg/access", {"mode": "full"}))[0] == 200
+    assert (await get(c, "/api/integrations"))[1]["telegram_account"]["mode"] == "full"
+    assert (await post(c, "/api/tg/access", {"mode": "ask"}))[0] == 200
+    assert (await get(c, "/api/integrations"))[1]["telegram_account"]["mode"] == "ask"

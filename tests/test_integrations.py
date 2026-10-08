@@ -310,7 +310,7 @@ def test_settings_parse_telegram_and_maps_options():
 async def test_assistant_agent_is_seeded_with_the_new_tool_groups(make_app):
     app, _ = await make_app(scripted_company())
     a = await app.store.get_agent("assistant")
-    assert a and set(a["tools"].split(",")) == {"maps", "telegram", "memory", "web", "time"}
+    assert a and set(a["tools"].split(",")) == {"maps", "telegram", "memory", "web", "time", "files"}
 
 
 async def test_tg_chats_unread_summary_and_filter(tgenv):
@@ -332,3 +332,42 @@ async def test_tg_contacts_search_and_write_to_contact_without_chat(tgenv):
     assert fake.sent == [(7, "Salom")]
     with pytest.raises(ToolError, match="na chatlarda, na kontaktlarda"):
         await run(env, "tg_read", chat="Begona Odam")
+
+
+async def test_tg_full_access_sends_without_approval_limits_or_allowlist(tgenv):
+    env, fake = tgenv
+    env.settings = dataclasses.replace(env.settings, tg_mode="read", tg_allowed=("faqat_bu",), tg_max_sends=1)
+    with pytest.raises(ToolError, match="faqat o'qish"):
+        await run(env, "tg_send", chat="@ali_x", text="x")                          # panel tanlovi yo'q: .env read
+    await env.store.set_kv("tg_access", "full")
+    env.approver = AutoApprover(False)                                              # tasdiq so'ralsa rad etardi
+    for i in range(3):                                                              # limit 1, ro'yxatda yo'q: baribir yuboradi
+        assert "yuborildi: Ali" in await run(env, "tg_send", chat="@ali_x", text=f"salom {i}")
+    assert [t for _, t in fake.sent] == ["salom 0", "salom 1", "salom 2"] and env.approver.asked == []
+    import sqlalchemy as sa
+    n = (await env.store._all(sa.text("select count(*) c from audit_log where action='tg_send'")))[0]["c"]
+    assert n == 3                                                                   # jurnalga yoziladi
+    await env.store.set_kv("tg_access", "ask")                                      # tasdiq rejimiga qaytsa, limit va ro'yxat ishlaydi
+    with pytest.raises(ToolError, match="soatiga 1"):
+        await run(env, "tg_send", chat="@ali_x", text="yana")
+
+
+async def test_tg_send_file_and_mark_read_only_full(tgenv, tmp_path):
+    env, fake = tgenv
+    (tmp_path / "hisobot.txt").write_text("natija")
+    fake.files, fake.read = [], []
+
+    async def send_file(ent, path, caption=None):
+        fake.files.append((ent.id, path.rsplit("/", 1)[-1], caption))
+
+    async def send_read_acknowledge(ent):
+        fake.read.append(ent.id)
+    fake.send_file, fake.send_read_acknowledge = send_file, send_read_acknowledge
+    with pytest.raises(ToolError, match="cheklovsiz"):
+        await run(env, "tg_send_file", chat="@ali_x", path="hisobot.txt")
+    await env.store.set_kv("tg_access", "full")
+    assert "fayl yuborildi: Ali" in await run(env, "tg_send_file", chat="@ali_x", path="hisobot.txt", caption="mana")
+    assert fake.files == [(1, "hisobot.txt", "mana")]
+    with pytest.raises(ToolError):
+        await run(env, "tg_send_file", chat="@ali_x", path="../tashqari.txt")         # workspace'dan chiqib bo'lmaydi
+    assert "o'qilgan" in await run(env, "tg_mark_read", chat="@ali_x") and fake.read == [1]

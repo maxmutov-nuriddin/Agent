@@ -30,7 +30,7 @@ SEED = {
     "researcher": ("Analyst: structured research with sources, comparisons, summaries and recommendations.", "cheap", "files,web,memory"),
     "generalist": ("Versatile specialist used when no other role fits.", "cheap", "files,web,time"),
     "assistant": ("Personal assistant: knows where the owner is, travel times, nearby places, and handles their Telegram "
-                  "messages (read, draft replies, send only with approval).", "mid", "maps,telegram,memory,web,time"),
+                  "messages (read, draft replies, send only with approval).", "mid", "maps,telegram,memory,web,time,files"),
 }
 
 

@@ -56,7 +56,7 @@ class Settings:
     tg_api_id: int | None = None
     tg_api_hash: str | None = None
     tg_session: str = "data/tg"
-    tg_mode: str = "read"  # read | write
+    tg_mode: str = "read"  # read | write (har xabar tasdiq bilan) | full (cheklovsiz)
     tg_allowed: tuple = ()
     tg_max_sends: int = 10
     tg_proxy: str | None = None  # tg://proxy?... (MTProxy) yoki socks5://host:port
@@ -120,7 +120,7 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
         tg_api_hash=env.get("TG_API_HASH") or None,
         tg_session=str(Path(env.get("TG_SESSION") or "data/tg") if Path(env.get("TG_SESSION") or "data/tg").is_absolute()
                        else ROOT / (env.get("TG_SESSION") or "data/tg")),  # ish papkasiga bog'liq bo'lmasin
-        tg_mode="write" if (env.get("TG_MODE") or "").strip().lower() == "write" else "read",
+        tg_mode={"write": "write", "full": "full"}.get((env.get("TG_MODE") or "").strip().lower(), "read"),
         tg_allowed=tuple(x.strip().lower().lstrip("@") for x in (env.get("TG_ALLOWED") or "").split(",") if x.strip()),
         tg_max_sends=int(env.get("TG_MAX_SENDS_PER_HOUR", 10)),
         tg_proxy=(env.get("TG_PROXY") or "").strip() or None,
