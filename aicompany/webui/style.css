@@ -12,7 +12,9 @@ body { overscroll-behavior: none; }
 h1, h2, h3, p { margin: 0; }
 button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; padding: 0; }
 input, textarea { font: inherit; color: var(--text); }
-#app { display: flex; flex-direction: column; height: 100dvh; max-width: 560px; margin: 0 auto; }
+/* position: fixed + inset: 0 — iPhone'da bosh ekranga o'rnatilgan ilovada 100dvh holat paneli balandligicha
+   kam chiqib, pastda bo'sh joy qolardi; fixed doim butun ekranni egallaydi (brauzerda ham bir xil) */
+#app { position: fixed; top: 0; bottom: 0; left: 0; right: 0; display: flex; flex-direction: column; max-width: 560px; margin: 0 auto; }
 #view { flex: 1; overflow-y: auto; padding: calc(var(--sat) + 18px) 18px 24px; -webkit-overflow-scrolling: touch; }
 
 /* Sarlavhalar */

@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-y";
+const PANEL_V = "2026.10.08-z";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -114,7 +114,7 @@ function readable(m) {
   return box;
 }
 const TEXT_EXT = /\.(txt|md|html?|css|js|mjs|json|py|ts|tsx|jsx|csv|xml|ya?ml|sh|sql|java|c|cpp|h|go|rs|php|rb|svg|toml|ini|log)$/i;
-const S = { token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, archive: false };
+const S = { cache: {}, token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, archive: false };
 
 // ---------- yordamchilar ----------
 function h(tag, attrs, ...kids) {
@@ -216,14 +216,34 @@ function renderTabs() {
     nav.append(b);
   }
 }
-function go(tab) { S.tab = tab; S.sig = {}; renderTabs(); refresh(true); $("view").scrollTop = 0; }
+// Tab darhol almashadi: oxirgi ma'lumot keshdan bir zumda chiziladi, yangisi orqada olinadi (sekin aloqada ham)
+function paint(tab, data) {
+  const v = $("view");
+  v.replaceChildren(...VIEWS[tab][1](data).filter((n) => n != null && n !== false));
+  S.sig[tab] = JSON.stringify(data);
+}
+function go(tab) {
+  S.tab = tab; renderTabs();
+  if (S.cache[tab]) paint(tab, S.cache[tab]);
+  else { $("view").replaceChildren(h("div", { class: "empty" }, "Yuklanmoqda…")); S.sig[tab] = null; }
+  $("view").scrollTop = 0;
+  refresh(false);
+}
+async function prefetch() {  // boshqa tablarni oldindan yuklab qo'yamiz: birinchi bosishda ham darhol ochiladi
+  for (const tab of Object.keys(VIEWS)) {
+    if (tab === S.tab || S.cache[tab]) continue;
+    try { S.cache[tab] = await VIEWS[tab][0](); } catch { /* keyin bosilganda yuklanadi */ }
+  }
+}
 
 // ---------- ko'rinishlar: har biri ma'lumot oladi va chizadi; o'zgarmasa qayta chizilmaydi ----------
 const VIEWS = { team: [loadTeam, drawTeam], cards: [loadCards, drawCards], tasks: [loadTasks, drawTasks], stats: [loadStats, drawStats] };
 async function refresh(force) {
   const [load, draw] = VIEWS[S.tab];
   try {
-    const data = await load(), sig = JSON.stringify(data);
+    const tab = S.tab, data = await load(), sig = JSON.stringify(data);
+    S.cache[tab] = data;
+    if (tab !== S.tab) return;  // kutilayotganda boshqa tabga o'tildi
     if (!force && S.sig[S.tab] === sig) return;
     S.sig[S.tab] = sig;
     const v = $("view"), top = v.scrollTop;
@@ -375,7 +395,9 @@ function drawTasks({ tasks, archive }) {
   })];
 }
 async function openTask(id) {
-  const t = await api("/tasks/" + id);
+  openSheet(h("h2", {}, "Vazifa #" + id), h("p", { class: "muted" }, "Yuklanmoqda…"));  // oyna darhol ochiladi
+  let t;
+  try { t = await api("/tasks/" + id); } catch (e) { return toast(e.message); }
   const [label] = ST[t.status] || [t.status];
   const MAIN = { "NATIJA.md": ["📄 To'liq natija", "Barcha so'ralgan narsa bitta faylda"], "PROMPT.md": ["🤖 Tayyor prompt", "Boshqa AI'ga bersangiz, shu ishni to'liq qayta bajaradi"] };
   const main = t.files.filter((f) => MAIN[f]).map((f) => h("div", { class: "card mainfile" },
@@ -842,7 +864,7 @@ async function poll() {
   finally { polling = false; }
 }
 function start() {
-  renderTabs(); poll().then(() => refresh(true));
+  renderTabs(); poll().then(() => refresh(true)).then(prefetch);
   setInterval(poll, 3000);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 }
