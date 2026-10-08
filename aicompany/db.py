@@ -143,7 +143,8 @@ class Store:
                     continue
                 ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(conn.dialect)}"
                 if col.server_default is not None:
-                    ddl += f" DEFAULT {col.server_default.arg.text}"
+                    arg = col.server_default.arg
+                    ddl += f" DEFAULT {arg.text if hasattr(arg, 'text') else repr(str(arg))}"  # sa.text("0") yoki oddiy matn
                 elif not col.nullable:
                     ddl += " DEFAULT ''"
                 conn.execute(sa.text(ddl))

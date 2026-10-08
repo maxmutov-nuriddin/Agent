@@ -226,3 +226,32 @@ async def test_status_tells_why_a_task_did_not_finish(make_app):
     r = await app.orch.run_task("x", 1)
     t = await app.store.get_task(r["task_id"])
     assert t["status"] == "done" and t["note"] is None
+
+
+async def test_old_database_gets_every_new_column_including_text_defaults(tmp_path):
+    """Foydalanuvchi bazasi eski: tasks (note/archived yo'q), approvals (kind yo'q), agents (tools yo'q)."""
+    import sqlite3
+    import sqlalchemy as sa
+    from aicompany.db import Store
+    path = tmp_path / "old2.db"
+    con = sqlite3.connect(path)
+    con.executescript("""
+      CREATE TABLE tasks (id INTEGER PRIMARY KEY, chat_id INTEGER, request TEXT NOT NULL, status TEXT NOT NULL,
+                          plan TEXT, result TEXT, created_at TEXT, finished_at TEXT);
+      CREATE TABLE approvals (id INTEGER PRIMARY KEY, task_id INTEGER, agent TEXT, description TEXT, status TEXT,
+                              created_at TEXT, decided_at TEXT);
+      INSERT INTO approvals (task_id, agent, description, status) VALUES (1, 'developer', 'npm install', 'approved');
+    """)
+    con.commit()
+    con.close()
+    store = Store(f"sqlite+aiosqlite:///{path}")
+    await store.init()
+    rows = await store._all(sa.text("select description, kind, status from approvals"))
+    assert rows == [{"description": "npm install", "kind": "command", "status": "approved"}]   # eski qator 'command' bo'ldi
+    await store.create_approval(1, "assistant", "Kimga: Ali", "telegram")
+    assert [r["kind"] for r in await store.task_approvals(1)] == ["command", "telegram"]
+    await store.create_task(1, "yangi")
+    t = (await store.list_tasks())[0]
+    assert t["note"] is None and t["archived"] == 0
+    await store.init()  # takroriy ishga tushirish xavfsiz
+    await store.close()
