@@ -361,6 +361,27 @@ class TgUser:
     async def dialogs(self, limit=100):
         return await (await self.client()).get_dialogs(limit=limit)
 
+    async def contacts(self) -> list:
+        """Telegram kontaktlar ro'yxati (telefon kitobi); yozishmasi yo'q odamlar ham shu yerda."""
+        c = await self.client()
+        if hasattr(c, "get_contacts"):  # sinov mijozi
+            return list(await c.get_contacts())
+        from telethon.tl.functions.contacts import GetContactsRequest
+        res = await asyncio.wait_for(c(GetContactsRequest(hash=0)), REQUEST_TIMEOUT)
+        return list(getattr(res, "users", []))
+
+    async def find_contacts(self, query: str) -> list:
+        q = query.strip().lower().lstrip("@")
+        digits = "".join(ch for ch in q if ch.isdigit())
+        out = []
+        for u in await self.contacts():
+            name = self.name_of(u).lower()
+            uname = (getattr(u, "username", "") or "").lower()
+            phone = str(getattr(u, "phone", "") or "")
+            if q in name or (uname and q == uname) or (len(digits) >= 5 and digits in phone):
+                out.append(u)
+        return out
+
     async def resolve(self, ref: str):
         """Chat: @username, raqamli ID yoki ism bo'yicha. Bir nechta mos kelsa, aniqlashtirishni so'raydi."""
         c = await self.client()
@@ -373,8 +394,18 @@ class TgUser:
             except Exception as e:  # noqa: BLE001 — Telethon turli xato turlarini beradi
                 raise TgError(f"'{ref}' topilmadi") from e
         matches = [d for d in await self.dialogs(200) if ref.lower() in (d.name or "").lower()]
-        if not matches:
-            raise TgError(f"'{ref}' nomli chat topilmadi (tg_chats bilan ro'yxatni ko'ring)")
+        if not matches:  # yozishma yo'q: kontaktlar ro'yxatidan qidiramiz
+            try:
+                found = await self.find_contacts(ref)
+            except TgError:
+                raise
+            except Exception:  # noqa: BLE001 — kontaktlarni o'qib bo'lmasa, oddiy "topilmadi" xatosi
+                found = []
+            if len(found) == 1:
+                return found[0]
+            if len(found) > 1:
+                raise TgError("kontaktlarda bir nechta mos: " + ", ".join(self.name_of(u) for u in found[:6]) + ". Aniqroq yozing")
+            raise TgError(f"'{ref}' topilmadi: na chatlarda, na kontaktlarda (tg_contacts bilan qidiring)")
         exact = [d for d in matches if (d.name or "").lower() == ref.lower()]
         if len(exact) == 1:
             return exact[0].entity

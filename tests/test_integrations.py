@@ -155,6 +155,11 @@ class FakeClient:
     async def get_dialogs(self, limit=100):
         return self.dialogs[:limit]
 
+    async def get_contacts(self):
+        saved = FakeEntity(7, "Sardor Aliyev", "sardor_a")
+        saved.phone = "998901112233"
+        return [saved, self.ali]
+
     async def get_entity(self, ref):
         for d in self.dialogs:
             if ref in (d.id, "@" + (d.entity.username or "")):
@@ -306,3 +311,24 @@ async def test_assistant_agent_is_seeded_with_the_new_tool_groups(make_app):
     app, _ = await make_app(scripted_company())
     a = await app.store.get_agent("assistant")
     assert a and set(a["tools"].split(",")) == {"maps", "telegram", "memory", "web", "time"}
+
+
+async def test_tg_chats_unread_summary_and_filter(tgenv):
+    env, _ = tgenv
+    out = await run(env, "tg_chats")
+    assert "o'qilmagan xabar jami: 2 ta" in out and "Vali Karimov" in out
+    out = await run(env, "tg_chats", unread_only=True)
+    assert "Ko'rsatilgan chatlar: 1 ta" in out and "Ali" in out and "Vali Karimov" not in out
+
+
+async def test_tg_contacts_search_and_write_to_contact_without_chat(tgenv):
+    env, fake = tgenv
+    assert "Sardor Aliyev @sardor_a +998901112233" in await run(env, "tg_contacts", query="sardor")
+    assert "Sardor" in await run(env, "tg_contacts", query="+998 90 111")             # telefon bo'yicha
+    assert "Kontaktlar: 2 ta" in await run(env, "tg_contacts")
+    # yozishmasi yo'q kontaktga yozish: chatlarda yo'q, kontaktlardan topiladi (baribir tasdiq bilan)
+    env.approver = AutoApprover(True)
+    assert "yuborildi: Sardor Aliyev" in await run(env, "tg_send", chat="Sardor", text="Salom")
+    assert fake.sent == [(7, "Salom")]
+    with pytest.raises(ToolError, match="na chatlarda, na kontaktlarda"):
+        await run(env, "tg_read", chat="Begona Odam")

@@ -56,7 +56,7 @@ Yangi xodim **assistant** shu imkoniyatlarga ega.
    Kod so'rashda «Telegram serverlariga ulanib bo'lmadi» chiqsa: tarmoq Telegram serverlarini to'sayapti. Telegram ilovangizdagi proksi havolasini (Sozlamalar → Ma'lumotlar va xotira → Proksi; `tg://proxy?...` yoki `socks5://...`) shu oynadagi «Proksi» maydoniga qo'ying (yoki `.env` da `TG_PROXY`). `ee...` turidagi (fake-TLS) MTProxy qo'llanmaydi.
 2. Panelda kiritilgan kalitlar `data/` bazasida saqlanadi (git'ga tushmaydi). Uzish: xuddi shu oyna → «Akkauntni uzish» (sessiya Telegramda ham tugatiladi).
 3. Boshlanishda `TG_MODE=read` (faqat o'qish va javob loyihasi). Yuborish uchun `TG_MODE=write`: **har bir xabar** Kartalar/Telegram tugmalarida sizga kimga va qanday matn bilan ketishi ko'rsatilib, tasdig'ingizdan keyingina yuboriladi. Soatiga `TG_MAX_SENDS_PER_HOUR` dan ko'p yuborilmaydi, `TG_ALLOWED` bilan faqat ma'lum kontaktlarga cheklash mumkin.
-4. Asboblar: `tg_chats`, `tg_read`, `tg_send`. Chatdagi xabarlar «ishonchsiz matn» deb belgilanadi: ularda «pul o'tkaz» kabi ko'rsatma bo'lsa bajarilmaydi.
+4. Asboblar: `tg_chats` (o'qilmaganlar xulosasi bilan), `tg_contacts` (kontaktlardan qidirish), `tg_read`, `tg_send` (yozishmasi yo'q kontaktga ham). Chatdagi xabarlar «ishonchsiz matn» deb belgilanadi: ularda «pul o'tkaz» kabi ko'rsatma bo'lsa bajarilmaydi.
 
 **Xavfsizlik va maxfiylik (muhim):**
 - `data/tg.session` fayli akkauntingizga **to'liq kirish** beradi: git'ga tushmaydi, 600 ruxsat bilan turadi, hech kimga bermang. Chiqarish: Telegram → Sozlamalar → Qurilmalar.
