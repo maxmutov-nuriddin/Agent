@@ -17,7 +17,7 @@ from aiohttp import web
 
 from .app import App
 from .report import build_report, day_start_utc
-from .providers import VoiceError, VoiceUnavailable
+from .providers import ProviderError, VoiceError, VoiceUnavailable, suggest_model
 from .tools import ToolError
 from .team import CORE
 from .util import clip
@@ -386,7 +386,38 @@ def make_web_app(app: App) -> web.Application:
             "search": "brave" if s.brave_key else "duckduckgo",
             "providers": [{"name": n, "enabled": n in app.router.providers} for n in s.providers],
             "primary": await app.router.primary(),
+            "limits": {"task_usd": s.max_task_usd, "agents": s.max_agents, "parallel": s.max_parallel, "revisions": s.max_revisions,
+                       "tool_turns": s.max_tool_turns, "command_s": s.command_timeout, "report": f"{s.report_hour}:00 ({s.report_tz})",
+                       "tg_sends_per_hour": s.tg_max_sends},
         })
+
+    async def h_models(request):
+        """`python -m aicompany check` ning paneldagi o'rni: kalit ishlayaptimi va models.yaml dagi nomlar haqiqiy modelga mosmi."""
+        out = []
+        for name, pc in s.providers.items():
+            prov = app.router.providers.get(name)
+            if not prov:
+                out.append({"provider": name, "enabled": False, "tiers": []})
+                continue
+            try:
+                available = set(await prov.list_models())
+            except (ProviderError, NotImplementedError) as e:
+                out.append({"provider": name, "enabled": True, "error": str(e)[:200], "tiers": []})
+                continue
+            tiers = []
+            for tier, m in pc.models.items():
+                fixed = await app.store.get_kv(f"model:{name}:{m.id}")
+                found = m.id in available
+                tiers.append({"tier": tier, "id": m.id, "found": found, "using": fixed or m.id, "fixed": bool(fixed),
+                              "suggestion": None if found else suggest_model(m.id, sorted(available))})
+            out.append({"provider": name, "enabled": True, "count": len(available), "tiers": tiers})
+        return json_ok(out)
+
+    async def h_widget_link(request):
+        url, _ = web_url(s)
+        base = url.split("/#token=")[0]
+        return json_ok({"configured": bool(s.widget_token), "base_url": base, "token": s.widget_token or "",
+                        "script": "docs/widget/ai-jamoa.js"})
 
     async def h_location_get(request):
         from .tools_ext import age_text, last_location
@@ -502,7 +533,7 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/pause", h_pause), web.post("/api/resume", h_resume),
         web.post("/api/provider", h_provider), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
-        web.get("/api/integrations", h_integrations), web.get("/api/location", h_location_get),
+        web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload), web.get("/api/spend", h_agent_spend),

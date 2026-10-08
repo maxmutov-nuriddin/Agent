@@ -532,3 +532,41 @@ def test_panel_exposes_the_new_features():
                    "navigator.geolocation", "Ulanishlar", "HR tahlili", "Jurnal", "Xotiraga qo'shish", "Fayl biriktirish"):
         assert needle in js, needle
     assert "chat-clear" in html
+
+
+async def test_models_check_endpoint_mirrors_the_cli_check(web2):
+    c, app, provs = web2
+    provs["gemini"].models_list = ["gemini-3-flash-preview", "gemini-3.1-flash-lite", "gemini-3.5-flash", "gemini-embedding-001"]
+    provs["anthropic"].models_list = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"]
+    data = {p["provider"]: p for p in (await get(c, "/api/models"))[1]}
+    assert data["openai"] == {"provider": "openai", "enabled": False, "tiers": []}
+    assert all(t["found"] for t in data["anthropic"]["tiers"]) and data["anthropic"]["count"] == 3
+    mid = next(t for t in data["gemini"]["tiers"] if t["tier"] == "mid")
+    assert mid["id"] == "gemini-3-flash" and mid["found"] is False and mid["suggestion"] == "gemini-3-flash-preview"
+    await app.store.set_kv("model:gemini:gemini-3-flash", "gemini-3-flash-preview")                      # router avto-tuzatgan
+    mid = next(t for t in (await get(c, "/api/models"))[1][2]["tiers"] if t["tier"] == "mid")
+    assert mid["fixed"] is True and mid["using"] == "gemini-3-flash-preview"
+    assert (await c.get("/api/models")).status == 401
+
+
+async def test_models_check_reports_a_broken_key(web2):
+    from aicompany.providers import ProviderError
+    c, app, provs = web2
+
+    async def boom():
+        raise ProviderError("gemini: 400 API key not valid")
+    provs["gemini"].list_models = boom
+    d = {p["provider"]: p for p in (await get(c, "/api/models"))[1]}
+    assert "API key not valid" in d["gemini"]["error"] and d["gemini"]["tiers"] == []
+
+
+async def test_widget_link_and_limits_shown_in_the_panel(web):
+    c, app = web
+    w = (await get(c, "/api/widget-link"))[1]
+    assert w["configured"] is True and w["token"] == "widget-secret" and w["base_url"].startswith("http") and "ai-jamoa.js" in w["script"]
+    lim = (await get(c, "/api/integrations"))[1]["limits"]
+    assert lim["task_usd"] == 1.0 and lim["agents"] == 12 and lim["tool_turns"] == 8 and "Asia/Tashkent" in lim["report"]
+    assert (await c.get("/api/widget-link")).status == 401
+    js = (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()
+    for needle in ("/models", "/widget-link", "Modellarni tekshirish", "iPhone vidjeti", "Limitlar"):
+        assert needle in js, needle

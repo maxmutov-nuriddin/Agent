@@ -22,7 +22,7 @@ Faqat Claude bilan boshlash: `.env` da faqat `ANTHROPIC_API_KEY` ni to'ldiring, 
 ## Veb-panel (PWA) va iPhone
 `python -m aicompany run` Telegram botdan tashqari veb-panelni ham ishga tushiradi (faqat veb: `python -m aicompany web`). Terminalda maxfiy havola chiqadi: `http://...:8080/#token=...`. Kalit birinchi ishga tushirishda avtomatik yaratilib `.env` ga yoziladi.
 
-Panelda hamma qurilgan imkoniyat bor (Telegramdagi buyruqlarning panel analoglari ham): **Jamoa** (HR tahlili tugmasi), **Hisob** (ulanishlar holati, joylashuv va uy, xotirani qo'shish/o'chirish, hisobot, jurnal, asosiy AI), chatda 🗑 tozalash, vazifa formasida 📎 fayl biriktirish.
+Panelda hamma qurilgan imkoniyat bor (Telegramdagi buyruqlarning panel analoglari ham): **Jamoa** (HR tahlili tugmasi), **Hisob** (ulanishlar holati, limitlar, modellar tekshiruvi (`check` o'rni), iPhone vidjeti havolasi, joylashuv va uy, xotirani qo'shish/o'chirish, hisobot, jurnal, asosiy AI), chatda 🗑 tozalash, vazifa formasida 📎 fayl biriktirish.
 
 Panel bo'limlari: **Jamoa** (kim ishlayapti, Rahbar kartasi, xodim yollash/bo'shatish), **Kartalar** (xavfli buyruqlarga ruxsat), **Vazifalar** (natija, fayllar, to'xtatish, arxiv), **Hisob** (byudjet, sarf, xotira, pauza).
 

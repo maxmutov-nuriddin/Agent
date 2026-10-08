@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-j";
+const PANEL_V = "2026.10.08-k";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -299,6 +299,31 @@ function placeSheet(loc) {
       h("button", { class: "btn lime", onclick: () => addr.value.trim() ? save(addr.value.trim()) : toast("Manzilni yozing") }, "Saqlash"),
       h("button", { class: "btn", onclick: () => save("me") }, "Hozirgi joylashuvim")));
 }
+async function showModels() {
+  toast("Tekshirilmoqda…");
+  try {
+    const data = await api("/models");
+    $("toast").hidden = true;
+    const blocks = data.map((p) => h("div", {}, h("div", { class: "label" }, (PROV[p.provider] || p.provider) + (p.enabled ? ` · ${p.count || 0} model` : " · kalit yo'q")),
+      p.error ? h("p", { class: "note red" }, p.error) : null,
+      ...p.tiers.map((t) => h("div", { class: "kv" }, h("span", {}, `${t.found ? "✓" : "✕"} ${t.tier}`),
+        h("span", { class: "muted" }, t.found ? t.id : t.fixed ? `${t.id} → ${t.using} (avto-tuzatilgan)` : t.suggestion ? `${t.id} → taklif: ${t.suggestion}` : `${t.id} (topilmadi)`)))));
+    openSheet(h("h2", {}, "Modellar"), h("p", { class: "muted" }, "models.yaml dagi nomlar provayderdagi haqiqiy modellarga mosligi. ✕ bo'lsa bot yaqin nomni o'zi tanlaydi, lekin models.yaml ni tuzatgan ma'qul."), ...blocks);
+  } catch (e) { toast(e.message); }
+}
+async function showWidget() {
+  try {
+    const w = await api("/widget-link");
+    const copy = async (t) => { try { await navigator.clipboard.writeText(t); toast("Nusxalandi"); } catch { toast("Nusxalab bo'lmadi (HTTPS kerak)"); } };
+    openSheet(h("h2", {}, "iPhone vidjeti"),
+      h("p", { class: "muted" }, "Bepul Scriptable ilovasiga " + w.script + " skriptini qo'ying, ichidagi ikkita qiymatni almashtiring. Vidjet ishlayotgan agentlar, kutayotgan qarorlar va byudjetni ko'rsatadi (faqat o'qiydi)."),
+      h("div", { class: "label" }, "BASE_URL"), h("div", { class: "pre" }, w.base_url),
+      h("button", { class: "btn ghost full", onclick: () => copy(w.base_url) }, "Nusxalash"),
+      h("div", { class: "label" }, "WIDGET_TOKEN"), h("div", { class: "pre" }, w.configured ? w.token : "yaratilmagan: `python -m aicompany run` ni qayta ishga tushiring"),
+      w.configured ? h("button", { class: "btn ghost full", onclick: () => copy(w.token) }, "Nusxalash") : null,
+      h("p", { class: "hint" }, "Telefon ulana olishi uchun BASE_URL telefondan ochiladigan manzil bo'lishi kerak (WEB_HOST=0.0.0.0 yoki Tailscale/Tunnel)."));
+  } catch (e) { toast(e.message); }
+}
 async function showReport() {
   try { const r = await api("/report"); openSheet(h("h2", {}, "Hisobot"), h("div", { class: "pre" }, r.text)); } catch (e) { toast(e.message); }
 }
@@ -349,6 +374,12 @@ function drawStats({ state, spend, mem, integ, loc }) {
         ["Veb-qidiruv", true, integ.search === "brave" ? "Brave" : "DuckDuckGo"],
         ["Maxfiy chat uchun AI", ta.private_providers.length > 0, ta.private_providers.length ? ta.private_providers.join(", ") : "cheklanmagan (PRIVATE_PROVIDERS)"],
        ].map(([name, ok, note]) => h("div", { class: "kv" }, h("span", {}, `${tick(ok)} ${name}`), h("span", { class: "muted" }, note))));
+  const L = integ.limits;
+  const limits = h("div", { class: "card" }, ...[["Bitta vazifa limiti", usd(L.task_usd) + " (MAX_TASK_USD)"], ["Jamoa hajmi", L.agents + " xodimgacha"],
+    ["Bir vaqtda vazifa", L.parallel], ["QA qayta ishlash", L.revisions + " marta"], ["Agent asbob chaqiruvi", L.tool_turns + " ta"],
+    ["Buyruq vaqti", L.command_s + " s"], ["Telegram yuborish", L.tg_sends_per_hour + " ta/soat"], ["Kunlik hisobot", L.report]]
+    .map(([k, v]) => h("div", { class: "kv" }, h("span", {}, k), h("span", { class: "muted" }, String(v)))),
+    h("p", { class: "hint" }, "O'zgartirish: .env faylida (kalitlar va limitlar xavfsizlik uchun panelda tahrirlanmaydi)."));
   const home = loc.places.home;
   const where = h("div", { class: "card" },
     h("div", { class: "kv" }, h("span", {}, "📍 Joylashuv"), h("span", { class: "muted" }, loc.last ? `${loc.last.age}${loc.last.live ? " (jonli)" : ""}` : "yuborilmagan")),
@@ -361,6 +392,7 @@ function drawStats({ state, spend, mem, integ, loc }) {
     h("div", { class: "money" }, h("b", {}, usd(left)), h("span", {}, `qolgan byudjet · bugun ${usd(state.today)}`)), ...provs,
     primary,
     h("div", { class: "label" }, "Ulanishlar"), links,
+    h("div", { class: "label" }, "Limitlar"), limits,
     h("div", { class: "label" }, "Joylashuv"), where,
     spend.length ? h("div", { class: "label" }, "Agentlar sarfi") : null,
     ...spend.slice(0, 6).map((r) => h("div", { class: "item" }, h("div", { class: "grow" }, h("h3", {}, r.agent)), h("span", { class: "muted" }, usd(r.cost)))),
@@ -371,6 +403,7 @@ function drawStats({ state, spend, mem, integ, loc }) {
     h("button", { class: "btn ghost full", onclick: memoryAdd }, "+ Xotiraga qo'shish"),
     h("div", { class: "label" }, "Boshqaruv"),
     h("div", { class: "acts" }, h("button", { class: "btn", onclick: showReport }, "📊 Hisobot"), h("button", { class: "btn", onclick: showAudit }, "🧾 Jurnal")),
+    h("div", { class: "acts" }, h("button", { class: "btn", onclick: showModels }, "🔎 Modellarni tekshirish"), h("button", { class: "btn", onclick: showWidget }, "📱 iPhone vidjeti")),
     pause, h("div", { class: "label" }),
     h("button", { class: "btn ghost full", onclick: () => { localStorage.removeItem("aij_token"); S.token = ""; location.reload(); } }, "Chiqish"),
     h("p", { class: "hint ver" }, "Versiya: " + (state.version || "?") + " · panel " + PANEL_V)];
