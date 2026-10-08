@@ -4,6 +4,8 @@ import asyncio
 import io
 import json
 import logging
+import re
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot, Dispatcher, F
@@ -27,12 +29,23 @@ HELP = (
 )
 
 
+STATUS_UZ = {"done": "✅ tayyor", "cancelled": "⏹ siz to'xtatdingiz", "limit": "💸 limit tugadi", "failed": "❌ xato",
+             "paused": "⏸ pauza", "interrupted": "⚠️ uzildi", "running": "⏳ ishlayapti"}
+
+
 async def send_long(bot: Bot, chat_id: int, text: str, filename="natija.md"):
     if len(text) <= 3500:
         await bot.send_message(chat_id, text)
     else:
         await bot.send_message(chat_id, text[:600] + "\n\n… (to'liq natija faylda)")
         await bot.send_document(chat_id, BufferedInputFile(text.encode(), filename))
+
+
+async def send_text(bot: Bot, chat_id: int, text: str):
+    """Telegram 4096 belgidan uzun xabarni qabul qilmaydi: bo'laklab yuboradi."""
+    text = text or "…"
+    for i in range(0, len(text), 3900):
+        await bot.send_message(chat_id, text[i:i + 3900])
 
 
 def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
@@ -148,7 +161,8 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
             await app.store.set_kv("await_home", "1")
             return await m.answer("🏠 Uy joylashuvingizni yuboring (📎 → Joylashuv), yoki /home <manzil> deb yozing.")
         try:
-            env = type("E", (), {"settings": app.settings, "http": None, "store": app.store})()
+            from .tools import ToolEnv
+            env = ToolEnv(workspace=app.settings.workspace_dir, store=app.store, settings=app.settings)
             lat, lon, label = await geocode_text(env, arg)
         except Exception as e:  # noqa: BLE001
             return await m.answer(f"❌ Manzil topilmadi: {e}")
@@ -219,21 +233,35 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
 
     async def run(chat_id: int, text: str, attachments=None):
         async def notify(s: str):
-            await bot.send_message(chat_id, s)
-        res = await app.orch.handle(text, chat_id, notify, attachments)
-        if res["kind"] == "chat":
-            return  # javob allaqachon yuborilgan
-        head = f"🏁 Vazifa #{res['task_id']} — {res['status']}"
-        if res.get("error"):
-            head += f"\n{res['error']}"
-        await bot.send_message(chat_id, head)
-        if res.get("result"):
-            await send_long(bot, chat_id, res["result"], f"task_{res['task_id']}.md")
-        ws = app.settings.workspace_dir / f"task_{res['task_id']}"
-        for rel in res.get("files", [])[:8]:
-            f = ws / rel
-            if f.stat().st_size <= MAX_UPLOAD:
-                await bot.send_document(chat_id, FSInputFile(f, filename=f.name), caption=f"📎 {rel}")
+            await send_text(bot, chat_id, s)
+        try:
+            res = await app.orch.handle(text, chat_id, notify, attachments)
+            if res["kind"] == "chat":
+                return  # javob allaqachon yuborilgan
+            head = f"🏁 Vazifa #{res['task_id']} — {STATUS_UZ.get(res['status'], res['status'])}"
+            if res.get("error"):
+                head += f"\n{res['error']}"
+            await send_text(bot, chat_id, head)
+            if res.get("result"):
+                await send_long(bot, chat_id, res["result"], f"task_{res['task_id']}.md")
+            ws = app.settings.workspace_dir / f"task_{res['task_id']}"
+            for rel in res.get("files", [])[:8]:
+                f = ws / rel
+                try:
+                    if f.stat().st_size <= MAX_UPLOAD:
+                        await bot.send_document(chat_id, FSInputFile(f, filename=f.name), caption=f"📎 {rel}")
+                except Exception:  # noqa: BLE001 — bitta fayl yuborilmasa qolganlari yuborilsin
+                    log.exception("fayl yuborilmadi: %s", rel)
+            if len(res.get("files", [])) > 8:
+                await bot.send_message(chat_id, f"… yana {len(res['files']) - 8} ta fayl panelda (/web)")
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 — foydalanuvchi javobsiz qolmasligi kerak
+            log.exception("xabarni qayta ishlashda xato")
+            try:
+                await bot.send_message(chat_id, f"❌ Xatolik: {str(e)[:300]}")
+            except Exception:  # noqa: BLE001
+                pass
 
     def spawn(coro):
         t = asyncio.create_task(coro)
@@ -247,7 +275,8 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
             return await m.answer("Fayl juda katta (10MB limit)")
         inbox = app.settings.workspace_dir / "inbox"
         inbox.mkdir(parents=True, exist_ok=True)
-        dest = inbox / f"{m.message_id}_{(d.file_name or 'file').replace('/', '_')}"
+        safe = re.sub(r"[^\w.\- ]", "_", Path(d.file_name or "file").name)[:100] or "file"
+        dest = inbox / f"{m.message_id}_{safe}"
         await bot.download(d, destination=dest)
         spawn(run(m.chat.id, m.caption or "Ilova qilingan fayl bilan ishlang.", [dest]))
 

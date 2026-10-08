@@ -187,3 +187,63 @@ async def test_tg_status_command_without_account(make_app, monkeypatch):
     await dp.feed_update(bot, update(OWNER, "/tg"))
     assert "tglogin" in sent[0]
     await bot.session.close()
+
+
+async def test_bot_reports_errors_splits_long_messages_and_uses_uzbek_status(make_app, monkeypatch):
+    import asyncio
+    import json
+    sent = []
+
+    async def fake_call(self, method, request_timeout=None):
+        sent.append(getattr(method, "text", None))
+        return True
+    monkeypatch.setattr(Bot, "__call__", fake_call)
+    long_reply = "a" * 9000
+
+    def handler(system, user, model):
+        if "front desk" in system:
+            return json.dumps({"mode": "chat", "reply": long_reply})
+        return scripted_company()(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID=str(OWNER))
+    bot = Bot("123456:ABC")
+    dp = make_dispatcher(app, bot)
+    await dp.feed_update(bot, update(OWNER, "salom"))
+    await asyncio.sleep(0.2)
+    texts = [t for t in sent if t]
+    assert len(texts) == 3 and "".join(texts) == long_reply and all(len(t) <= 4096 for t in texts)  # bo'laklandi
+
+    async def broken(*a, **k):
+        raise RuntimeError("baza qulf")
+    app.orch.handle = broken
+    sent.clear()
+    await dp.feed_update(bot, update(OWNER, "salom"))
+    await asyncio.sleep(0.2)
+    assert sent and sent[0].startswith("❌ Xatolik") and "baza qulf" in sent[0]       # foydalanuvchi javobsiz qolmaydi
+    await bot.session.close()
+
+
+async def test_bot_task_summary_uses_uzbek_status(make_app, monkeypatch):
+    import asyncio
+    import json
+    sent = []
+
+    async def fake_call(self, method, request_timeout=None):
+        sent.append(getattr(method, "text", None))
+        return True
+    monkeypatch.setattr(Bot, "__call__", fake_call)
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "front desk" in system:
+            return json.dumps({"mode": "task", "reply": "", "task": "x"})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID=str(OWNER))
+    bot = Bot("123456:ABC")
+    dp = make_dispatcher(app, bot)
+    await dp.feed_update(bot, update(OWNER, "sayt yarat"))
+    for _ in range(50):
+        await asyncio.sleep(0.05)
+        if any(t and t.startswith("🏁") for t in sent):
+            break
+    assert any(t and t.startswith("🏁 Vazifa #1 — ✅ tayyor") for t in sent)
+    await bot.session.close()

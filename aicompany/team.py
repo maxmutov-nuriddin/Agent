@@ -63,15 +63,15 @@ class Team:
         system = agent["system_prompt"] + (TOOL_RULES if defs else "")
         if env:
             env.agent = agent["name"]
-        b = self.busy.setdefault(agent["name"], {"count": 0, "task_id": task_id})
-        b["count"] += 1
-        b["task_id"] = task_id
         excluded: set[str] = set()
         if self.private_providers and any(t.group == "telegram" for t in tools):
             # shaxsiy yozishmalar (masalan bepul Gemini kalitiga yuborilmasin): ruxsat etilmagan provayderlar chiqariladi
             excluded = {p for p in self.router.providers if p not in self.private_providers}
             if len(excluded) >= len(self.router.providers):
                 raise BudgetExhausted("shaxsiy yozishmalar uchun PRIVATE_PROVIDERS dagi provayder ulanmagan")
+        b = self.busy.setdefault(agent["name"], {"count": 0, "task_id": task_id})
+        b["count"] += 1  # band hisoblagichi faqat try/finally ichida: xato bo'lsa ham kamayadi
+        b["task_id"] = task_id
         try:
             while True:
                 try:  # asbob sikli bitta provayderda boshdan oxirigacha; u yiqilsa, ish boshqasida qayta boshlanadi

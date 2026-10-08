@@ -31,6 +31,37 @@ async def _noop(_: str):
     return None
 
 
+def _safe(notify: Notify) -> Notify:
+    """Xabar yetkazilmasa (Telegram/tarmoq xatosi) vazifa yiqilmasligi kerak."""
+    async def wrapped(text: str):
+        try:
+            await notify(text)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            pass
+    return wrapped
+
+
+def normalize_plan(plan: dict) -> dict:
+    """Model rejasi kutilmagan shaklda bo'lishi mumkin: qadamlarni tozalab, bir xil ko'rinishga keltiradi."""
+    steps, seen = [], set()
+    for i, s in enumerate(plan.get("steps") or []):
+        if not isinstance(s, dict) or not s.get("agent") or not s.get("task"):
+            continue
+        sid = str(s.get("id") or f"s{i + 1}")
+        while sid in seen:
+            sid += "_"
+        seen.add(sid)
+        deps = s.get("depends_on") or []
+        deps = [deps] if isinstance(deps, (str, int)) else [d for d in deps if isinstance(d, (str, int))]
+        steps.append({"id": sid, "agent": str(s["agent"]).strip(), "task": str(s["task"]),
+                      "tier": s.get("tier") if s.get("tier") in TIERS else None,
+                      "depends_on": [str(d) for d in deps if str(d) != sid]})
+    roles = [r for r in (plan.get("new_roles") or []) if isinstance(r, dict) and r.get("name")]
+    return {"summary": str(plan.get("summary") or ""), "steps": steps, "new_roles": roles}
+
+
 class Orchestrator:
     def __init__(self, store: Store, team: Team, settings, max_revisions: int = 1,
                  approver: Approver | None = None, tg=None):
@@ -149,6 +180,7 @@ class Orchestrator:
 
     async def _run_task(self, request: str, chat_id: int, notify: Notify,
                         attachments: list[Path] | None) -> dict:
+        notify = _safe(notify)
         task_id = await self.store.create_task(chat_id, request)
         ws = self._workspace(task_id)
         for src in attachments or []:
@@ -174,14 +206,17 @@ class Orchestrator:
             out.update(status="failed", error=f"AI ishlamadi (limit, kalit yoki model nomi): {str(e)[:350]}")
         except Exception as e:  # noqa: BLE001 — vazifa jimgina yo'qolmasligi kerak
             await self.store.audit("orchestrator", "task_error", f"#{task_id}: {e!r}")
-            out.update(status="failed", error=f"Xatolik: {e}")
+            out.update(status="failed", error=f"Xatolik: {str(e)[:350]}")
         if out["status"] != "done":
             out["result"] = "\n\n".join(f"[{m['agent']}]\n{m['content']}" for m in await self.store.task_messages(task_id)
                                         if m["agent"] not in ("hr", "qa"))
             await self.store.update_task(task_id, status=out["status"], result=out["result"] or None, finished_at=now(),
                                          note=(out.get("error") or "")[:400] or None)
         out["files"] = self._files(ws)
-        await self._maybe_review(task_id, notify)
+        try:
+            await self._maybe_review(task_id, notify)
+        except Exception:  # noqa: BLE001 — HR tahlili natijaga ta'sir qilmasin
+            pass
         return out
 
     async def _run_guarded(self, task_id, request, notify, env) -> str:
@@ -228,12 +263,11 @@ class Orchestrator:
 
             async def work(s):
                 ctx = "\n\n".join(f"## {d}\n{clip(outputs[d])}" for d in s.get("depends_on", []) if d in outputs)
-                tier = s.get("tier") if s.get("tier") in TIERS else None
-                out = await self.team.run_agent(s["agent"], s["task"], ctx, task_id=task_id, tier=tier, env=env)
+                out = await self.team.run_agent(s["agent"], s["task"], ctx, task_id=task_id, tier=s.get("tier"), env=env)
                 await notify(f"✅ {s['agent']} tugatdi ({s['id']})")
                 return s["id"], out
 
-            for sid, out in await asyncio.gather(*(work(s) for s in ready)):
+            for sid, out in await self._gather_or_cancel([work(s) for s in ready]):
                 outputs[sid] = out
                 remaining.pop(sid)
 
@@ -249,6 +283,18 @@ class Orchestrator:
             deliverable = await self._synthesize(task_id, request, outputs, verdict.get("issues", []), "strong", env,
                                                  previous=deliverable)
         return deliverable
+
+    @staticmethod
+    async def _gather_or_cancel(coros):
+        """Parallel qadamlar: bittasi yiqilsa (limit, xato, to'xtatish), qolganlari ham to'xtatiladi, pul sarflanmaydi."""
+        tasks = [asyncio.ensure_future(c) for c in coros]
+        try:
+            return await asyncio.gather(*tasks)
+        except BaseException:
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     async def _plan(self, task_id, request, env) -> dict:
         roster = await self.team.roster()
@@ -267,14 +313,11 @@ class Orchestrator:
         for _ in range(2):
             raw = await self.team.run_agent("ceo", prompt, task_id=task_id, env=env)
             try:
-                plan = extract_json(raw)
-                steps = [s for s in plan["steps"] if s.get("id") and s.get("agent") and s.get("task")]
-                if steps:
-                    plan["steps"] = steps
-                    plan.setdefault("new_roles", [])
+                plan = normalize_plan(extract_json(raw))
+                if plan["steps"]:
                     return plan
                 last_err = "steps bo'sh"
-            except (ValueError, KeyError, TypeError) as e:
+            except (ValueError, KeyError, TypeError, AttributeError) as e:
                 last_err = e
             prompt += "\n\nYour previous answer was not valid JSON in the required shape. Return ONLY the JSON."
         raise RuntimeError(f"Rahbar yaroqli reja tuza olmadi: {last_err}")
@@ -317,7 +360,11 @@ class Orchestrator:
                   "business details or decisions that will matter in FUTURE tasks. No task content. "
                   "Empty list if nothing durable."}],
                 task_id=task_id, agent="memory")
-            for fact in extract_json(res.text).get("facts", [])[:2]:
-                await self.store.add_memory(str(fact), source=f"task#{task_id}")
-        except (ValueError, TypeError, BudgetExhausted, TaskBudgetExceeded):
-            return  # xotira yozilmasa vazifa natijasiga ta'sir qilmaydi
+            facts = extract_json(res.text).get("facts", [])
+            for fact in (facts if isinstance(facts, list) else [])[:2]:
+                if str(fact).strip():
+                    await self.store.add_memory(str(fact), source=f"task#{task_id}")
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — xotira ixtiyoriy: tayyor vazifa hech qachon shu sabab "xato" bo'lmasin
+            return
