@@ -1,0 +1,21 @@
+[Unit]
+Description=AI Jamoa (agentlar, bot, panel)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=aijamoa
+WorkingDirectory=/opt/aijamoa/src
+EnvironmentFile=/opt/aijamoa/src/.env
+ExecStart=/opt/aijamoa/venv/bin/python -m aicompany run
+Restart=always
+RestartSec=5
+# Agent buyruq ishga tushiradi: tizimga zarar yetkazmasin
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/aijamoa
+
+[Install]
+WantedBy=multi-user.target
