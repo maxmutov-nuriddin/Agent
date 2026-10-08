@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-p";
+const PANEL_V = "2026.10.09-q";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -748,7 +748,8 @@ function drawPlans({ rems, plans }) {
   return [head("Eslatma va rejalar", liveTag()), seg, h("div", { class: "plans-wrap" }, remSec, planSec)];
 }
 async function loadStats() {
-  const [state, spend, mem, integ, loc, rems] = await Promise.all([api("/state"), api("/spend"), api("/memory"), api("/integrations"), api("/location"), api("/reminders")]);
+  const [state, spend, mem, integ, loc] = await Promise.all([api("/state"), api("/spend"), api("/memory"), api("/integrations"), api("/location")]);
+  const rems = [];
   S.state = state; renderTabs(); return { state, spend, mem, integ, loc, rems };
 }
 const tick = (ok) => (ok ? "✓" : "✕");
@@ -1108,8 +1109,38 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
   const pause = h("button", { class: "btn full " + (state.paused ? "lime" : "red"), onclick: async () => { await post(state.paused ? "/resume" : "/pause"); refresh(true); } },
     state.paused ? "▶ Davom ettirish" : "⏸ Hammasini to'xtatish");
   const delMem = async (id) => { try { await api("/memory/" + id, { method: "DELETE" }); toast("O'chirildi"); refresh(true); } catch (e) { toast(e.message); } };
-  return [head("Hisob", liveTag()),
-    h("div", { class: "money" }, h("b", {}, usd(left)), h("span", {}, `qolgan byudjet · bugun ${usd(state.today)}`)), ...provs,
+  const tab = S.statTab || "report";
+  const seg = h("div", { class: "seg" }, [["report", "📊 Hisobot"], ["settings", "⚙️ Sozlamalar"]].map(([k, l]) =>
+    h("button", { class: tab === k ? "on" : "", onclick: () => { S.statTab = k; $("view").scrollTop = 0; refresh(true); } }, l)));
+  const ver = h("p", { class: "hint ver" }, "Versiya: " + (state.version || "?") + " · panel " + PANEL_V);
+  if (tab === "report") {
+    return [head("Hisob", liveTag()), seg,
+      h("div", { class: "money" }, h("b", {}, usd(left)), h("span", {}, `qolgan byudjet · bugun ${usd(state.today)}`)), ...provs,
+      h("div", { class: "acts" }, h("button", { class: "btn", onclick: showReport }, "📊 Kunlik hisobot"), h("button", { class: "btn", onclick: showAudit }, "🧾 Jurnal")),
+      spend.length ? h("div", { class: "label" }, "Agentlar sarfi") : null,
+      ...spend.slice(0, 8).map((r) => h("div", { class: "item" }, h("div", { class: "grow" }, h("h3", {}, r.agent)), h("span", { class: "muted" }, usd(r.cost)))),
+      h("div", { class: "label" }, "Xotira"),
+      ...mem.slice(0, 8).map((m) => h("div", { class: "item" }, h("div", { class: "grow" }, h("p", {}, (m.source === "owner-pref" ? "📌 " : "") + m.text)),
+        h("button", { class: "btn red sm", onclick: () => delMem(m.id), "aria-label": "O'chirish" }, "✕"))),
+      mem.length ? null : h("p", { class: "hint" }, "Hozircha bo'sh."),
+      h("button", { class: "btn ghost full", onclick: memoryAdd }, "+ Xotiraga qo'shish"),
+      h("p", { class: "hint" }, "📌 — doimiy qoidalaringiz. Eslatmalar endi «Rejalar» sahifasida."),
+      h("div", { class: "label" }, "Boshqaruv"), pause, ver];
+  }
+  const checkOut = h("div", { class: "card checks" }, h("p", { class: "muted sm" }, "Hammasi bir bosishda tekshiriladi: baza, AI kalitlari, byudjet, Telegram, qo'ng'iroq, bildirishnoma, zaxira nusxa, disk. AI ishlatilmaydi."));
+  const runCheck = async (btn) => {
+    btn.disabled = true; btn.textContent = "Tekshirilmoqda…";
+    try {
+      const rows = await api("/selfcheck");
+      checkOut.replaceChildren(...rows.map((r) => h("div", { class: "kv" },
+        h("span", {}, (r.ok === true ? "✅ " : r.ok === false ? "❌ " : "⚪️ ") + r.name), h("span", { class: "muted" }, r.note))));
+    } catch (e) { toast(e.message); }
+    btn.disabled = false; btn.textContent = "🩺 Tizimni tekshirish";
+  };
+  const checkBtn = h("button", { class: "btn lime" }, "🩺 Tizimni tekshirish"); checkBtn.onclick = () => runCheck(checkBtn);
+  return [head("Hisob", liveTag()), seg,
+    h("div", { class: "label" }, "Tekshiruvlar"),
+    h("div", { class: "acts" }, checkBtn, h("button", { class: "btn", onclick: showModels }, "🔎 Modellarni tekshirish")), checkOut,
     primary,
     h("div", { class: "label" }, "Xarajat"),
     h("div", { class: "seg" },
@@ -1126,29 +1157,15 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
         try { await post("/bot_push", { mode: v }); toast("Bot: " + l); refresh(true); } catch (e) { toast(e.message); } } }, l))),
     h("p", { class: "hint" }, { all: "Bot jarayon xabarlari va natijani yuboradi.", result: "Bot faqat tugagan natijani yuboradi, jarayon xabarlari yo'q.", off: "Bot natijani o'zi yubormaydi, natija panelda. Unga yozib so'rasangiz javob beradi. Tasdiqlar va eslatmalar baribir keladi." }[state.bot_push || "all"]),
     h("div", { class: "label" }, "Ulanishlar"), links,
-    h("div", { class: "label" }, "Limitlar"), limits,
     h("div", { class: "label" }, "Joylashuv"), where,
-    spend.length ? h("div", { class: "label" }, "Agentlar sarfi") : null,
-    ...spend.slice(0, 6).map((r) => h("div", { class: "item" }, h("div", { class: "grow" }, h("h3", {}, r.agent)), h("span", { class: "muted" }, usd(r.cost)))),
-    h("div", { class: "label" }, "Eslatmalar"),
-    ...rems.map((r) => h("div", { class: "item" }, h("div", { class: "grow" }, h("h3", {}, "⏰ " + r.local), h("p", {}, r.text)),
-      h("button", { class: "btn red sm", onclick: async () => { try { await api("/reminders/" + r.id, { method: "DELETE" }); toast("Bekor qilindi"); refresh(true); } catch (e) { toast(e.message); } }, "aria-label": "Bekor qilish" }, "✕"))),
-    rems.length ? null : h("p", { class: "hint" }, "Kutilayotgan eslatma yo'q."),
-    h("button", { class: "btn ghost full", onclick: reminderAdd }, "+ Eslatma qo'yish"),
-    h("div", { class: "label" }, "Xotira"),
-    ...mem.slice(0, 8).map((m) => h("div", { class: "item" }, h("div", { class: "grow" }, h("p", {}, m.text)),
-      h("button", { class: "btn red sm", onclick: () => delMem(m.id), "aria-label": "O'chirish" }, "✕"))),
-    mem.length ? null : h("p", { class: "hint" }, "Hozircha bo'sh."),
-    h("button", { class: "btn ghost full", onclick: memoryAdd }, "+ Xotiraga qo'shish"),
-    h("div", { class: "label" }, "Boshqaruv"),
-    h("div", { class: "acts" }, h("button", { class: "btn", onclick: showReport }, "📊 Hisobot"), h("button", { class: "btn", onclick: showAudit }, "🧾 Jurnal")),
-    h("div", { class: "acts" }, h("button", { class: "btn", onclick: showModels }, "🔎 Modellarni tekshirish"), h("button", { class: "btn", onclick: showWidget }, "📱 iPhone vidjeti")),
-    pause, h("div", { class: "label" }),
-    h("button", { class: "btn ghost full", onclick: () => { localStorage.removeItem("aij_token"); localStorage.removeItem("aij_cache"); S.token = ""; location.reload(); } }, "Chiqish"),
+    h("div", { class: "label" }, "Limitlar"), limits,
+    h("div", { class: "label" }, "Ilova"),
+    h("div", { class: "acts" }, h("button", { class: "btn", onclick: showWidget }, "📱 iPhone vidjeti"), h("button", { class: "btn ghost", onclick: hardRefresh }, "🔄 Kuchli yangilash")),
+    h("p", { class: "hint" }, "Yangi versiya chiqqanda eski nusxa qolib ketsa, «Kuchli yangilash» ni bosing: kesh tozalanadi, kirish saqlanadi. Telefonda ekranni tepadan pastga tortsangiz ham yangilanadi."),
     h("div", { class: "label" }, "Telefonga o'rnatish"), installCard(),
-    h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: hardRefresh }, "🔄 Kuchli yangilash")),
-    h("p", { class: "hint" }, "Yangi versiya chiqqanda eski nusxa qolib ketsa, shuni bosing: kesh tozalanadi, kirish saqlanadi. Telefonda ekranni tepadan pastga tortsangiz ham yangilanadi."),
-    h("p", { class: "hint ver" }, "Versiya: " + (state.version || "?") + " · panel " + PANEL_V), h("p", { class: "hint ver" }, viewportInfo())];
+    h("div", { class: "label" }),
+    h("button", { class: "btn ghost full", onclick: () => { localStorage.removeItem("aij_token"); localStorage.removeItem("aij_cache"); S.token = ""; location.reload(); } }, "Chiqish"),
+    ver, h("p", { class: "hint ver" }, viewportInfo())];
 }
 
 // ---------- Chat (to'liq ekran) ----------

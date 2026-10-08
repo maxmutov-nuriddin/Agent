@@ -39,6 +39,7 @@ def _version() -> str:
 
 VERSION = _version()
 STARTED = time.monotonic()
+PROV_NAMES = {"anthropic": "Claude", "gemini": "Gemini", "openai": "ChatGPT"}
 STATIC = Path(__file__).parent / "webui"
 STATIC_FILES = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css",
                 "/sw.js": "sw.js", "/manifest.webmanifest": "manifest.webmanifest",
@@ -924,6 +925,59 @@ def make_web_app(app: App) -> web.Application:
             "location": loc,
             "last_task": ({"id": recent[0]["id"], "status": recent[0]["status"], "request": recent[0]["request"][:60]} if recent else None)})
 
+    async def h_selfcheck(request):
+        """Sozlamalar → «Tizimni tekshirish»: hamma qism bir joyda, AI so'rovisiz (token sarflanmaydi)."""
+        out = []
+
+        def add(name, ok, note):
+            out.append({"name": name, "ok": ok, "note": note})
+        t0 = time.monotonic()
+        try:
+            await app.store.get_kv("health")
+            add("Baza", True, f"{'Supabase/Postgres' if app.store.remote else 'SQLite'}, javob {round((time.monotonic() - t0) * 1000)} ms")
+        except Exception as e:  # noqa: BLE001
+            add("Baza", False, str(e)[:120])
+        provs = sorted(app.router.providers)
+        add("AI kalitlari", bool(provs), ", ".join(PROV_NAMES.get(p, p) for p in provs) or "hech biri ulanmagan")
+        st = await app.router.status()
+        low = [n for n, v in st.items() if v["enabled"] and v["budget"] and v["spent"] >= v["budget"] * 0.9]
+        add("Byudjet", not low, "yetarli" if not low else "90% dan oshdi: " + ", ".join(low))
+        add("Telegram bot", bool(s.telegram_token), "ulangan" if s.telegram_token else "TELEGRAM_BOT_TOKEN yo'q")
+        tg, lst = app.tg, app.listener
+        if tg and tg.configured():
+            add("Telegram akkaunt", bool(lst and lst.active()), (tg.me or "ulangan") + (" · tinglayapti" if lst and lst.active() else " · tinglash ishlamayapti"))
+        else:
+            add("Telegram akkaunt", None, "ulanmagan (ixtiyoriy)")
+        if app.calls:
+            c = await app.calls.status()
+            add("Ovozli qo'ng'iroq", (c.get("ready") or None) if c.get("enabled") else None,
+                "tayyor" if c.get("ready") else c.get("error") or ("o'chiq" if not c.get("enabled") else
+                "Telegram akkaunt ulanmagan" if not (tg and tg.configured()) else "ishga tushmoqda"))
+        if app.push:
+            n = len(await app.push.subs())
+            add("Bildirishnomalar", n > 0 or None, f"{n} ta qurilma" if n else "hech qaysi qurilmada yoqilmagan")
+        from .briefing import settings_of
+        m = await settings_of(app.store)
+        add("Ertalabki xulosa", m["on"] or None, f"har kuni {m['time']}" if m["on"] else "o'chiq")
+        bdir = Path("/opt/aijamoa/backups")
+        if bdir.is_dir():
+            files = sorted(bdir.glob("aijamoa-*"), key=lambda f: f.stat().st_mtime)
+            if files:
+                age_h = (time.time() - files[-1].stat().st_mtime) / 3600
+                add("Zaxira nusxa", age_h < 30, f"oxirgisi {round(age_h)} soat oldin, jami {len(files)} ta")
+            else:
+                add("Zaxira nusxa", False, "nusxa yo'q")
+        else:
+            add("Zaxira nusxa", None, "sozlanmagan (deploy/install-backup.sh)")
+        try:
+            du = shutil.disk_usage(s.workspace_dir)
+            free = du.free / 2**30
+            add("Disk", free > 2, f"{free:.1f} GB bo'sh")
+        except OSError:
+            pass
+        add("Versiya", True, f"{VERSION} · ishlayapti {round((time.monotonic() - STARTED) / 3600, 1)} soat")
+        return json_ok(out)
+
     async def h_health(request):
         """Tokensiz: xosting (Render) va UptimeRobot uchun. Maxfiy ma'lumot qaytarmaydi."""
         ok = True
@@ -940,7 +994,7 @@ def make_web_app(app: App) -> web.Application:
     for path in STATIC_FILES:
         a.router.add_get(path, static)
     a.add_routes([
-        web.get("/api/state", h_state), web.get("/api/team", h_team), web.get("/api/overview", h_overview),
+        web.get("/api/state", h_state), web.get("/api/selfcheck", h_selfcheck), web.get("/api/team", h_team), web.get("/api/overview", h_overview),
         web.post("/api/team/hire", h_hire), web.post("/api/team/fire", h_fire),
         web.get("/api/tasks", h_tasks), web.get(r"/api/tasks/{id:\d+}", h_task),
         web.get(r"/api/tasks/{id:\d+}/files/{path:.+}", h_file),
