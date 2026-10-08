@@ -39,7 +39,7 @@ class MockProvider(Provider):
 
 def settings(**env):
     base = {"ANTHROPIC_API_KEY": "x", "OPENAI_API_KEY": "x", "GEMINI_API_KEY": "x",
-            "DATABASE_URL": "sqlite+aiosqlite:///:memory:", "MAX_TASK_USD": "1",
+            "DATABASE_URL": "sqlite+aiosqlite:///" + tempfile.mkdtemp(prefix="aic_db_") + "/t.db", "MAX_TASK_USD": "1",
             "WORKSPACE_DIR": tempfile.mkdtemp(prefix="aic_ws_")}
     return load_settings({**base, **env})
 

@@ -234,3 +234,5 @@ textarea.big { min-height: 140px; }
 @media (max-height: 500px) { .mic { width: 42px; height: 42px; } }
 
 .ver { text-align: center; margin-top: 18px; font-size: 12px; }
+
+.seg button.off { opacity: .4; }

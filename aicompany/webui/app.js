@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-d";
+const PANEL_V = "2026.10.08-e";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], stopped: ["To'xtatildi", "amber"],
@@ -240,13 +240,21 @@ function drawStats({ state, spend, mem }) {
   });
   const pause = h("button", { class: "btn full " + (state.paused ? "lime" : "red"), onclick: async () => { await post(state.paused ? "/resume" : "/pause"); refresh(true); } },
     state.paused ? "▶ Davom ettirish" : "⏸ Hammasini to'xtatish");
-  const choices = state.providers.length > 1 ? ["auto", ...state.providers] : [];
+  // Tanlov doim ko'rinadi; kaliti yo'q AI xira va bosilganda tushuntiradi
+  const known = ["anthropic", "gemini"];
+  const have = new Set(state.providers);
   const setPrimary = async (v) => { try { await post("/provider", { primary: v }); toast("Asosiy AI: " + PROV[v]); refresh(true); } catch (e) { toast(e.message); } };
+  const opt = (c) => {
+    const enabled = c === "auto" || have.has(c), active = (state.primary || "auto") === c;
+    const b = h("button", { class: (active ? "on " : "") + (enabled ? "" : "off"), onclick: () => (enabled ? setPrimary(c) : toast(PROV[c] + " kaliti yo'q: .env ga qo'shing")) }, PROV[c] + (enabled ? "" : " ✕"));
+    return b;
+  };
+  const connected = known.filter((k) => have.has(k)).map((k) => PROV[k]);
   const primary = h("div", {}, h("div", { class: "label" }, "Asosiy AI"),
-    choices.length
-      ? h("div", { class: "seg" }, choices.map((c) => h("button", { class: (state.primary || "auto") === c ? "on" : "", onclick: () => setPrimary(c) }, PROV[c] || c)))
-      : h("p", { class: "hint" }, (PROV[state.providers[0]] || "Hech biri") + " ulangan. Ikkinchisini qo'shish uchun .env ga kalit qo'ying."),
-    choices.length ? h("p", { class: "hint" }, "Avto = eng arzonidan boshlaydi. Tanlangan AI birinchi ishlaydi, ikkinchisi zaxira.") : null);
+    h("div", { class: "seg" }, ["auto", ...known].map(opt)),
+    h("p", { class: "hint" }, (connected.length ? "Ulangan: " + connected.join(", ") + ". " : "Hech qanday AI ulanmagan. ") +
+      (connected.length < known.length ? "Ikkinchisini qo'shish uchun .env ga kalit qo'ying. " : "") +
+      "Avto = eng arzonidan boshlaydi; tanlangani birinchi, boshqasi zaxira."));
   return [head("Hisob", liveTag()),
     h("div", { class: "money" }, h("b", {}, usd(left)), h("span", {}, `qolgan byudjet · bugun ${usd(state.today)}`)), ...provs,
     primary,

@@ -117,6 +117,13 @@ class Store:
         if url.startswith("sqlite") and ":memory:" not in url:
             Path(url.split("///", 1)[1]).parent.mkdir(parents=True, exist_ok=True)
         self.engine = create_async_engine(url, connect_args={"timeout": 30} if url.startswith("sqlite") else {})
+        if url.startswith("sqlite") and ":memory:" not in url:
+            @sa.event.listens_for(self.engine.sync_engine, "connect")
+            def _pragmas(dbapi_conn, _):  # parallel o'qish/yozish uchun (agentlar bir vaqtda ishlaydi)
+                cur = dbapi_conn.cursor()
+                cur.execute("PRAGMA journal_mode=WAL")
+                cur.execute("PRAGMA synchronous=NORMAL")
+                cur.close()
 
     async def init(self):
         async with self.engine.begin() as c:

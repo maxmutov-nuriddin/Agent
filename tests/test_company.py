@@ -183,3 +183,27 @@ async def test_old_database_is_migrated_without_data_loss(tmp_path):
     await store.set_archived(7, True)
     assert await store.list_tasks() == [] and len(await store.list_tasks(archived=True)) == 1
     await store.close()
+
+
+async def test_file_database_survives_heavy_concurrent_use(make_app):
+    """Agentlar, veb-so'rovlar va Telegram bir vaqtda bazaga yozadi/o'qiydi: hech narsa yo'qolmasligi kerak."""
+    import asyncio
+    app, _ = await make_app(scripted_company())
+    st = app.store
+
+    async def writer(i):
+        await st.add_chat(1, "sys", f"m{i}")
+        await st.add_usage("anthropic", "m", None, f"a{i % 5}", 1, 1, 0, 0.001)
+        await st.add_memory(f"fact {i}")
+        await st.set_kv(f"k{i % 7}", str(i))
+
+    async def reader(_):
+        await st.recent_chat(1, 10)
+        await st.spent("anthropic")
+        await st.list_agents()
+        await st.search_memories("fact", 3)
+
+    await asyncio.gather(*[writer(i) if i % 2 else reader(i) for i in range(120)], *[writer(1000 + i) for i in range(40)])
+    assert len(await st.chat_since(1, 0, 500)) == 60 + 40
+    assert round(await st.spent("anthropic"), 6) == round(0.001 * 100, 6)
+    assert len(await st.recent_memories(500)) == 100

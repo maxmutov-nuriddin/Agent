@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import shutil
 import socket
 import time
@@ -40,6 +41,7 @@ CTYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=
 CSP = ("default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; "
        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'; manifest-src 'self'; worker-src 'self'")
 MAX_FAILS, FAIL_WINDOW = 8, 60
+log = logging.getLogger("web")
 
 
 def lan_ip() -> str:
@@ -248,6 +250,13 @@ def make_web_app(app: App) -> web.Application:
         payload = {"task_id": res["task_id"], "status": res["status"], "text": res.get("result") or ""}
         await app.store.add_chat(chat_id, "result", json.dumps(payload, ensure_ascii=False))
 
+    async def report_failure(e: Exception):
+        log.exception("veb vazifa/suhbat xatosi")
+        try:
+            await app.store.add_chat(chat_id, "sys", f"Xatolik: {e}")
+        except Exception:  # noqa: BLE001 — baza ham ishlamasa, kamida logda qoladi
+            log.exception("xatoni suhbatga yozib bo'lmadi")
+
     def text_of(d: dict) -> str:
         text = str(d.get("text", "")).strip()
         if not text or len(text) > 4000:
@@ -262,7 +271,7 @@ def make_web_app(app: App) -> web.Application:
             try:
                 await app.orch.handle(text, chat_id, notify, allow_tasks=False)
             except Exception as e:  # noqa: BLE001
-                await app.store.add_chat(chat_id, "sys", f"Xatolik: {e}")
+                await report_failure(e)
         spawn(job())
         return json_ok({"ok": True})
 
@@ -274,7 +283,7 @@ def make_web_app(app: App) -> web.Application:
             try:
                 await post_result(await app.orch.submit_task(text, chat_id, notify))
             except Exception as e:  # noqa: BLE001
-                await app.store.add_chat(chat_id, "sys", f"Xatolik: {e}")
+                await report_failure(e)
         spawn(job())
         return json_ok({"ok": True})
 
