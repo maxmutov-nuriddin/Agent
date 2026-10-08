@@ -187,3 +187,31 @@ async def test_approval_rows_and_audit_recorded(env):
     assert [(r["description"], r["status"]) for r in rows] == [("rm -rf /", "denied"), ("echo ok", "approved")]
     audit = await env.store._all(sa.text("select detail from audit_log where action='run_command' order by id"))
     assert audit[0]["detail"].startswith("DENIED") and audit[1]["detail"].startswith("APPROVED")
+
+
+# ---------- rad etish va muddat tugashi sabablari ----------
+async def test_denied_and_expired_have_different_reasons_everywhere(env):
+    import asyncio
+    from aicompany.approvals import ApprovalCenter
+    msgs = []
+
+    async def notify(t):
+        msgs.append(t)
+    env.notify = notify
+    center = ApprovalCenter(timeout=0.15)
+    env.approver = center
+
+    t = asyncio.create_task(TOOLS["run_command"].handler(env, {"command": "rm -rf build"}))
+    await asyncio.sleep(0.05)
+    center.resolve(1, False)                                   # egasi rad etdi
+    with pytest.raises(ToolError, match="rad etdi"):
+        await t
+    with pytest.raises(ToolError, match="javob bermadi"):     # hech kim javob bermadi
+        await TOOLS["run_command"].handler(env, {"command": "npm install"})
+    env.approver = AutoApprover(True)
+    assert "hi" in await TOOLS["run_command"].handler(env, {"command": "echo hi"})
+
+    import sqlalchemy as sa
+    rows = await env.store._all(sa.text("select description, status from approvals order by id"))
+    assert [(r["description"], r["status"]) for r in rows] == [("rm -rf build", "denied"), ("npm install", "expired"), ("echo hi", "approved")]
+    assert msgs[0].startswith("✕ Siz buyruqni rad etdingiz") and msgs[1].startswith("⏱") and msgs[2].startswith("✅")

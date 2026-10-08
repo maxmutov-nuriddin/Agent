@@ -33,6 +33,7 @@ class ToolEnv:
     agent: str = "?"
     approver: Approver = field(default_factory=DenyApprover)
     http: httpx.AsyncClient | None = None
+    notify: Any = None  # async (matn) -> None: egasiga xabar (Telegram/panel)
 
 
 @dataclass(frozen=True)
@@ -183,10 +184,20 @@ async def run_command(env, a):
         raise ToolError("bo'sh buyruq")
     aid = await env.store.create_approval(env.task_id, env.agent, cmd)
     ok = await env.approver.ask(aid, env.task_id, env.agent, cmd)
-    await env.store.decide_approval(aid, "approved" if ok else "denied")
-    await env.store.audit(env.agent, "run_command", f"{'APPROVED' if ok else 'DENIED'}: {cmd[:300]}")
+    timed_out = (not ok) and aid in getattr(env.approver, "expired", set())
+    status = "approved" if ok else "expired" if timed_out else "denied"
+    await env.store.decide_approval(aid, status)
+    await env.store.audit(env.agent, "run_command", f"{status.upper()}: {cmd[:300]}")
+    if env.notify:
+        text = {"approved": "✅ Buyruqqa ruxsat berildi", "denied": "✕ Siz buyruqni rad etdingiz",
+                "expired": "⏱ Buyruqqa javob berilmadi (muddat tugadi), bajarilmadi"}[status]
+        try:
+            await env.notify(f"{text}: {cmd[:120]}")
+        except Exception:  # noqa: BLE001 — xabar yetmasa ham ish davom etadi
+            pass
     if not ok:
-        raise ToolError("egasi buyruqni rad etdi yoki javob bermadi; boshqa yo'l tanlang")
+        raise ToolError("egasi buyruqni rad etdi; boshqa yo'l tanlang" if not timed_out
+                        else "egasi belgilangan vaqtda javob bermadi, buyruq bajarilmadi; boshqa yo'l tanlang yoki keyinroq so'rang")
     # API kalitlari va boshqa sirlar bolalar jarayoniga o'tmaydi
     clean = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(env.workspace), "LANG": "C.UTF-8"}
     proc = await asyncio.create_subprocess_shell(

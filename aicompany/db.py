@@ -331,6 +331,9 @@ class Store:
         await self._exec(sa.update(approvals).where(approvals.c.id == approval_id)
                          .values(status=status, decided_at=now()))
 
+    async def task_approvals(self, task_id):
+        return await self._all(sa.select(approvals).where(approvals.c.task_id == task_id).order_by(approvals.c.id))
+
     # audit
     async def audit(self, actor, action, detail=""):
         await self._exec(sa.insert(audit_log).values(ts=now(), actor=actor, action=action, detail=detail))

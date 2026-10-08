@@ -401,3 +401,15 @@ async def test_result_card_payload_stays_valid_json_even_for_huge_results(web):
             break
     payload = json.loads(next(r["text"] for r in rows if r["role"] == "result"))   # kesilmagan, yaroqli JSON
     assert payload["task_id"] == 1 and len(payload["text"]) == 500 and payload["files"] == ["index.html", "css/style.css"]
+
+
+async def test_task_detail_lists_approval_decisions(web):
+    c, app = web
+    tid = await app.store.create_task(1, "x")
+    a1 = await app.store.create_approval(tid, "developer", "rm -rf /")
+    a2 = await app.store.create_approval(tid, "developer", "npm install")
+    await app.store.decide_approval(a1, "denied")
+    await app.store.decide_approval(a2, "expired")
+    ap = (await get(c, f"/api/tasks/{tid}"))[1]["approvals"]
+    assert [(a["command"], a["status"]) for a in ap] == [("rm -rf /", "denied"), ("npm install", "expired")]
+    assert "Siz rad etdingiz" in (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()

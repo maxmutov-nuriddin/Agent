@@ -202,6 +202,8 @@ def make_web_app(app: App) -> web.Application:
         msgs = await app.store.task_messages(t["id"])
         return json_ok({"id": t["id"], "status": t["status"], "request": t["request"], "result": t["result"],
                         "archived": bool(t["archived"]), "note": t["note"],
+                        "approvals": [{"agent": a["agent"], "command": a["description"], "status": a["status"],
+                                       "at": a["decided_at"] or a["created_at"]} for a in await app.store.task_approvals(t["id"])],
                         "cost": round(await app.store.spent_task(t["id"]), 4), "files": task_files(t["id"]),
                         "messages": [{"agent": m["agent"], "content": clip(m["content"] or "", 6000)} for m in msgs]})
 

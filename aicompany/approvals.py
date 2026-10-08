@@ -43,6 +43,7 @@ class ApprovalCenter(Approver):
         self.timeout = timeout if timeout is not None else APPROVAL_TIMEOUT
         self.pending: dict[int, dict] = {}
         self.announcers: list[Announcer] = []
+        self.expired: set[int] = set()  # javob berilmagan (muddati o'tgan) so'rovlar
 
     async def ask(self, approval_id, task_id, agent, description) -> bool:
         fut = asyncio.get_running_loop().create_future()
@@ -56,6 +57,7 @@ class ApprovalCenter(Approver):
                     continue
             return await asyncio.wait_for(fut, self.timeout)
         except asyncio.TimeoutError:
+            self.expired.add(approval_id)
             return False
         finally:
             self.pending.pop(approval_id, None)

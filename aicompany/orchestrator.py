@@ -155,7 +155,7 @@ class Orchestrator:
         if attachments:
             request += "\n\n[Attached files in the workspace: " + ", ".join(Path(a).name for a in attachments) + "]"
         env = ToolEnv(workspace=ws, store=self.store, settings=self.settings, task_id=task_id,
-                      approver=self.approver)
+                      approver=self.approver, notify=notify)
         await notify(f"📝 Vazifa #{task_id} qabul qilindi. Rahbar rejalashtiryapti...")
         out = {"task_id": task_id, "workspace": str(ws)}
         try:

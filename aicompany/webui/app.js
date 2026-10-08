@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-f";
+const PANEL_V = "2026.10.08-g";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -17,6 +17,7 @@ const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato
 const WHY = { done: "", running: "", failed: "Vazifa xato bilan tugadi.", cancelled: "Siz uni qo'lda to'xtatdingiz. Bajarilgan qismi saqlangan.",
   limit: "Bitta vazifa uchun ajratilgan pul limiti tugadi. .env dagi MAX_TASK_USD ni oshirishingiz mumkin.", paused: "Hammasi pauzaga qo'yilgan edi.",
   interrupted: "Dastur qayta ishga tushganda vazifa o'rtada uzilgan.", stopped: "" };
+const APPR = { approved: ["✓ Ruxsat berdingiz", ""], denied: ["✕ Siz rad etdingiz", "red"], expired: ["⏱ Javob bermadingiz (muddat tugadi)", "amber"], pending: ["Javob kutilmoqda", ""] };
 const TEXT_EXT = /\.(txt|md|html?|css|js|mjs|json|py|ts|tsx|jsx|csv|xml|ya?ml|sh|sql|java|c|cpp|h|go|rs|php|rb|svg|toml|ini|log)$/i;
 const S = { token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, archive: false };
 
@@ -220,6 +221,9 @@ async function openTask(id) {
   openSheet(h("h2", {}, "Vazifa #" + t.id), h("p", { class: "muted" }, `${label} · ${usd(t.cost)}${t.archived ? " · arxivda" : ""}`),
     why || t.note ? h("p", { class: "note" + (t.status === "failed" ? " red" : "") }, [why, t.note].filter(Boolean).join(" ")) : null, h("p", {}, t.request),
     h("div", { class: "acts" }, acts),
+    t.approvals && t.approvals.length ? h("div", { class: "label" }, "Ruxsat so'rovlari") : null,
+    ...(t.approvals || []).map((a) => { const [txt, tone] = APPR[a.status] || [a.status, ""];
+      return h("div", { class: "step" }, h("b", {}, a.agent + " · " + txt), h("div", {}, a.command.slice(0, 200))); }),
     h("div", { class: "label" }, "Natija"), h("div", { class: "pre" }, t.result || "(hali natija yo'q)"),
     files.length ? h("div", { class: "label" }, "Fayllar") : null, files.length ? h("div", { class: "pills" }, files) : null,
     h("div", { class: "label" }, "Jamoa ishi"),
