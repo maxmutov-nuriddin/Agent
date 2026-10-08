@@ -364,6 +364,19 @@ class Store:
                                .where(usage.c.ts >= since_iso).group_by(day).order_by(day))
         return [{"day": r["day"], "cost": float(r["cost"] or 0)} for r in rows]
 
+    async def daily_spend_local(self, since_iso: str, tz) -> list[dict]:
+        """Kunlik sarf MAHALLIY sana bo'yicha (tunda UTC sanasi bilan farq qilmasin)."""
+        from datetime import datetime
+        rows = await self._all(sa.select(usage.c.ts, usage.c.cost_usd).where(usage.c.ts >= since_iso))
+        out: dict[str, float] = {}
+        for r in rows:
+            try:
+                d = datetime.fromisoformat(r["ts"]).astimezone(tz).date().isoformat()
+            except (ValueError, TypeError):
+                continue
+            out[d] = out.get(d, 0.0) + float(r["cost_usd"] or 0)
+        return [{"day": d, "cost": c} for d, c in sorted(out.items())]
+
     async def spent_by_task(self, task_ids) -> dict[int, float]:
         if not task_ids:
             return {}

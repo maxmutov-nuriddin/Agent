@@ -208,7 +208,7 @@ def make_web_app(app: App) -> web.Application:
         days = [(today - timedelta(days=i)) for i in range(13, -1, -1)]
         since = day_start_utc(datetime.now(tz) - timedelta(days=13)).isoformat()
         state, team, spend, recent, rems = await asyncio.gather(
-            state_data(), team_data(), app.store.daily_spend(since), app.store.list_tasks(40), app.store.list_reminders(limit=6))
+            state_data(), team_data(), app.store.daily_spend_local(since, tz), app.store.list_tasks(40), app.store.list_reminders(limit=6))
         cost_by_day = {r["day"]: r["cost"] for r in spend}
         done_by_day: dict[str, int] = {}
         for t in recent:
@@ -881,13 +881,27 @@ def make_web_app(app: App) -> web.Application:
         return json_ok([{"agent": r["agent"], "cost": round(float(r["cost"]), 4)} for r in await app.store.spent_by_agent()])
 
     async def h_widget(request):
+        from .reminders import local_text
         st = await state_data()
-        tasks = await app.store.list_tasks(1)
+        recent = await app.store.list_tasks(12)
         left = sum(b["budget"] - b["spent"] for b in st["budgets"] if b["enabled"])
-        return json_ok({"working": [w["agent"] for w in st["working"]], "pending": st["pending"],
-                        "today": st["today"], "budget_left": round(left, 2), "paused": st["paused"],
-                        "last_task": ({"id": tasks[0]["id"], "status": tasks[0]["status"],
-                                       "request": tasks[0]["request"][:60]} if tasks else None)})
+        total = sum(b["budget"] for b in st["budgets"] if b["enabled"])
+        rems = await app.store.list_reminders(limit=3)
+        loc = None
+        try:
+            from .tools_ext import age_text, last_location
+            l = await last_location(app.store)
+            loc = {"age": age_text(l["ts"])} if l else None
+        except Exception:  # noqa: BLE001 — joylashuv vidjet uchun shart emas
+            pass
+        return json_ok({
+            "working": [w["agent"] for w in st["working"]], "pending": st["pending"], "today": st["today"],
+            "budget_left": round(left, 2), "budget_total": round(total, 2), "paused": st["paused"],
+            "done_today": st["done_today"], "running": [{"id": t["id"], "request": t["request"][:70]} for t in st["running_tasks"][:3]],
+            "failed": sum(1 for t in recent if t["status"] == "failed"),
+            "next_reminder": ({"text": rems[0]["text"][:60], "local": local_text(rems[0]["due_at"], s.report_tz)} if rems else None),
+            "location": loc,
+            "last_task": ({"id": recent[0]["id"], "status": recent[0]["status"], "request": recent[0]["request"][:60]} if recent else None)})
 
     async def h_health(request):
         """Tokensiz: xosting (Render) va UptimeRobot uchun. Maxfiy ma'lumot qaytarmaydi."""
