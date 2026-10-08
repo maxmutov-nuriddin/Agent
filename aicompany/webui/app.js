@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-b";
+const PANEL_V = "2026.10.09-c";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -155,6 +155,25 @@ function ago(iso) {
   if (!iso) return "";
   const s = (Date.now() - new Date(iso)) / 1000;
   return s < 60 ? "hozir" : s < 3600 ? Math.floor(s / 60) + " daq" : s < 86400 ? Math.floor(s / 3600) + " soat" : Math.floor(s / 86400) + " kun";
+}
+
+// ---------- iPhone'da o'rnatilgan ilova: oyna balandligini to'liq ekranga tenglash ----------
+// Ba'zi iOS holatlarida (bosh ekranga qo'shilgan ilova) layout balandligi ekrandan holat paneli qadar kam chiqadi
+// va pastda qora yo'l qoladi. Ekranning haqiqiy balandligini o'zimiz o'rnatamiz; oddiy brauzerda hech narsa o'zgarmaydi.
+const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+function fitViewport() {
+  const root = document.documentElement;
+  if (!isStandalone()) { root.style.removeProperty("--app-h"); return; }
+  const long = Math.max(screen.width, screen.height), short = Math.min(screen.width, screen.height);
+  const target = window.innerHeight > window.innerWidth ? long : short;
+  root.style.setProperty("--app-h", Math.max(window.innerHeight, target) + "px");
+}
+fitViewport();
+for (const ev of ["resize", "orientationchange", "pageshow", "visibilitychange"]) window.addEventListener(ev, () => setTimeout(fitViewport, ev === "orientationchange" ? 250 : 0));
+function viewportInfo() {  // Hisob sahifasi oxirida: muammo qolsa, shu raqamlar sababini ko'rsatadi
+  const probe = h("div", { style: "position:fixed;left:0;top:0;padding-bottom:env(safe-area-inset-bottom);padding-top:env(safe-area-inset-top);visibility:hidden" });
+  document.body.append(probe); const cs = getComputedStyle(probe); const sab = cs.paddingBottom, sat = cs.paddingTop; probe.remove();
+  return `ekran ${screen.width}×${screen.height} · oyna ${innerWidth}×${innerHeight} · xavfsiz zona ${sat}/${sab}${isStandalone() ? " · ilova rejimi" : ""}`;
 }
 
 // ---------- kirish ----------
@@ -921,7 +940,7 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     pause, h("div", { class: "label" }),
     h("button", { class: "btn ghost full", onclick: () => { localStorage.removeItem("aij_token"); localStorage.removeItem("aij_cache"); S.token = ""; location.reload(); } }, "Chiqish"),
     h("div", { class: "label" }, "Telefonga o'rnatish"), installCard(),
-    h("p", { class: "hint ver" }, "Versiya: " + (state.version || "?") + " · panel " + PANEL_V)];
+    h("p", { class: "hint ver" }, "Versiya: " + (state.version || "?") + " · panel " + PANEL_V), h("p", { class: "hint ver" }, viewportInfo())];
 }
 
 // ---------- Chat (to'liq ekran) ----------
