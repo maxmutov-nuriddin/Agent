@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-c";
+const PANEL_V = "2026.10.09-d";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -163,13 +163,21 @@ function ago(iso) {
 const isStandalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
 function fitViewport() {
   const root = document.documentElement;
-  if (!isStandalone()) { root.style.removeProperty("--app-h"); return; }
+  if (!isStandalone()) { for (const k of ["--app-h", "--app-top"]) root.style.removeProperty(k); root.classList.remove("kb"); return; }
   const long = Math.max(screen.width, screen.height), short = Math.min(screen.width, screen.height);
-  const target = window.innerHeight > window.innerWidth ? long : short;
-  root.style.setProperty("--app-h", Math.max(window.innerHeight, target) + "px");
+  const target = window.innerHeight > window.innerWidth ? long : short, full = Math.max(window.innerHeight, target);
+  const vv = window.visualViewport;
+  // Klaviatura ochiq: ko'rinadigan oyna to'liq balandlikdan ancha kichik -> ilova klaviatura tepasigacha qisqaradi
+  const kb = !!vv && vv.height < full - 120;
+  root.classList.toggle("kb", kb);
+  root.style.setProperty("--app-h", (kb ? vv.height : full) + "px");
+  root.style.setProperty("--app-top", (kb ? vv.offsetTop : 0) + "px");
+  if (!kb && window.scrollY) window.scrollTo(0, 0);  // klaviatura yopilgach iOS sahifani siljitib qo'yadi
 }
 fitViewport();
 for (const ev of ["resize", "orientationchange", "pageshow", "visibilitychange"]) window.addEventListener(ev, () => setTimeout(fitViewport, ev === "orientationchange" ? 250 : 0));
+if (window.visualViewport) for (const ev of ["resize", "scroll"]) window.visualViewport.addEventListener(ev, fitViewport);
+document.addEventListener("focusout", () => setTimeout(fitViewport, 150));
 function viewportInfo() {  // Hisob sahifasi oxirida: muammo qolsa, shu raqamlar sababini ko'rsatadi
   const probe = h("div", { style: "position:fixed;left:0;top:0;padding-bottom:env(safe-area-inset-bottom);padding-top:env(safe-area-inset-top);visibility:hidden" });
   document.body.append(probe); const cs = getComputedStyle(probe); const sab = cs.paddingBottom, sat = cs.paddingTop; probe.remove();

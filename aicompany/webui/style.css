@@ -15,7 +15,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 input, textarea { font: inherit; color: var(--text); }
 /* position: fixed + inset: 0 — iPhone'da bosh ekranga o'rnatilgan ilovada 100dvh holat paneli balandligicha
    kam chiqib, pastda bo'sh joy qolardi; fixed doim butun ekranni egallaydi (brauzerda ham bir xil) */
-#app { position: fixed; top: 0; bottom: auto; left: 0; right: 0; height: var(--app-h, 100%); display: flex; flex-direction: column; max-width: 560px; margin: 0 auto; }
+#app { position: fixed; top: var(--app-top, 0); bottom: auto; left: 0; right: 0; height: var(--app-h, 100%); display: flex; flex-direction: column; max-width: 560px; margin: 0 auto; }
 #view { flex: 1; overflow-y: auto; padding: calc(var(--sat) + 18px) 18px 24px; -webkit-overflow-scrolling: touch; }
 
 /* Sarlavhalar */
@@ -445,5 +445,7 @@ details.team summary { cursor: pointer; color: var(--muted); font-weight: 700; f
 
 /* iPhone ilova rejimi: butun ekranni egallaydigan qatlamlar ham haqiqiy ekran balandligini oladi (--app-h, app.js) */
 @media (max-width: 1099px) {
-  .chatpage, .sheet, .login, .chat-bg { height: var(--app-h, auto); }
+  .chatpage, .sheet, .login, .chat-bg { height: var(--app-h, auto); top: var(--app-top, 0); }
+  .kb .composer { padding-bottom: 8px; }           /* klaviatura ochiqda pastki xavfsiz zona kerak emas */
+  .kb .sheet-body { padding-bottom: 16px; }
 }
