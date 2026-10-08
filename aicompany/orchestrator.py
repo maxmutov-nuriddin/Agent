@@ -262,6 +262,12 @@ class Orchestrator:
             await self.store.update_task(task_id, status=out["status"], result=out["result"] or None, finished_at=now(),
                                          note=(out.get("error") or "")[:400] or None)
         out["files"] = self._files(ws)
+        if getattr(self.store, "remote", False):
+            try:
+                from .persist import save_workspace
+                await save_workspace(self.store, ws, task_id)
+            except Exception as e:  # noqa: BLE001 — saqlanmasa ham natija foydalanuvchiga yetadi
+                await self.store.audit("orchestrator", "save_files_error", f"#{task_id}: {e!r}"[:300])
         try:
             await self._maybe_review(task_id, notify)
         except Exception:  # noqa: BLE001 — HR tahlili natijaga ta'sir qilmasin

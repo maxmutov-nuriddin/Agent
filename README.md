@@ -121,7 +121,14 @@ Router vazifa darajasiga (cheap/mid/strong) qarab eng arzon provayderni tanlaydi
 4. **Uxlamasligi uchun:** UptimeRobot → HTTP(s) monitor → `https://<nom>.onrender.com/health`, har 5 daqiqa. Javob: `{"ok": true, ...}` (tokensiz, maxfiy ma'lumotsiz).
 5. **Bir vaqtda faqat bitta joyda ishlating:** kompyuterda ham `run` ishlab tursa, Telegram bot ikkalasida ishlamaydi (conflict).
 
-⚠️ **Bepul tarifda disk yo'q:** har deploy yoki qayta ishga tushishda baza (vazifalar, xotira, xarajat hisobi), vazifa fayllari va Telegram akkaunt sessiyasi o'chadi (akkauntni panelda QR bilan qayta ulash kerak bo'ladi). Doimiy saqlash uchun Starter tarif + 1 GB disk (`render.yaml` dagi izohni oching).
+**Ma'lumotlar saqlanishi uchun Supabase (bepul):** bepul Render'da disk yo'q, shuning uchun bazani Supabase'ga ulang:
+1. supabase.com → New project (parolni eslab qoling).
+2. **Connect** → **Session pooler** satrini oling (`postgresql://postgres.xxxx:PAROL@aws-0-....pooler.supabase.com:5432/postgres`). Direct connection emas: u IPv6, Render ulana olmaydi.
+3. Render → Environment: `DATABASE_URL` = shu satr, `SECRET_KEY` = uzun tasodifiy satr.
+
+Shunda vazifalar, xotira, xarajat, eslatmalar, **vazifa fayllari** (har biri 5 MB gacha) va **Telegram akkaunt sessiyasi** (`SECRET_KEY` bilan shifrlangan) bazada turadi: qayta ishga tushganda o'zi tiklanadi, disk kerak emas. `SECRET_KEY` ni o'zgartirsangiz, Telegram akkauntni qayta ulash kerak bo'ladi. Supabase bepul loyihasi bir hafta umuman ishlatilmasa pauzaga tushadi (ilova ishlab tursa tushmaydi).
+
+DATABASE_URL qo'yilmasa (bepul Render + SQLite): har deploy/qayta ishga tushishda baza, fayllar va Telegram sessiyasi o'chadi.
 
 ## Hozircha yo'q (navbatda)
 Ovozli javob (TTS) va jonli qo'ng'iroq, Google Kalendar/Gmail, WhatsApp Business, Instagram (Graph API), Telegram qo'ng'iroqlari, agent uchun alohida raqam, Docker sandbox, GitHub asbobi, vektor qidiruv (xotira hozir kalit so'z bo'yicha), VPS/Supabase joylashtirish.

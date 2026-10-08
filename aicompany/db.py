@@ -27,7 +27,7 @@ agents = sa.Table(
 tasks = sa.Table(
     "tasks", md,
     sa.Column("id", sa.Integer, primary_key=True),
-    sa.Column("chat_id", sa.Integer),
+    sa.Column("chat_id", sa.BigInteger),
     sa.Column("request", sa.Text, nullable=False),
     sa.Column("status", sa.String, nullable=False, default="running"),
     sa.Column("plan", sa.Text),
@@ -92,7 +92,7 @@ approvals = sa.Table(
 chat_log = sa.Table(
     "chat_log", md,
     sa.Column("id", sa.Integer, primary_key=True),
-    sa.Column("chat_id", sa.Integer, index=True),
+    sa.Column("chat_id", sa.BigInteger, index=True),
     sa.Column("role", sa.String),  # owner | ceo
     sa.Column("text", sa.Text),
     sa.Column("created_at", sa.String),
@@ -100,12 +100,21 @@ chat_log = sa.Table(
 reminders = sa.Table(
     "reminders", md,
     sa.Column("id", sa.Integer, primary_key=True),
-    sa.Column("chat_id", sa.Integer),
+    sa.Column("chat_id", sa.BigInteger),
     sa.Column("text", sa.Text, nullable=False),
     sa.Column("due_at", sa.String, index=True),   # UTC ISO
     sa.Column("status", sa.String, server_default="pending"),  # pending | sent | cancelled | failed
     sa.Column("created_at", sa.String),
     sa.Column("sent_at", sa.String),
+)
+# Vazifa fayllari bazada ham (Render kabi disksiz serverda qayta ishga tushganda yo'qolmasin)
+task_files = sa.Table(
+    "task_files", md,
+    sa.Column("id", sa.Integer, primary_key=True),
+    sa.Column("task_id", sa.Integer, index=True, nullable=False),
+    sa.Column("path", sa.String, nullable=False),
+    sa.Column("data", sa.LargeBinary, nullable=False),
+    sa.Column("updated_at", sa.String),
 )
 audit_log = sa.Table(
     "audit_log", md,
@@ -125,11 +134,28 @@ def cache_key(*parts) -> str:
     return hashlib.sha256(json.dumps(parts, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
 
+def normalize_db_url(url: str) -> tuple[str, dict]:
+    """Supabase/Render bergan postgres://... satrini SQLAlchemy async drayveriga moslaydi."""
+    url = url.strip()
+    if url.startswith(("postgres://", "postgresql://")):
+        url = "postgresql+asyncpg://" + url.split("://", 1)[1]
+    if url.startswith("postgresql+asyncpg://"):
+        args = {}
+        if ":6543/" in url or "pgbouncer=true" in url:  # Supabase tranzaksiya pooler'i tayyorlangan so'rovlarni qo'llamaydi
+            args["statement_cache_size"] = 0
+            url = re.sub(r"[?&]pgbouncer=true", "", url)
+        return url, args
+    return url, ({"timeout": 30} if url.startswith("sqlite") else {})
+
+
 class Store:
     def __init__(self, url: str):
+        url, connect_args = normalize_db_url(url)
+        self.remote = not url.startswith("sqlite")  # tashqi baza: fayllar va Telegram sessiyasi ham bazada saqlanadi
         if url.startswith("sqlite") and ":memory:" not in url:
             Path(url.split("///", 1)[1]).parent.mkdir(parents=True, exist_ok=True)
-        self.engine = create_async_engine(url, connect_args={"timeout": 30} if url.startswith("sqlite") else {})
+        extra = {"pool_pre_ping": True, "pool_recycle": 1800} if self.remote else {}
+        self.engine = create_async_engine(url, connect_args=connect_args, **extra)
         if url.startswith("sqlite") and ":memory:" not in url:
             @sa.event.listens_for(self.engine.sync_engine, "connect")
             def _pragmas(dbapi_conn, _):  # parallel o'qish/yozish uchun (agentlar bir vaqtda ishlaydi)
@@ -180,10 +206,32 @@ class Store:
         row = await self._one(sa.select(kv).where(kv.c.key == key))
         return row["value"] if row else default
 
+    def _upsert(self, table, key_col: str, values: dict):
+        """Bor bo'lsa yangilaydi, yo'q bo'lsa qo'shadi: bir vaqtdagi yozuvlarda to'qnashuv bo'lmaydi (Postgres ham, SQLite ham)."""
+        if self.engine.dialect.name == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+        else:
+            from sqlalchemy.dialects.sqlite import insert
+        stmt = insert(table).values(**values)
+        return stmt.on_conflict_do_update(index_elements=[key_col],
+                                          set_={k: stmt.excluded[k] for k in values if k != key_col})
+
     async def set_kv(self, key, value):
+        await self._exec(self._upsert(kv, "key", {"key": key, "value": str(value)}))
+
+    # vazifa fayllari (tashqi bazada nusxa)
+    async def save_task_files(self, task_id, files: dict[str, bytes]):
         async with self.engine.begin() as c:
-            await c.execute(sa.delete(kv).where(kv.c.key == key))
-            await c.execute(sa.insert(kv).values(key=key, value=str(value)))
+            await c.execute(sa.delete(task_files).where(task_files.c.task_id == task_id))
+            for path, data in files.items():
+                await c.execute(sa.insert(task_files).values(task_id=task_id, path=path, data=data, updated_at=now()))
+
+    async def load_task_files(self, task_id=None) -> list[dict]:
+        q = sa.select(task_files.c.task_id, task_files.c.path, task_files.c.data)
+        return await self._all(q if task_id is None else q.where(task_files.c.task_id == task_id))
+
+    async def delete_task_files(self, task_id):
+        await self._exec(sa.delete(task_files).where(task_files.c.task_id == task_id))
 
     async def delete_kv(self, key):
         await self._exec(sa.delete(kv).where(kv.c.key == key))
@@ -240,6 +288,7 @@ class Store:
             await c.execute(sa.delete(messages).where(messages.c.task_id == task_id))
             await c.execute(sa.delete(approvals).where(approvals.c.task_id == task_id))
             await c.execute(sa.delete(tasks).where(tasks.c.id == task_id))
+            await c.execute(sa.delete(task_files).where(task_files.c.task_id == task_id))
 
     async def add_message(self, task_id, agent, content):
         await self._exec(sa.insert(messages).values(task_id=task_id, agent=agent, content=content, created_at=now()))
@@ -277,9 +326,7 @@ class Store:
         return row["value"] if row else None
 
     async def cache_put(self, key, value):
-        async with self.engine.begin() as c:
-            await c.execute(sa.delete(cache).where(cache.c.key == key))
-            await c.execute(sa.insert(cache).values(key=key, value=value, created_at=now()))
+        await self._exec(self._upsert(cache, "key", {"key": key, "value": value, "created_at": now()}))
 
     # tasks (hisobot / HR tahlili)
     async def recent_task_ids(self, n):

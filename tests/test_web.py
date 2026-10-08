@@ -725,7 +725,7 @@ async def test_tg_stale_session_is_cleaned_and_login_offered(web, tmp_path):
     stale = LoginClient()                                                      # fayl bor, lekin kirilmagan
     app.tg = TgUser(dataclasses.replace(app.settings, tg_session=str(tmp_path / "tg")))
     app.tg.api_id, app.tg.api_hash = 1, "h"
-    app.tg._new_client = lambda: stale
+    app.tg._new_client = lambda fresh=False: stale
     session_file(app.tg.s).write_text("x")
     assert app.tg.configured()
     assert (await get(c, "/api/tg/me"))[1] == {"me": "", "stale": True}
@@ -786,7 +786,7 @@ async def test_pending_login_is_not_mistaken_for_connected(web, tmp_path):
         client.connected = True
         session_file(tg.s).write_text("x")                                     # haqiqiy Telethon kabi
     client.connect = connect
-    tg._new_client = lambda: client
+    tg._new_client = lambda fresh=False: client
     app.tg = tg
     assert (await post(c, "/api/tg/code", {"phone": "+998901234567"}))[0] == 200
     ta = (await get(c, "/api/integrations"))[1]["telegram_account"]

@@ -4,7 +4,7 @@ services:
   - type: web
     name: ai-jamoa
     runtime: python
-    plan: free            # bepulda disk yo'q: qayta ishga tushganda baza va Telegram sessiyasi o'chadi (README -> Render)
+    plan: free            # disk shart emas: DATABASE_URL (Supabase) qo'yilsa hammasi bazada saqlanadi
     buildCommand: pip install -r requirements.txt
     startCommand: python -m aicompany run
     healthCheckPath: /health
@@ -23,6 +23,10 @@ services:
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_URL          # Supabase: Connect -> Session pooler (postgresql://...:5432/postgres)
+        sync: false
+      - key: SECRET_KEY            # Telegram sessiyasini bazada shifrlash kaliti (uzun tasodifiy satr)
         sync: false
       - key: PRIMARY_PROVIDER
         value: auto

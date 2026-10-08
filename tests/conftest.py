@@ -1,5 +1,8 @@
 import json
+import os
+import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 import pytest
@@ -43,9 +46,19 @@ class MockProvider(Provider):
         return LLMResult(out, 100, 50, 0, self.cost)
 
 
+def _test_db_url() -> str:
+    """Odatda vaqtinchalik SQLite. AIC_TEST_PG=postgresql://user@host:port bo'lsa: har test uchun toza Postgres bazasi."""
+    pg = os.environ.get("AIC_TEST_PG")
+    if not pg:
+        return "sqlite+aiosqlite:///" + tempfile.mkdtemp(prefix="aic_db_") + "/t.db"
+    name = "t_" + uuid.uuid4().hex[:12]
+    subprocess.run(["psql", pg.rstrip("/") + "/postgres", "-qc", f"create database {name}"], check=True, capture_output=True)
+    return pg.rstrip("/") + "/" + name
+
+
 def settings(**env):
     base = {"ANTHROPIC_API_KEY": "x", "OPENAI_API_KEY": "x", "GEMINI_API_KEY": "x",
-            "DATABASE_URL": "sqlite+aiosqlite:///" + tempfile.mkdtemp(prefix="aic_db_") + "/t.db", "MAX_TASK_USD": "1",
+            "DATABASE_URL": _test_db_url(), "MAX_TASK_USD": "1",
             "WORKSPACE_DIR": tempfile.mkdtemp(prefix="aic_ws_")}
     return load_settings({**base, **env}, models_path=Path(__file__).parent / "models_test.yaml")
 

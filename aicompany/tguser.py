@@ -82,6 +82,9 @@ class TgUser:
         self._factory = client_factory
         self._client = None
         self.me = ""
+        self.use_db_session = False   # tashqi baza: sessiya fayl emas, (shifrlangan) satr sifatida bazada
+        self.session_str: str | None = None
+        self.on_session = None        # async callable(str | None): sessiya o'zgarganda saqlash
         self._login: dict | None = None  # panel orqali kirish jarayoni: {"client", "phone", "hash"}
 
     def has_keys(self) -> bool:
@@ -92,9 +95,10 @@ class TgUser:
 
     def configured(self) -> bool:
         # kirish davom etayotganda fayl bor, lekin akkaunt hali ulanmagan: "ulangan" deb hisoblamaymiz
-        return bool(self.has_keys() and not self._login and (self._factory or session_file(self.s).exists()))
+        stored = self.session_str if self.use_db_session else session_file(self.s).exists()
+        return bool(self.has_keys() and not self._login and (self._factory or stored))
 
-    def _new_client(self):
+    def _new_client(self, fresh: bool = False):
         if self._factory:
             return self._factory()
         try:
@@ -115,7 +119,11 @@ class TgUser:
             except ImportError as e:
                 raise TgError("SOCKS proksi uchun: pip install 'python-socks[asyncio]'") from e
             kw["proxy"] = px[1]
-        return TelegramClient(self.s.tg_session, self.api_id, self.api_hash, **kw)
+        session = self.s.tg_session
+        if self.use_db_session:
+            from telethon.sessions import StringSession
+            session = StringSession(None if fresh else self.session_str)
+        return TelegramClient(session, self.api_id, self.api_hash, **kw)
 
     async def _connect(self, client):
         try:
@@ -174,7 +182,7 @@ class TgUser:
         await self.close()  # bir vaqtda ikki ulanish sessiya faylini buzmasin
         await self._drop_login()
         self._remove_files()  # har urinish toza sessiyadan: eski chala fayl ulanishni buzmasin
-        client = self._new_client()
+        client = self._new_client(fresh=True)
         await self._connect(client)
         try:
             sent = await asyncio.wait_for(client.send_code_request(phone), REQUEST_TIMEOUT)
@@ -244,6 +252,14 @@ class TgUser:
     async def _finish(self, client):
         me = await client.get_me()
         self._client, self._login = client, None
+        if self.use_db_session:
+            try:
+                from telethon.sessions import StringSession
+                self.session_str = StringSession.save(client.session)
+            except Exception:  # noqa: BLE001 — sinov mijozi
+                self.session_str = getattr(client, "session_string", None)
+        if self.on_session and self.use_db_session:
+            await self.on_session(self.session_str)
         if not self._factory:
             lock_down(session_file(self.s))
         self.me = self.name_of(me) + (f" (@{me.username})" if getattr(me, "username", None) else "")
@@ -255,7 +271,7 @@ class TgUser:
         await self.close()
         await self._drop_login()
         self._remove_files()
-        client = self._new_client()
+        client = self._new_client(fresh=True)
         await self._connect(client)
         try:
             qr = await asyncio.wait_for(client.qr_login(), REQUEST_TIMEOUT)
@@ -333,7 +349,7 @@ class TgUser:
         await self._drop_login()
         client = self._client
         try:
-            if client is None and (self._factory or session_file(self.s).exists()):
+            if client is None and (self._factory or self.session_str or session_file(self.s).exists()):
                 client = self._new_client()
             if client is not None:
                 if not client.is_connected():
@@ -346,6 +362,10 @@ class TgUser:
                 await self._quiet_disconnect(client)  # oldin bu ulanish ochiq qolib ketardi
             self._client = None
         self._remove_files()
+        if self.use_db_session:
+            self.session_str = None
+            if self.on_session:
+                await self.on_session(None)
 
     # ---------- yordamchilar ----------
     @staticmethod

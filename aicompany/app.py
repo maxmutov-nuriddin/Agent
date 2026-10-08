@@ -59,6 +59,24 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
             tg.api_id, tg.api_hash = int(kid), khash
     tg.proxy = await store.get_kv("tg_proxy") or tg.proxy
     tg.me = await store.get_kv("tg_me") or ""
+    if store.remote:  # disksiz server: sessiya va vazifa fayllari bazadan tiklanadi
+        from .persist import restore_workspaces, seal, unseal
+        secret = settings.secret_key or settings.web_token
+        tg.use_db_session = True
+        tg.session_str = unseal(await store.get_kv("tg_session_sealed"), secret)
+
+        async def keep_session(value):
+            if value:
+                await store.set_kv("tg_session_sealed", seal(value, secret))
+            else:
+                await store.delete_kv("tg_session_sealed")
+        tg.on_session = keep_session
+        try:
+            restore_workspaces_n = await restore_workspaces(store, settings.workspace_dir)
+            if restore_workspaces_n:
+                await store.audit("system", "restore_files", f"{restore_workspaces_n} ta fayl bazadan tiklandi")
+        except Exception as e:  # noqa: BLE001 — fayl tiklanmasa ham dastur ishlasin
+            await store.audit("system", "restore_files_error", repr(e)[:300])
     orch = Orchestrator(store, team, settings, settings.max_revisions, approver or center, tg)
     app = App(settings, store, router, team, orch, center, tg)
     from .tglisten import TgListener

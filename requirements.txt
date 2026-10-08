@@ -10,3 +10,5 @@ pytest-asyncio>=0.24
 telethon>=1.36
 python-socks[asyncio]>=2.4
 segno>=1.6
+asyncpg>=0.29
+cryptography>=42
