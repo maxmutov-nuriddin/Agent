@@ -11,7 +11,7 @@ const IC = {
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], stopped: ["To'xtatildi", "amber"],
   paused: ["Pauza", "amber"], interrupted: ["Uzildi", "amber"] };
-const S = { token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0 };
+const S = { token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, archive: false };
 
 // ---------- yordamchilar ----------
 function h(tag, attrs, ...kids) {
@@ -99,17 +99,19 @@ async function loadTeam() {
 }
 function drawTeam({ state, team, ceo }) {
   const sorted = [...team].sort((a, b) => b.busy - a.busy);
-  const quote = ceo && !ceo.startsWith("[Vazifa") ? ceo : "Salom! Menga oddiy yozing: gaplashing yoki vazifa bering.";
+  const quote = ceo && !ceo.startsWith("[Vazifa") ? ceo : "Salom! Men Rahbarman. Suhbatlashing yoki «Vazifa berish» tugmasini bosing.";
   return [
     head("Jamoa", liveTag()),
     h("div", { class: "label" }, "Hozir ishda"),
-    h("div", { class: "avatars" }, sorted.map((a) => h("div", { class: "av" + (a.busy ? " busy" : "") }, h("i", {}, initials(a.name)), a.name))),
+    sorted.some((a) => a.busy)
+      ? h("div", { class: "avatars" }, sorted.filter((a) => a.busy).map((a) => h("div", { class: "av busy" }, h("i", {}, initials(a.name)), a.name)))
+      : h("p", { class: "hint" }, "Hozir hamma bo'sh. Vazifa bering."),
     h("div", { class: "card lime" },
       h("div", { class: "row" }, h("div", { class: "ava" }, "R"),
         h("div", {}, h("div", { class: "who" }, "Rahbar"), h("div", { class: "st" }, state.pending ? `onlayn · ${state.pending} ta qaror kutmoqda` : "onlayn"))),
       h("blockquote", {}, quote),
       h("div", { class: "btns" }, h("button", { class: "btn black", onclick: () => openChat(false) }, "Chatni ochish"),
-        h("button", { class: "btn ring", onclick: () => openChat(true) }, "Vazifa berish"))),
+        h("button", { class: "btn outline", onclick: taskSheet }, "Vazifa berish"))),
     h("div", { class: "stats" },
       h("div", { class: "stat" }, h("b", {}, state.done_today), h("span", {}, "bugun bajarildi")),
       h("div", { class: "stat" }, h("b", {}, state.working.length), h("span", {}, "hozir ishlayapti")),
@@ -130,6 +132,19 @@ function agentSheet(a) {
     h("div", { class: "pills" }, h("span", { class: "pill" + (a.busy ? " lime" : "") }, a.busy ? "ishlayapti" : "bo'sh"), h("span", { class: "pill" }, a.tier),
       a.tools.map((t) => h("span", { class: "pill" }, t)), h("span", { class: "pill" }, a.steps + " ish"), h("span", { class: "pill" }, usd(a.cost))),
     a.core ? null : h("div", { class: "label" }), a.core ? null : h("button", { class: "btn red full", onclick: fire }, "Ishdan bo'shatish"));
+}
+function taskSheet() {
+  const text = h("textarea", { class: "big", rows: "5", placeholder: "Nima qilish kerak? Qanchalik aniq bo'lsa, shuncha yaxshi." });
+  const btn = h("button", { class: "btn lime full" }, "Topshirish");
+  btn.addEventListener("click", async () => {
+    if (!text.value.trim()) return toast("Vazifani yozing");
+    btn.disabled = true;
+    try { await post("/tasks", { text: text.value }); closeSheet(); toast("Vazifa topshirildi"); if (!S.chatOpen) go("tasks"); }
+    catch (e) { toast(e.message); btn.disabled = false; }
+  });
+  openSheet(h("h2", {}, "Yangi vazifa"), h("p", { class: "muted" }, "Jamoa mustaqil bajaradi va natijani sizga topshiradi."),
+    h("div", { class: "label" }), text, h("div", { class: "label" }), btn);
+  setTimeout(() => text.focus(), 50);
 }
 function hireSheet() {
   const name = h("input", { placeholder: "masalan: seo_mutaxassis", autocapitalize: "off" });
@@ -162,10 +177,16 @@ function drawCards(items) {
 }
 
 // --- Vazifalar ---
-async function loadTasks() { const [state, tasks] = await Promise.all([api("/state"), api("/tasks")]); S.state = state; renderTabs(); return tasks; }
-function drawTasks(tasks) {
-  if (!tasks.length) return [head("Vazifalar", liveTag()), h("div", { class: "empty" }, "Hali vazifa yo'q. Rahbarga yozing.")];
-  return [head("Vazifalar", liveTag()), ...tasks.map((t) => {
+async function loadTasks() {
+  const [state, tasks] = await Promise.all([api("/state"), api("/tasks" + (S.archive ? "?archived=1" : ""))]);
+  S.state = state; renderTabs(); return { tasks, archive: S.archive };
+}
+function drawTasks({ tasks, archive }) {
+  const seg = h("div", { class: "seg" },
+    h("button", { class: archive ? "" : "on", onclick: () => { S.archive = false; refresh(true); } }, "Faol"),
+    h("button", { class: archive ? "on" : "", onclick: () => { S.archive = true; refresh(true); } }, "Arxiv"));
+  if (!tasks.length) return [head("Vazifalar", liveTag()), seg, h("div", { class: "empty" }, archive ? "Arxiv bo'sh" : "Hali vazifa yo'q. «Vazifa berish» tugmasini bosing.")];
+  return [head("Vazifalar", liveTag()), seg, ...tasks.map((t) => {
     const [label, tone] = ST[t.status] || [t.status, ""];
     const barTone = t.status === "running" ? "run" : t.status === "failed" ? "bad" : t.status === "done" ? "" : "warn";
     return h("button", { class: "item", onclick: () => openTask(t.id), "aria-label": "Vazifa " + t.id },
@@ -177,7 +198,17 @@ async function openTask(id) {
   const t = await api("/tasks/" + id);
   const [label] = ST[t.status] || [t.status];
   const files = t.files.map((f) => h("button", { class: "btn ghost", onclick: () => download(t.id, f) }, "📎 " + f));
-  openSheet(h("h2", {}, "Vazifa #" + t.id), h("p", { class: "muted" }, `${label} · ${usd(t.cost)}`), h("p", {}, t.request),
+  const act = (path, msg, method) => async () => {
+    try { await api(path, { method: method || "POST" }); closeSheet(); toast(msg); refresh(true); } catch (e) { toast(e.message); }
+  };
+  const acts = t.status === "running"
+    ? [h("button", { class: "btn red", onclick: act(`/tasks/${t.id}/stop`, "To'xtatilmoqda…") }, "⏹ To'xtatish")]
+    : t.archived
+      ? [h("button", { class: "btn", onclick: act(`/tasks/${t.id}/restore`, "Qaytarildi") }, "↩ Qaytarish"),
+         h("button", { class: "btn red", onclick: () => { if (confirm("Vazifa va uning fayllari butunlay o'chiriladi. Davom etasizmi?")) act(`/tasks/${t.id}`, "O'chirildi", "DELETE")(); } }, "🗑 Butunlay o'chirish")]
+      : [h("button", { class: "btn", onclick: act(`/tasks/${t.id}/archive`, "Arxivga olindi") }, "🗄 Arxivga olish")];
+  openSheet(h("h2", {}, "Vazifa #" + t.id), h("p", { class: "muted" }, `${label} · ${usd(t.cost)}${t.archived ? " · arxivda" : ""}`), h("p", {}, t.request),
+    h("div", { class: "acts" }, acts),
     h("div", { class: "label" }, "Natija"), h("div", { class: "pre" }, t.result || "(hali natija yo'q)"),
     files.length ? h("div", { class: "label" }, "Fayllar") : null, files.length ? h("div", { class: "pills" }, files) : null,
     h("div", { class: "label" }, "Jamoa ishi"),
@@ -226,6 +257,16 @@ function msgEl(m) {
       h("div", { class: "t" + (long ? " fade" : "") }, p.text || "(natija yo'q)"),
       h("button", { class: "btn lime", onclick: () => openTask(p.task_id) }, "To'liq ko'rish"));
   }
+  if (m.role === "proposal") {
+    let p = {}; try { p = JSON.parse(m.text); } catch { p = { task: m.text }; }
+    const btn = h("button", { class: "btn lime" }, "Vazifa qilib topshirish");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      try { await post("/tasks", { text: p.task }); btn.textContent = "Topshirildi ✓"; toast("Vazifa topshirildi"); }
+      catch (e) { toast(e.message); btn.disabled = false; }
+    });
+    return h("div", { class: "msg proposal" }, h("div", { class: "q" }, "Taklif qilingan vazifa"), h("div", {}, p.task), btn);
+  }
   return h("div", { class: "msg " + m.role }, m.text);
 }
 async function pollChat() {
@@ -243,7 +284,7 @@ async function pollChat() {
 function openChat(focus) {
   S.chatOpen = true; $("chat").hidden = false;
   const box = $("msgs"); box.replaceChildren();
-  if (!S.chat.length) box.append(h("div", { class: "empty" }, "Salom! Menga oddiy yozing: gaplashing, savol bering yoki vazifa topshiring."));
+  if (!S.chat.length) box.append(h("div", { class: "empty" }, "Rahbar bilan oddiy suhbat: savol bering, maslahatlashing. Ish topshirish uchun «+ Vazifa» tugmasi."));
   S.chat.forEach((m) => box.append(msgEl(m)));
   if (S.typing) box.append(h("div", { class: "typing" }, "Rahbar o'ylayapti…"));
   box.scrollTop = box.scrollHeight;
@@ -260,6 +301,7 @@ async function sendChat() {
   } catch (e) { toast(e.message); ta.value = text; }
 }
 $("chat-back").addEventListener("click", closeChat);
+$("chat-task").addEventListener("click", taskSheet);
 $("chat-send").append(svg(IC.send));
 $("chat-send").addEventListener("click", sendChat);
 $("chat-input").addEventListener("input", (e) => { const t = e.target; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 140) + "px"; });

@@ -197,6 +197,9 @@ async def run_command(env, a):
         proc.kill()
         await proc.wait()
         raise ToolError(f"vaqt tugadi ({env.settings.command_timeout}s)") from None
+    except asyncio.CancelledError:  # vazifa to'xtatilganda buyruq ham to'xtaydi
+        proc.kill()
+        raise
     text = out.decode(errors="replace")
     return f"exit={proc.returncode}\n{text[-MAX_OUT:]}"
 

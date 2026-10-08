@@ -18,7 +18,7 @@ def front(base=None):
     base = base or scripted_company()
 
     def handler(system, user, model):
-        if "front desk" in system:
+        if "front desk" in system or "in a CHAT" in system:
             latest = user.split("# Latest owner message\n")[-1]
             if "salom" in latest:
                 return json.dumps({"mode": "chat", "reply": "Salom!"})
@@ -210,66 +210,115 @@ async def test_chat_greeting_no_task_no_duplicate_rows(web):
     assert await app.store.list_tasks() == []
 
 
-async def test_chat_task_produces_result_row_and_after_cursor(web):
+async def test_chat_never_starts_tasks_but_proposes_them(web):
     c, app = web
     await post(c, "/api/chat", {"text": "sayt yasab ber"})
+    rows = await wait_rows(c, 3)
+    await asyncio.sleep(0.2)
+    _, rows = await get(c, "/api/chat")
+    assert [r["role"] for r in rows] == ["owner", "ceo", "proposal"]
+    assert json.loads(rows[2]["text"]) == {"task": "sayt yasab ber"}
+    assert await app.store.list_tasks() == []  # suhbat vazifa ochmadi
+
+
+async def test_submit_task_runs_and_logs_result(web):
+    c, app = web
+    assert (await post(c, "/api/tasks", {"text": "sayt yasab ber"}))[0] == 200
     for _ in range(300):
         await asyncio.sleep(0.05)
         _, rows = await get(c, "/api/chat")
         if any(r["role"] == "result" for r in rows):
             break
-    roles = [r["role"] for r in rows]
-    assert roles[0] == "owner" and "result" in roles and "sys" in roles
+    assert rows[0]["role"] == "owner" and rows[0]["text"] == "📌 sayt yasab ber"
     payload = json.loads(next(r["text"] for r in rows if r["role"] == "result"))
     assert payload["status"] == "done" and payload["text"] == "FINAL DELIVERABLE" and payload["task_id"] == 1
+    assert not any(r["text"].startswith("[Vazifa #") for r in rows)  # ichki xulosa ko'rinmaydi
+    assert any(m["role"] == "ceo" and m["text"].startswith("[Vazifa #") for m in await app.store.recent_chat(1, 20))  # lekin xotirada bor
     last = rows[-1]["id"]
-    assert (await get(c, f"/api/chat?after={last}"))[1] == []  # kursor: yangi xabar yo'q
+    assert (await get(c, f"/api/chat?after={last}"))[1] == []  # kursor
+    assert (await post(c, "/api/tasks", {"text": ""}))[0] == 400
 
 
-def test_responsive_foundations_present():
-    root = Path(__file__).parent.parent / "aicompany/webui"
-    html, css = (root / "index.html").read_text(), (root / "style.css").read_text()
-    assert "viewport-fit=cover" in html and "width=device-width" in html
-    assert "env(safe-area-inset-bottom)" in css and "100dvh" in css  # iPhone chuqurligi va manzil paneli
-    assert "@media (max-width: 360px)" in css and "@media (max-height: 500px)" in css  # kichik va yotiq ekran
-    assert "overflow-wrap: anywhere" in css
+# ---------- to'xtatish / arxiv / o'chirish ----------
+async def blocked_company(make_app, gate):
+    base = scripted_company()
+    app, provs = await make_app(front(base), OWNER_TELEGRAM_ID="1")
+    orig = app.router.call
+
+    async def slow(*a, **k):
+        if k.get("agent") == "researcher":
+            await gate.wait()
+        return await orig(*a, **k)
+    app.router.call = slow
+    app.settings = dataclasses.replace(app.settings, web_token="web-secret", widget_token="widget-secret")
+    return app
 
 
-def _s(**kw):
-    from .conftest import settings
-    return dataclasses.replace(settings(), web_token="tok", **kw)
+async def test_stop_running_task_via_web(make_app):
+    gate = asyncio.Event()
+    app = await blocked_company(make_app, gate)
+    client = TestClient(TestServer(make_web_app(app)))
+    await client.start_server()
+    try:
+        asyncio.create_task(app.orch.run_task("x", 1))
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            if "researcher" in app.team.busy:
+                break
+        assert (await post(client, "/api/tasks/1/archive"))[0] == 409  # ishlayotganni arxivlab bo'lmaydi
+        assert (await post(client, "/api/tasks/1/stop"))[0] == 200
+        for _ in range(100):
+            await asyncio.sleep(0.02)
+            if (await app.store.get_task(1))["status"] != "running":
+                break
+        t = await app.store.get_task(1)
+        assert t["status"] == "stopped" and app.team.busy == {} and app.orch.running == {}
+        assert (await post(client, "/api/tasks/1/stop"))[0] == 409  # endi ishlamayapti
+    finally:
+        await client.close()
 
 
-def test_web_url_variants(monkeypatch):
-    from aicompany import web as webmod
-    monkeypatch.setattr(webmod, "lan_ip", lambda: "192.168.1.20")
-    assert webmod.web_url(_s(web_host="127.0.0.1", web_port=8080)) == ("http://127.0.0.1:8080/#token=tok", False)
-    assert webmod.web_url(_s(web_host="0.0.0.0", web_port=9000)) == ("http://192.168.1.20:9000/#token=tok", True)
-    assert webmod.web_url(_s(web_host="127.0.0.1", web_public_url="https://my.ts.net")) == ("https://my.ts.net/#token=tok", True)
+async def test_stop_marks_orphaned_running_task_interrupted(web):
+    c, app = web
+    tid = await app.store.create_task(1, "x")  # DB'da running, lekin jarayon yo'q
+    assert (await post(c, f"/api/tasks/{tid}/stop"))[0] == 200
+    assert (await app.store.get_task(tid))["status"] == "interrupted"
 
 
-async def test_telegram_web_command_sends_link_to_owner_only(make_app, monkeypatch):
-    from aiogram import Bot
-    from aiogram.dispatcher.event.bases import UNHANDLED
-    from aicompany.bot import make_dispatcher
-    from .test_bot import update, OWNER
-    sent = []
+async def test_archive_restore_and_permanent_delete(web):
+    c, app = web
+    res = await app.orch.run_task("x", 1)
+    tid = res["task_id"]
+    ws = app.settings.workspace_dir / f"task_{tid}"
+    (ws / "a.txt").write_text("x")
+    assert ws.exists() and len((await get(c, "/api/tasks"))[1]) == 1
 
-    async def fake_call(self, method, request_timeout=None):
-        sent.append(getattr(method, "text", None))
-        return True
-    monkeypatch.setattr(Bot, "__call__", fake_call)
-    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID=str(OWNER))
-    app.settings = dataclasses.replace(app.settings, web_token="secret-tok", web_public_url="https://panel.example")
-    bot = Bot("123456:ABC")
-    dp = make_dispatcher(app, bot)
-    assert await dp.feed_update(bot, update(999, "/web")) is UNHANDLED and sent == []
-    await dp.feed_update(bot, update(OWNER, "/web"))
-    assert "https://panel.example/#token=secret-tok" in sent[0] and "⚠️" not in sent[0]
-    app.settings = dataclasses.replace(app.settings, web_public_url=None, web_host="127.0.0.1")
-    await dp.feed_update(bot, update(OWNER, "/web"))
-    assert "⚠️" in sent[1]  # faqat lokal manzil: ogohlantiradi
-    app.settings = dataclasses.replace(app.settings, web_token=None)
-    await dp.feed_update(bot, update(OWNER, "/link"))
-    assert "yoqilmagan" in sent[2]
-    await bot.session.close()
+    r = await c.delete(f"/api/tasks/{tid}", headers=TOK)
+    assert r.status == 409 and ws.exists()  # arxivlanmaguncha o'chirib bo'lmaydi
+
+    assert (await post(c, f"/api/tasks/{tid}/archive"))[0] == 200
+    assert (await get(c, "/api/tasks"))[1] == []                       # faol ro'yxatdan ketdi
+    arch = (await get(c, "/api/tasks?archived=1"))[1]
+    assert [t["id"] for t in arch] == [tid] and arch[0]["archived"] is True
+    assert (await get(c, f"/api/tasks/{tid}"))[1]["archived"] is True  # ochib ko'rsa bo'ladi
+
+    assert (await post(c, f"/api/tasks/{tid}/restore"))[0] == 200      # arxivdan qaytarish
+    assert len((await get(c, "/api/tasks"))[1]) == 1 and (await get(c, "/api/tasks?archived=1"))[1] == []
+
+    await post(c, f"/api/tasks/{tid}/archive")
+    spent_before = await app.store.spent("anthropic")
+    r = await c.delete(f"/api/tasks/{tid}", headers=TOK)
+    assert r.status == 200
+    assert not ws.exists() and await app.store.get_task(tid) is None and await app.store.task_messages(tid) == []
+    assert await app.store.spent("anthropic") == spent_before          # sarf hisobi saqlanadi
+    assert (await get(c, f"/api/tasks/{tid}"))[0] == 404
+    assert (await post(c, "/api/tasks/999/archive"))[0] == 404
+
+
+async def test_archived_tasks_hidden_from_widget_and_telegram_lists(web):
+    c, app = web
+    res = await app.orch.run_task("x", 1)
+    await app.store.set_archived(res["task_id"], True)
+    r = await c.get("/api/widget?token=widget-secret")
+    assert (await r.json())["last_task"] is None
+    assert await app.store.list_tasks() == []

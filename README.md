@@ -22,7 +22,11 @@ Faqat Claude bilan boshlash: `.env` da faqat `ANTHROPIC_API_KEY` ni to'ldiring, 
 ## Veb-panel (PWA) va iPhone
 `python -m aicompany run` Telegram botdan tashqari veb-panelni ham ishga tushiradi (faqat veb: `python -m aicompany web`). Terminalda maxfiy havola chiqadi: `http://...:8080/#token=...`. Kalit birinchi ishga tushirishda avtomatik yaratilib `.env` ga yoziladi.
 
-Panel bo'limlari: **Suhbat** (rahbar bilan, Telegram bilan bir xil suhbat), **Jamoa** (kim ishlayapti, yollash/bo'shatish), **Kartalar** (xavfli buyruqlarga ruxsat), **Vazifalar** (natija, fayllarni yuklab olish), **Hisob** (byudjet, sarf, xotira, to'xtatish).
+Panel bo'limlari: **Jamoa** (kim ishlayapti, Rahbar kartasi, xodim yollash/bo'shatish), **Kartalar** (xavfli buyruqlarga ruxsat), **Vazifalar** (natija, fayllar, to'xtatish, arxiv), **Hisob** (byudjet, sarf, xotira, pauza).
+
+- **Chat** (Rahbar kartasidagi «Chatni ochish») faqat suhbat uchun: oddiy xabarlar vazifa bo'lmaydi. Ish so'ralsa Rahbar «Vazifa qilib topshirish» tugmasini taklif qiladi.
+- **«Vazifa berish»** alohida forma: yozganingiz to'g'ridan-to'g'ri vazifa bo'ladi.
+- **Vazifalar:** ishlayotganini to'xtatish (Telegramda `/stop <id>`), tugaganini arxivga olish, arxivdan qaytarish yoki **butunlay o'chirish** (fayllari bilan; faqat arxivdagini).
 
 **iPhone bosh ekraniga o'rnatish:** Safari'da havolani oching → Ulashish → **Bosh ekranga qo'shish**. Ilova kabi to'liq ekranda ochiladi.
 

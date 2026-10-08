@@ -105,6 +105,14 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
         rows = await app.store.recent_memories(15)
         await m.answer("🧠 Xotira:\n" + "\n".join(f"• {r['text']}" for r in rows) if rows else "Xotira hozircha bo'sh")
 
+    @dp.message(Command("stop"))
+    async def _stop(m: Message, command: CommandObject):
+        try:
+            tid = int(command.args or "")
+        except ValueError:
+            return await m.answer("Ishlatish: /stop <vazifa raqami>")
+        await m.answer("⏹ To'xtatilmoqda…" if app.orch.stop_task(tid) else "Bu vazifa hozir ishlamayapti.")
+
     @dp.message(Command("web", "link"))
     async def _web(m: Message):
         from .web import web_url

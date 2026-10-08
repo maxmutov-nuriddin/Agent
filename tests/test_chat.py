@@ -33,7 +33,7 @@ async def test_greeting_is_chat_not_task(make_app):
     async def notify(s):
         notes.append(s)
     res = await app.orch.handle("salom", 1, notify)
-    assert res == {"kind": "chat", "reply": "Salom! Qanday yordam beray?"}
+    assert res == {"kind": "chat", "reply": "Salom! Qanday yordam beray?", "proposed_task": None}
     assert notes == ["Salom! Qanday yordam beray?"] and await n_tasks(app) == 0
     assert provs["anthropic"].calls == ["claude-haiku-5-5"]  # bitta arzon chaqiruv, jamoa ishlamadi
 

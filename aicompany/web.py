@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import shutil
 import socket
 import time
 from datetime import datetime, timedelta, timezone
@@ -165,9 +166,11 @@ def make_web_app(app: App) -> web.Application:
         return json_ok({"ok": True})
 
     async def h_tasks(request):
-        rows = await app.store.list_tasks(30)
+        archived = request.query.get("archived") == "1"
+        rows = await app.store.list_tasks(60, archived=archived)
         return json_ok([{"id": t["id"], "status": t["status"], "request": t["request"][:160],
                          "created_at": t["created_at"], "finished_at": t["finished_at"],
+                         "archived": bool(t["archived"]),
                          "cost": round(await app.store.spent_task(t["id"]), 4)} for t in rows])
 
     def task_files(task_id: int) -> list[str]:
@@ -180,6 +183,7 @@ def make_web_app(app: App) -> web.Application:
             raise web.HTTPNotFound(reason="topilmadi")
         msgs = await app.store.task_messages(t["id"])
         return json_ok({"id": t["id"], "status": t["status"], "request": t["request"], "result": t["result"],
+                        "archived": bool(t["archived"]),
                         "cost": round(await app.store.spent_task(t["id"]), 4), "files": task_files(t["id"]),
                         "messages": [{"agent": m["agent"], "content": clip(m["content"] or "", 6000)} for m in msgs]})
 
@@ -205,32 +209,95 @@ def make_web_app(app: App) -> web.Application:
     async def h_chat_get(request):
         after = int(request.query.get("after", 0) or 0)
         rows = await app.store.chat_since(chat_id, after)
+        # "[Vazifa #N ...]" - rahbar xotirasi uchun ichki xulosa, foydalanuvchiga natija kartasi ko'rsatiladi
+        rows = [r for r in rows if not (r["role"] == "ceo" and r["text"].startswith("[Vazifa #"))]
         return json_ok([{"id": r["id"], "role": r["role"], "text": r["text"], "ts": r["created_at"]} for r in rows])
 
-    async def h_chat_post(request):
-        text = str((await body(request)).get("text", "")).strip()
+    def spawn(coro):
+        t = asyncio.create_task(coro)
+        jobs.add(t)
+        t.add_done_callback(jobs.discard)
+
+    async def notify(msg: str):
+        last = await app.store.recent_chat(chat_id, 1)
+        if last and last[-1]["role"] == "ceo" and last[-1]["text"] == msg:
+            return  # rahbar javobi allaqachon yozilgan, takrorlamaymiz
+        await app.store.add_chat(chat_id, "sys", msg)
+
+    async def post_result(res: dict):
+        if res.get("kind") != "task":
+            return
+        if res.get("error"):
+            await app.store.add_chat(chat_id, "sys", res["error"])
+        payload = {"task_id": res["task_id"], "status": res["status"], "text": res.get("result") or ""}
+        await app.store.add_chat(chat_id, "result", json.dumps(payload, ensure_ascii=False))
+
+    def text_of(d: dict) -> str:
+        text = str(d.get("text", "")).strip()
         if not text or len(text) > 4000:
             raise web.HTTPBadRequest(reason="matn 1-4000 belgi bo'lishi kerak")
+        return text
 
-        async def notify(msg: str):
-            last = await app.store.recent_chat(chat_id, 1)
-            if last and last[-1]["role"] == "ceo" and last[-1]["text"] == msg:
-                return  # rahbar javobi allaqachon yozilgan, takrorlamaymiz
-            await app.store.add_chat(chat_id, "sys", msg)
+    async def h_chat_post(request):
+        """Suhbat: oddiy xabarlar vazifa emas. Ish so'ralsa rahbar vazifa taklif qiladi."""
+        text = text_of(await body(request))
 
         async def job():
             try:
-                res = await app.orch.handle(text, chat_id, notify)
-                if res["kind"] == "task":
-                    if res.get("error"):
-                        await app.store.add_chat(chat_id, "sys", res["error"])
-                    payload = {"task_id": res["task_id"], "status": res["status"], "text": res.get("result") or ""}
-                    await app.store.add_chat(chat_id, "result", json.dumps(payload, ensure_ascii=False))
+                await app.orch.handle(text, chat_id, notify, allow_tasks=False)
             except Exception as e:  # noqa: BLE001
                 await app.store.add_chat(chat_id, "sys", f"Xatolik: {e}")
-        t = asyncio.create_task(job())
-        jobs.add(t)
-        t.add_done_callback(jobs.discard)
+        spawn(job())
+        return json_ok({"ok": True})
+
+    async def h_task_submit(request):
+        """«Vazifa berish»: to'g'ridan-to'g'ri vazifa (suhbatsiz)."""
+        text = text_of(await body(request))
+
+        async def job():
+            try:
+                await post_result(await app.orch.submit_task(text, chat_id, notify))
+            except Exception as e:  # noqa: BLE001
+                await app.store.add_chat(chat_id, "sys", f"Xatolik: {e}")
+        spawn(job())
+        return json_ok({"ok": True})
+
+    async def get_task_or_404(request):
+        t = await app.store.get_task(int(request.match_info["id"]))
+        if not t:
+            raise web.HTTPNotFound(reason="topilmadi")
+        return t
+
+    async def h_task_stop(request):
+        t = await get_task_or_404(request)
+        if app.orch.stop_task(t["id"]):
+            return json_ok({"ok": True})
+        if t["status"] == "running":  # jarayon yo'q (dastur qayta ishga tushgan): belgini tuzatamiz
+            await app.store.update_task(t["id"], status="interrupted")
+            return json_ok({"ok": True})
+        raise web.HTTPConflict(reason="vazifa ishlamayapti")
+
+    async def h_task_archive(request):
+        t = await get_task_or_404(request)
+        if t["status"] == "running":
+            raise web.HTTPConflict(reason="avval vazifani to'xtating")
+        await app.store.set_archived(t["id"], True)
+        return json_ok({"ok": True})
+
+    async def h_task_restore(request):
+        t = await get_task_or_404(request)
+        await app.store.set_archived(t["id"], False)
+        return json_ok({"ok": True})
+
+    async def h_task_delete(request):
+        """Butunlay o'chirish: faqat arxivdagi vazifa."""
+        t = await get_task_or_404(request)
+        if not t["archived"]:
+            raise web.HTTPConflict(reason="faqat arxivdagi vazifani butunlay o'chirish mumkin")
+        ws = (s.workspace_dir / f"task_{t['id']}").resolve()
+        if ws.is_dir() and ws.parent == s.workspace_dir.resolve():
+            shutil.rmtree(ws, ignore_errors=True)
+        await app.store.delete_task(t["id"])
         return json_ok({"ok": True})
 
     async def h_pause(request):
@@ -267,6 +334,9 @@ def make_web_app(app: App) -> web.Application:
         web.get(r"/api/tasks/{id:\d+}/files/{path:.+}", h_file),
         web.get("/api/approvals", h_approvals), web.post(r"/api/approvals/{id:\d+}", h_decide),
         web.get("/api/chat", h_chat_get), web.post("/api/chat", h_chat_post),
+        web.post("/api/tasks", h_task_submit),
+        web.post(r"/api/tasks/{id:\d+}/stop", h_task_stop), web.post(r"/api/tasks/{id:\d+}/archive", h_task_archive),
+        web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
         web.post("/api/pause", h_pause), web.post("/api/resume", h_resume),
         web.get("/api/memory", h_memory), web.get("/api/spend", h_agent_spend),
         web.get("/api/widget", h_widget),

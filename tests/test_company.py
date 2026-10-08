@@ -85,3 +85,101 @@ async def test_budget_exhaustion_returns_partial(make_app):
     app, _ = await make_app(scripted_company(), MAX_TASK_USD="0.025")
     res = await app.orch.run_task("x", 1)
     assert res["status"] == "stopped" and res["result"]
+
+
+# ---------- to'xtatish va migratsiya ----------
+async def test_stopped_task_keeps_partial_work_and_frees_resources(make_app):
+    import asyncio
+    gate = asyncio.Event()
+    app, _ = await make_app(scripted_company())
+    orig = app.router.call
+
+    async def slow(*a, **k):
+        if k.get("agent") == "marketer":
+            await gate.wait()
+        return await orig(*a, **k)
+    app.router.call = slow
+    t = asyncio.create_task(app.orch.run_task("x", 1))
+    for _ in range(200):
+        await asyncio.sleep(0.02)
+        if "marketer" in app.team.busy:
+            break
+    assert app.orch.stop_task(1) and not app.orch.stop_task(999)
+    res = await t
+    assert res["status"] == "stopped" and "to'xtatdingiz" in res["error"]
+    assert "researcher" in res["result"]  # to'xtatishgacha bajarilgan ish saqlanadi
+    assert app.team.busy == {} and app.orch.running == {} and app.orch._stopping == set()
+
+
+async def test_external_cancellation_is_not_swallowed(make_app):
+    import asyncio
+    app, _ = await make_app(scripted_company())
+    orig = app.router.call
+    gate = asyncio.Event()
+
+    async def slow(*a, **k):
+        if k.get("agent") == "researcher":
+            await gate.wait()
+        return await orig(*a, **k)
+    app.router.call = slow
+    t = asyncio.create_task(app.orch.run_task("x", 1))
+    await asyncio.sleep(0.2)
+    t.cancel()  # dastur to'xtayotgan holat: foydalanuvchi to'xtatishi emas
+    import pytest
+    with pytest.raises(asyncio.CancelledError):
+        await t
+
+
+async def test_run_command_is_killed_when_task_is_cancelled(make_app, tmp_path):
+    import asyncio
+    from aicompany.approvals import AutoApprover
+    from aicompany.tools import TOOLS, ToolEnv
+    app, _ = await make_app(scripted_company())
+    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings, task_id=1, approver=AutoApprover(True))
+    procs = []
+    orig = asyncio.create_subprocess_shell
+
+    async def spy(*a, **k):
+        p = await orig(*a, **k)
+        procs.append(p)
+        return p
+    asyncio.create_subprocess_shell = spy
+    try:
+        t = asyncio.create_task(TOOLS["run_command"].handler(env, {"command": "sleep 30"}))
+        await asyncio.sleep(0.4)
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+        await asyncio.sleep(0.3)
+    finally:
+        asyncio.create_subprocess_shell = orig
+    assert procs and procs[0].returncode is not None  # jarayon o'ldirilgan
+
+
+async def test_old_database_is_migrated_without_data_loss(tmp_path):
+    import sqlite3
+    from aicompany.db import Store
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.executescript("""
+      CREATE TABLE tasks (id INTEGER PRIMARY KEY, chat_id INTEGER, request TEXT NOT NULL, status TEXT NOT NULL,
+                          plan TEXT, result TEXT, created_at TEXT, finished_at TEXT);
+      INSERT INTO tasks (id, chat_id, request, status, created_at) VALUES (7, 1, 'eski vazifa', 'done', '2026-01-01');
+      CREATE TABLE agents (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, role TEXT NOT NULL,
+                           system_prompt TEXT NOT NULL, tier TEXT NOT NULL, status TEXT NOT NULL, created_by TEXT,
+                           created_at TEXT, fired_at TEXT);
+      INSERT INTO agents (name, role, system_prompt, tier, status) VALUES ('ceo', 'r', 'p', 'mid', 'active');
+    """)
+    con.commit()
+    con.close()
+    store = Store(f"sqlite+aiosqlite:///{path}")
+    await store.init()
+    await store.init()  # ikkinchi marta ham xavfsiz
+    tasks = await store.list_tasks()
+    assert [t["request"] for t in tasks] == ["eski vazifa"] and tasks[0]["archived"] == 0
+    assert (await store.list_agents())[0]["tools"] == ""
+    await store.set_archived(7, True)
+    assert await store.list_tasks() == [] and len(await store.list_tasks(archived=True)) == 1
+    await store.close()

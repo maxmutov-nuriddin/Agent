@@ -23,6 +23,10 @@ class Paused(Exception):
     pass
 
 
+class Stopped(Exception):
+    """Egasi vazifani to'xtatdi."""
+
+
 async def _noop(_: str):
     return None
 
@@ -33,6 +37,8 @@ class Orchestrator:
         self.store, self.team, self.settings, self.max_revisions = store, team, settings, max_revisions
         self.approver = approver or DenyApprover()
         self.sem = asyncio.Semaphore(getattr(settings, "max_parallel", 2))
+        self.running: dict[int, asyncio.Task] = {}
+        self._stopping: set[int] = set()
 
     async def _check_pause(self):
         if await self.store.get_kv("paused") == "1":
@@ -59,27 +65,57 @@ class Orchestrator:
         "If a sensible default exists, do the task instead of asking. Never claim work is done in chat mode. "
         "Reply in the language the owner uses (Uzbek, Russian or English).")
 
+    CHAT_ONLY = (
+        "You are the CEO of an AI company, talking with its owner in a CHAT. This chat is for conversation only: "
+        "greetings, questions about the company, team, budget and earlier results, advice, opinions, brainstorming, "
+        "clarifying questions. NEVER start or claim to do work from here. Return ONLY JSON: "
+        "{\"reply\": \"...\", \"proposed_task\": \"...\"}. Put your conversational answer in \"reply\" (short, warm, "
+        "in the owner's language). If, and only if, the owner clearly asks for real work to be done (create, write, "
+        "research, build, analyze...), set \"proposed_task\" to a COMPLETE self-contained description (merging earlier "
+        "messages) and make the reply a short offer such as 'Buni vazifa qilib topshiraymi?'; the app shows a "
+        "'Submit as task' button. Otherwise proposed_task is an empty string.")
+
     async def handle(self, text: str, chat_id: int = 0, notify: Notify = _noop,
-                     attachments: list[Path] | None = None) -> dict:
-        """Oddiy xabarni qabul qiladi: avval suhbat/vazifa ekanini aniqlaydi."""
+                     attachments: list[Path] | None = None, allow_tasks: bool = True) -> dict:
+        """Oddiy xabarni qabul qiladi. allow_tasks=True: suhbat yoki vazifa ekanini o'zi aniqlaydi (Telegram).
+        allow_tasks=False: faqat suhbat; ish so'ralsa vazifa taklif qiladi (veb-chat)."""
         await self.store.add_chat(chat_id, "owner", text)
         decision = {"mode": "task", "task": text, "reply": ""}
         if not attachments:  # fayl yuborilgan bo'lsa, bu aniq vazifa
-            decision = await self._front_desk(text, chat_id)
+            decision = await self._front_desk(text, chat_id, allow_tasks)
         if decision["mode"] == "chat":
             await self.store.add_chat(chat_id, "ceo", decision["reply"])
             await notify(decision["reply"])
-            return {"kind": "chat", "reply": decision["reply"]}
+            if decision.get("task"):
+                await self.store.add_chat(chat_id, "proposal", json.dumps({"task": decision["task"]}, ensure_ascii=False))
+            return {"kind": "chat", "reply": decision["reply"], "proposed_task": decision.get("task") or None}
         if decision["reply"]:
             await self.store.add_chat(chat_id, "ceo", decision["reply"])
             await notify(decision["reply"])
-        res = await self.run_task(decision["task"], chat_id, notify, attachments)
+        return await self._run_and_log(decision["task"], chat_id, notify, attachments)
+
+    async def submit_task(self, text: str, chat_id: int = 0, notify: Notify = _noop,
+                          attachments: list[Path] | None = None) -> dict:
+        """Aniq vazifa (suhbatsiz): «Vazifa berish» tugmasi."""
+        await self.store.add_chat(chat_id, "owner", "📌 " + text)
+        return await self._run_and_log(text, chat_id, notify, attachments)
+
+    async def _run_and_log(self, task_text, chat_id, notify, attachments) -> dict:
+        res = await self.run_task(task_text, chat_id, notify, attachments)
         summary = f"[Vazifa #{res['task_id']} {res['status']}] " + (res.get("result") or res.get("error") or "")
         await self.store.add_chat(chat_id, "ceo", summary[:1500])
         res["kind"] = "task"
         return res
 
-    async def _front_desk(self, text: str, chat_id: int) -> dict:
+    def stop_task(self, task_id: int) -> bool:
+        t = self.running.get(task_id)
+        if not t or t.done():
+            return False
+        self._stopping.add(task_id)
+        t.cancel()
+        return True
+
+    async def _front_desk(self, text: str, chat_id: int, allow_tasks: bool = True) -> dict:
         history = [h for h in await self.store.recent_chat(chat_id, 40) if h["role"] in ("owner", "ceo")][-9:-1]
         # oxirgisi hozirgi xabarning o'zi
         hist = "\n".join(f"{'Owner' if h['role'] == 'owner' else 'CEO'}: {clip(h['text'], 600)}" for h in history)
@@ -88,15 +124,19 @@ class Orchestrator:
         roster = await self.team.roster()
         prompt = (f"# Team\n{roster}\n\n" + (f"# Memory\n{memo}\n\n" if memo else "") +
                   (f"# Recent conversation\n{hist}\n\n" if hist else "") + f"# Latest owner message\n{text}")
-        res = await self.team.router.call("cheap", self.FRONT_DESK, [{"role": "user", "content": prompt}],
-                                          agent="ceo-chat")
+        res = await self.team.router.call("cheap", self.FRONT_DESK if allow_tasks else self.CHAT_ONLY,
+                                          [{"role": "user", "content": prompt}], agent="ceo-chat")
         try:
             d = extract_json(res.text)
-            if d.get("mode") == "task":
-                return {"mode": "task", "reply": str(d.get("reply", "")).strip(),
-                        "task": str(d.get("task", "")).strip() or text}
-            if str(d.get("reply", "")).strip():
-                return {"mode": "chat", "reply": str(d["reply"]).strip(), "task": ""}
+            reply = str(d.get("reply", "")).strip()
+            if allow_tasks and d.get("mode") == "task":
+                return {"mode": "task", "reply": reply, "task": str(d.get("task", "")).strip() or text}
+            if not allow_tasks:  # faqat suhbat: ish so'ralgan bo'lsa taklif sifatida qaytaramiz
+                proposal = str(d.get("proposed_task") or (d.get("task") if d.get("mode") == "task" else "") or "").strip()
+                return {"mode": "chat", "reply": reply or ("Buni vazifa qilib topshiraymi?" if proposal else "Tushundim."),
+                        "task": proposal}
+            if reply:
+                return {"mode": "chat", "reply": reply, "task": ""}
         except (ValueError, TypeError):
             pass
         return {"mode": "chat", "reply": res.text.strip() or "Tushunmadim, qaytadan yozing.", "task": ""}
@@ -119,10 +159,12 @@ class Orchestrator:
         await notify(f"📝 Vazifa #{task_id} qabul qilindi. Rahbar rejalashtiryapti...")
         out = {"task_id": task_id, "workspace": str(ws)}
         try:
-            result = await self._run(task_id, request, notify, env)
+            result = await self._run_guarded(task_id, request, notify, env)
             await self.store.update_task(task_id, status="done", result=result, finished_at=now())
             out.update(status="done", result=result)
             await self._learn(task_id, request, result)
+        except Stopped:
+            out.update(status="stopped", error="Siz vazifani to'xtatdingiz.")
         except Paused:
             out.update(status="paused", error="Vazifa /pause sababli to'xtatildi.")
         except TaskBudgetExceeded as e:
@@ -139,6 +181,20 @@ class Orchestrator:
         out["files"] = self._files(ws)
         await self._maybe_review(task_id, notify)
         return out
+
+    async def _run_guarded(self, task_id, request, notify, env) -> str:
+        """Ishni alohida vazifa sifatida yuritadi, shunda uni tashqaridan to'xtatish mumkin."""
+        inner = asyncio.ensure_future(self._run(task_id, request, notify, env))
+        self.running[task_id] = inner
+        try:
+            return await inner
+        except asyncio.CancelledError:
+            if task_id in self._stopping:
+                raise Stopped() from None
+            raise  # dastur to'xtayotgan bo'lsa, bekor qilishni yashirmaymiz
+        finally:
+            self.running.pop(task_id, None)
+            self._stopping.discard(task_id)
 
     async def _maybe_review(self, task_id: int, notify: Notify):
         if task_id % REVIEW_EVERY:

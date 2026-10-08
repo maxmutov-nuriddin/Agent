@@ -34,6 +34,8 @@ tasks = sa.Table(
     sa.Column("result", sa.Text),
     sa.Column("created_at", sa.String),
     sa.Column("finished_at", sa.String),
+    sa.Column("archived", sa.Integer, server_default=sa.text("0")),
+    sa.Column("archived_at", sa.String),
 )
 messages = sa.Table(
     "messages", md,
@@ -119,6 +121,23 @@ class Store:
     async def init(self):
         async with self.engine.begin() as c:
             await c.run_sync(md.create_all)
+            await c.run_sync(self._add_missing_columns)
+
+    @staticmethod
+    def _add_missing_columns(conn):
+        """Eski bazaga yangi ustunlarni qo'shadi (create_all mavjud jadvalni o'zgartirmaydi)."""
+        insp = sa.inspect(conn)
+        for table in md.sorted_tables:
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in have:
+                    continue
+                ddl = f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(conn.dialect)}"
+                if col.server_default is not None:
+                    ddl += f" DEFAULT {col.server_default.arg.text}"
+                elif not col.nullable:
+                    ddl += " DEFAULT ''"
+                conn.execute(sa.text(ddl))
 
     async def close(self):
         await self.engine.dispose()
@@ -179,8 +198,21 @@ class Store:
     async def get_task(self, task_id):
         return await self._one(sa.select(tasks).where(tasks.c.id == task_id))
 
-    async def list_tasks(self, limit=10):
-        return await self._all(sa.select(tasks).order_by(tasks.c.id.desc()).limit(limit))
+    async def list_tasks(self, limit=10, archived: bool = False):
+        q = sa.select(tasks).order_by(tasks.c.id.desc()).limit(limit)
+        q = q.where(tasks.c.archived == 1) if archived else q.where(sa.or_(tasks.c.archived == 0, tasks.c.archived.is_(None)))
+        return await self._all(q)
+
+    async def set_archived(self, task_id, flag: bool):
+        await self._exec(sa.update(tasks).where(tasks.c.id == task_id)
+                         .values(archived=1 if flag else 0, archived_at=now() if flag else None))
+
+    async def delete_task(self, task_id):
+        """Vazifa va uning xabarlarini butunlay o'chiradi. Sarf yozuvlari (usage) saqlanadi: pul haqiqatan sarflangan."""
+        async with self.engine.begin() as c:
+            await c.execute(sa.delete(messages).where(messages.c.task_id == task_id))
+            await c.execute(sa.delete(approvals).where(approvals.c.task_id == task_id))
+            await c.execute(sa.delete(tasks).where(tasks.c.id == task_id))
 
     async def add_message(self, task_id, agent, content):
         await self._exec(sa.insert(messages).values(task_id=task_id, agent=agent, content=content, created_at=now()))

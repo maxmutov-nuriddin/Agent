@@ -59,7 +59,7 @@ def scripted_company(plan=None, qa=None):
     qa_answers = list(qa or [{"verdict": "pass", "issues": []}])
 
     def handler(system, user, model):
-        if "front desk" in system:
+        if "front desk" in system or "in a CHAT" in system:
             latest = user.split("# Latest owner message\n")[-1]
             return json.dumps({"mode": "task", "reply": "Boshladim", "task": latest})
         if "durable facts" in system:
