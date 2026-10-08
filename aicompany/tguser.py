@@ -43,6 +43,27 @@ def parse_proxy(raw: str | None):
     raise ValueError("proksi tg://proxy?server=..&port=..&secret=.. yoki socks5://host:port ko'rinishida bo'lsin")
 
 
+CODE_VIA = {
+    "SentCodeTypeApp": "Telegram ilovasiga: shu akkaunt ochiq turgan telefon/kompyuterdagi \"Telegram\" rasmiy chatiga",
+    "SentCodeTypeSms": "SMS bilan",
+    "SentCodeTypeFirebaseSms": "SMS bilan",
+    "SentCodeTypeSmsWord": "SMS bilan (so'z ko'rinishida)",
+    "SentCodeTypeSmsPhrase": "SMS bilan (ibora ko'rinishida)",
+    "SentCodeTypeCall": "qo'ng'iroq bilan (kodni aytib beradi)",
+    "SentCodeTypeFlashCall": "qisqa qo'ng'iroq bilan (raqamning oxirgi xonalari kod)",
+    "SentCodeTypeMissedCall": "o'tkazib yuborilgan qo'ng'iroq bilan (qo'ng'iroq qilgan raqamning oxirgi xonalari kod)",
+    "SentCodeTypeEmailCode": "emailingizga",
+    "SentCodeTypeFragmentSms": "fragment.com orqali (anonim raqam)",
+    "SentCodeTypeSetUpEmailRequired": "Telegram avval email ulashni talab qilyapti: rasmiy ilovada shu raqam bilan kirib, email qo'shing",
+    "CodeTypeSms": "SMS bilan", "CodeTypeCall": "qo'ng'iroq bilan", "CodeTypeFlashCall": "qisqa qo'ng'iroq bilan",
+    "CodeTypeMissedCall": "o'tkazib yuborilgan qo'ng'iroq bilan", "CodeTypeFragmentSms": "fragment.com orqali",
+}
+
+
+def code_via(obj) -> str:
+    return CODE_VIA.get(type(obj).__name__, "") if obj is not None else ""
+
+
 class TgStale(TgError):
     """Sessiya fayli bor, lekin ichida kirilgan akkaunt yo'q (tugallanmagan kirish qoldig'i)."""
 
@@ -161,7 +182,36 @@ class TgUser:
             log.warning("Telegram send_code failed: %r", e)
             await self._quiet_disconnect(client)
             raise self._friendly(e) from e
-        self._login = {"client": client, "phone": phone, "hash": getattr(sent, "phone_code_hash", None)}
+        self._login = {"client": client, "phone": phone}
+        self._remember_sent(sent)
+
+    def _remember_sent(self, sent):
+        self._login.update(hash=getattr(sent, "phone_code_hash", None) or self._login.get("hash"),
+                           via=code_via(getattr(sent, "type", None)) or "noma'lum yo'l bilan",
+                           next=code_via(getattr(sent, "next_type", None)), timeout=getattr(sent, "timeout", None))
+        log.info("Telegram code sent: type=%s next=%s", type(getattr(sent, "type", None)).__name__,
+                 type(getattr(sent, "next_type", None)).__name__)
+
+    def login_info(self) -> dict:
+        if not self._login:
+            return {}
+        return {k: self._login.get(k) for k in ("via", "next", "timeout")}
+
+    async def login_resend(self) -> dict:
+        """Kodni keyingi yo'l bilan qayta yuborish (Telethon shu mijozda ResendCodeRequest qiladi)."""
+        if not self._login:
+            raise TgError("Avval telefon raqamini kiriting va kod so'rang")
+        try:
+            sent = await asyncio.wait_for(self._login["client"].send_code_request(self._login["phone"]), REQUEST_TIMEOUT)
+        except asyncio.TimeoutError as e:
+            raise TgError("Telegram javob bermadi: qayta urining") from e
+        except Exception as e:  # noqa: BLE001
+            log.warning("Telegram resend failed: %r", e)
+            if type(e).__name__ in ("SendCodeUnavailableError", "PhoneCodeExpiredError"):
+                raise TgError("Telegram boshqa yo'l taklif qilmayapti: biroz kutib \"Boshqa raqam / qayta\" ni bosing") from e
+            raise self._friendly(e) from e
+        self._remember_sent(sent)
+        return self.login_info()
 
     async def login_verify(self, code: str = "", password: str = "") -> str:
         """'ok' (kirdi) yoki 'password' (ikki bosqichli parol kerak). Xato bo'lsa TgError."""

@@ -441,7 +441,7 @@ async def test_telegram_approval_card_has_its_own_kind(web):
 async def test_integrations_overview(web2):
     c, app, provs = web2
     d = (await get(c, "/api/integrations"))[1]
-    assert d["telegram_account"] == {"configured": False, "keys": False, "pending": False, "proxy": False, "me": "", "mode": "read", "allowed": [],
+    assert d["telegram_account"] == {"configured": False, "keys": False, "pending": False, "proxy": False, "login": {}, "me": "", "mode": "read", "allowed": [],
                                      "private_providers": []}
     assert d["voice"] is True and d["maps"] == "osm" and d["search"] == "duckduckgo" and d["primary"] == "auto"
     assert [(p["name"], p["enabled"]) for p in d["providers"]] == [("anthropic", True), ("openai", False), ("gemini", True)]
@@ -632,7 +632,10 @@ class LoginClient:
 
     async def send_code_request(self, phone):
         self.log.append(("code", phone))
-        return type("Sent", (), {"phone_code_hash": "H1"})()
+        n = sum(1 for x in self.log if x[0] == "code")
+        kind = "SentCodeTypeApp" if n == 1 else "SentCodeTypeSms"
+        return type("Sent", (), {"phone_code_hash": f"H{n}", "type": type(kind, (), {})(),
+                                 "next_type": type("CodeTypeSms", (), {})(), "timeout": 60})()
 
     async def sign_in(self, phone=None, code=None, phone_code_hash=None, password=None):
         self.log.append(("sign_in", phone, code, phone_code_hash, password))
@@ -792,3 +795,19 @@ async def test_pending_login_is_not_mistaken_for_connected(web, tmp_path):
     st, d = await post(c, "/api/tg/verify", {"code": "12345"})
     assert (st, d["status"]) == (200, "ok")
     assert (await get(c, "/api/integrations"))[1]["telegram_account"]["configured"] is True
+
+
+async def test_tg_shows_where_code_went_and_resends(web):
+    from aicompany.tguser import TgUser
+    c, app = web
+    client = LoginClient()
+    app.tg = TgUser(app.settings, client_factory=lambda: client)
+    app.tg.api_id, app.tg.api_hash = 1, "h"
+    st, d = await post(c, "/api/tg/code", {"phone": "+998901234567"})
+    assert st == 200 and "Telegram ilovasiga" in d["via"] and d["next"] == "SMS bilan"
+    assert "Telegram ilovasiga" in (await get(c, "/api/integrations"))[1]["telegram_account"]["login"]["via"]
+    st, d = await post(c, "/api/tg/resend")
+    assert st == 200 and d["via"] == "SMS bilan"
+    await post(c, "/api/tg/verify", {"code": "55555"})
+    assert ("sign_in", "+998901234567", "55555", "H2", None) in client.log    # qayta yuborilgan kod xeshi
+    assert (await post(c, "/api/tg/resend"))[0] == 400                        # kirish tugagan

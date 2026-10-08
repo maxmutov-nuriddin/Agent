@@ -386,7 +386,7 @@ def make_web_app(app: App) -> web.Application:
             "telegram_bot": bool(s.telegram_token),
             "telegram_account": {"configured": bool(tg and tg.configured()), "mode": s.tg_mode,
                                  "keys": bool(tg and tg.has_keys()), "pending": bool(tg and tg.login_pending()),
-                                 "proxy": bool(tg and tg.proxy),
+                                 "proxy": bool(tg and tg.proxy), "login": (tg.login_info() if tg else {}),
                                  "me": (tg.me if tg and tg.configured() else ""), "allowed": list(s.tg_allowed),
                                  "private_providers": list(s.private_providers)},
             "maps": "google" if s.google_maps_key else "osm",
@@ -432,7 +432,13 @@ def make_web_app(app: App) -> web.Application:
             await app.tg.login_start(phone if phone.startswith("+") else "+" + phone)
         except TgError as e:
             raise web.HTTPBadRequest(reason=str(e))
-        return json_ok({"ok": True})
+        return json_ok({"ok": True, **app.tg.login_info()})
+
+    async def h_tg_resend(request):
+        try:
+            return json_ok({"ok": True, **await app.tg.login_resend()})
+        except TgError as e:
+            raise web.HTTPBadRequest(reason=str(e))
 
     async def h_tg_verify(request):
         d = await body(request)
@@ -632,7 +638,7 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
-        web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/logout", h_tg_logout), web.get("/api/tg/me", h_tg_me),
+        web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend), web.post("/api/tg/logout", h_tg_logout), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),
