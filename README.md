@@ -139,3 +139,9 @@ Panelga yuklangan fayllar vazifaga nusxalanadi; `workspace/inbox` dagi 7 kundan 
 
 ## Ovozli qo'ng'iroq (ixtiyoriy)
 Agent Telegram akkaunti (Telethon) orqali egasi bilan gaplashadi: qo'ng'iroq qilsangiz ko'taradi, hisobot/savollarga ovoz bilan javob beradi; panelda yoqilsa, vazifa tugaganda o'zi qo'ng'iroq qiladi. Faqat egasi ID'si (`OWNER_TELEGRAM_ID` yoki panelda kiritilgan) bilan ishlaydi. `py-tgcalls` kerak (requirements.txt'da), ovoz uchun `GEMINI_API_KEY`. Panel → Telegram akkaunt → Ovozli qo'ng'iroq. Doimiy ochiq server tavsiya etiladi (bepul Render uxlab qoladi).
+
+## Zaxira nusxa (server)
+O'rnatish (bir marta, root): `bash /opt/aijamoa/src/deploy/install-backup.sh` — har kuni 03:00 (Toshkent) bazaning nusxasi `/opt/aijamoa/backups/` ga yoziladi, oxirgi 14 tasi saqlanadi.
+- Ro'yxat: `ls -lh /opt/aijamoa/backups` · Qo'lda nusxa: `systemctl start aijamoa-backup` · Holat: `systemctl list-timers aijamoa-backup.timer`
+- Tiklash (Postgres, EHTIYOT: hozirgi ma'lumot ustiga yoziladi): `systemctl stop aijamoa`, keyin
+  `gunzip -c /opt/aijamoa/backups/aijamoa-SANA.sql.gz | psql "$DATABASE_URL"` (bo'sh bazaga), so'ng `systemctl start aijamoa`.
