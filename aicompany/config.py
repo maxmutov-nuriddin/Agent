@@ -59,6 +59,7 @@ class Settings:
     tg_mode: str = "read"  # read | write
     tg_allowed: tuple = ()
     tg_max_sends: int = 10
+    tg_proxy: str | None = None  # tg://proxy?... (MTProxy) yoki socks5://host:port
     private_providers: tuple = ()
     tier_providers: dict = field(default_factory=dict)
 
@@ -122,6 +123,7 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
         tg_mode="write" if (env.get("TG_MODE") or "").strip().lower() == "write" else "read",
         tg_allowed=tuple(x.strip().lower().lstrip("@") for x in (env.get("TG_ALLOWED") or "").split(",") if x.strip()),
         tg_max_sends=int(env.get("TG_MAX_SENDS_PER_HOUR", 10)),
+        tg_proxy=(env.get("TG_PROXY") or "").strip() or None,
         private_providers=tuple(x.strip().lower() for x in (env.get("PRIVATE_PROVIDERS") or "").split(",") if x.strip()),
         primary_provider=(env.get("PRIMARY_PROVIDER") or "auto").strip().lower(),
         tier_providers=parse_tier_providers(env.get("PROVIDER_BY_TIER", "")),

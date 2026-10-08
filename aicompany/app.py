@@ -56,6 +56,7 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
         kid, khash = await store.get_kv("tg_api_id"), await store.get_kv("tg_api_hash")
         if kid and kid.isdigit() and khash:
             tg.api_id, tg.api_hash = int(kid), khash
+    tg.proxy = await store.get_kv("tg_proxy") or tg.proxy
     tg.me = await store.get_kv("tg_me") or ""
     orch = Orchestrator(store, team, settings, settings.max_revisions, approver or center, tg)
     return App(settings, store, router, team, orch, center, tg)

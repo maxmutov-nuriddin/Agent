@@ -53,6 +53,7 @@ Yangi xodim **assistant** shu imkoniyatlarga ega.
 **Shaxsiy Telegram akkaunt** (rasmiy foydalanuvchi API'si; agent uchun ortiqcha akkaunt tavsiya etiladi):
 1. Panel → **Hisob → Ulanishlar → 📨 Telegram akkauntni ulash**. Qadamlar: (1) my.telegram.org dan olingan `api_id` va `api_hash` ni kiriting, (2) telefon raqami, (3) Telegramga kelgan kod (ikki bosqichli parol bo'lsa, uni ham). Bir marta bajariladi.
    Terminal varianti: `.env` ga `TG_API_ID`/`TG_API_HASH` yozib `python -m aicompany tglogin`.
+   Kod so'rashda «Telegram serverlariga ulanib bo'lmadi» chiqsa: tarmoq Telegram serverlarini to'sayapti. Telegram ilovangizdagi proksi havolasini (Sozlamalar → Ma'lumotlar va xotira → Proksi; `tg://proxy?...` yoki `socks5://...`) shu oynadagi «Proksi» maydoniga qo'ying (yoki `.env` da `TG_PROXY`). `ee...` turidagi (fake-TLS) MTProxy qo'llanmaydi.
 2. Panelda kiritilgan kalitlar `data/` bazasida saqlanadi (git'ga tushmaydi). Uzish: xuddi shu oyna → «Akkauntni uzish» (sessiya Telegramda ham tugatiladi).
 3. Boshlanishda `TG_MODE=read` (faqat o'qish va javob loyihasi). Yuborish uchun `TG_MODE=write`: **har bir xabar** Kartalar/Telegram tugmalarida sizga kimga va qanday matn bilan ketishi ko'rsatilib, tasdig'ingizdan keyingina yuboriladi. Soatiga `TG_MAX_SENDS_PER_HOUR` dan ko'p yuborilmaydi, `TG_ALLOWED` bilan faqat ma'lum kontaktlarga cheklash mumkin.
 4. Asboblar: `tg_chats`, `tg_read`, `tg_send`. Chatdagi xabarlar «ishonchsiz matn» deb belgilanadi: ularda «pul o'tkaz» kabi ko'rsatma bo'lsa bajarilmaydi.

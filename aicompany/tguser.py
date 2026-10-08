@@ -5,13 +5,42 @@ va git'ga tushmaydi (data/ papkasi .gitignore da).
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import parse_qs, urlparse
+
+log = logging.getLogger("aicompany.tg")
+CONNECT_TIMEOUT = 25  # soniya: Telegram serveriga ulanib bo'lmasa, abadiy kutmaymiz
+REQUEST_TIMEOUT = 30
+NO_CONNECT = ("Telegram serverlariga ulanib bo'lmadi ({s} soniya). Internet yoki VPN'ni tekshiring. "
+              "Telegram ilovangiz proksi orqali ishlasa, o'sha proksi havolasini (tg://proxy?... yoki socks5://...) "
+              "\"Proksi\" maydoniga qo'ying.")
 
 
 class TgError(Exception):
     """Foydalanuvchiga tushunarli Telegram xatosi."""
+
+
+def parse_proxy(raw: str | None):
+    """Proksi satri -> ("mtproxy", (host, port, secret)) | ("socks", {...}) | None. Noto'g'ri bo'lsa ValueError."""
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    u = urlparse(raw)
+    if u.scheme == "tg" or (u.netloc in ("t.me", "telegram.me") and u.path.strip("/") == "proxy"):
+        q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        if not (q.get("server") and str(q.get("port", "")).isdigit() and q.get("secret")):
+            raise ValueError("proksi havolasida server, port va secret bo'lishi kerak")
+        if q["secret"].lower().startswith("ee"):
+            raise ValueError("bu turdagi (ee... fake-TLS) MTProxy qo'llanmaydi: SOCKS5 yoki boshqa proksi kerak")
+        return "mtproxy", (q["server"], int(q["port"]), q["secret"])
+    if u.scheme in ("socks5", "socks4", "http") and u.hostname and u.port:
+        return "socks", {"proxy_type": u.scheme, "addr": u.hostname, "port": u.port, "rdns": True,
+                         "username": u.username, "password": u.password}
+    raise ValueError("proksi tg://proxy?server=..&port=..&secret=.. yoki socks5://host:port ko'rinishida bo'lsin")
 
 
 class TgStale(TgError):
@@ -26,6 +55,7 @@ class TgUser:
     def __init__(self, settings, client_factory: Callable[[], Any] | None = None):
         self.s = settings
         self.api_id, self.api_hash = settings.tg_api_id, settings.tg_api_hash  # panel orqali ham kiritilishi mumkin
+        self.proxy = settings.tg_proxy
         self._factory = client_factory
         self._client = None
         self.me = ""
@@ -44,10 +74,38 @@ class TgUser:
         if self._factory:
             return self._factory()
         try:
-            from telethon import TelegramClient
+            from telethon import TelegramClient, connection
         except ImportError as e:
             raise TgError("Telethon o'rnatilmagan: `pip install telethon`") from e
-        return TelegramClient(self.s.tg_session, self.api_id, self.api_hash)
+        kw = {"connection_retries": 1, "retry_delay": 1, "timeout": 10, "request_retries": 2}
+        try:
+            px = parse_proxy(self.proxy)
+        except ValueError as e:
+            raise TgError(f"Proksi noto'g'ri: {e}") from e
+        if px and px[0] == "mtproxy":
+            kw.update(connection=connection.ConnectionTcpMTProxyRandomizedIntermediate, proxy=px[1])
+        elif px:
+            try:
+                import python_socks  # noqa: F401 — Telethon SOCKS uchun shuni ishlatadi
+            except ImportError as e:
+                raise TgError("SOCKS proksi uchun: pip install 'python-socks[asyncio]'") from e
+            kw["proxy"] = px[1]
+        return TelegramClient(self.s.tg_session, self.api_id, self.api_hash, **kw)
+
+    async def _connect(self, client):
+        try:
+            await asyncio.wait_for(client.connect(), CONNECT_TIMEOUT)
+        except (asyncio.TimeoutError, OSError, ConnectionError) as e:
+            log.warning("Telegram connect failed: %r", e)
+            await self._quiet_disconnect(client)
+            raise TgError(NO_CONNECT.format(s=CONNECT_TIMEOUT)) from e
+
+    @staticmethod
+    async def _quiet_disconnect(client):
+        try:
+            await asyncio.wait_for(client.disconnect(), 5)
+        except Exception:  # noqa: BLE001
+            pass
 
     async def client(self):
         if self._client is not None:
@@ -55,7 +113,7 @@ class TgUser:
         if not self.configured():
             raise TgError("Telegram akkaunt ulanmagan: panelda Hisob -> Telegram akkaunt (yoki `python -m aicompany tglogin`)")
         client = self._new_client()
-        await client.connect()
+        await self._connect(client)
         if not await client.is_user_authorized():
             await client.disconnect()
             raise TgStale("Telegram sessiyasi eskirgan: panelda Hisob -> Telegram akkaunt orqali qayta ulang")
@@ -64,7 +122,7 @@ class TgUser:
 
     async def close(self):
         if self._client is not None:
-            await self._client.disconnect()
+            await self._quiet_disconnect(self._client)
             self._client = None
 
     # ---------- panel orqali kirish (telefon + kod [+ parol]) ----------
@@ -90,14 +148,17 @@ class TgUser:
             raise TgError("Avval TG_API_ID va TG_API_HASH ni kiriting")
         await self.close()  # bir vaqtda ikki ulanish sessiya faylini buzmasin
         await self._drop_login()
+        self._remove_files()  # har urinish toza sessiyadan: eski chala fayl ulanishni buzmasin
         client = self._new_client()
+        await self._connect(client)
         try:
-            await client.connect()
-            sent = await client.send_code_request(phone)
-        except TgError:
-            raise
+            sent = await asyncio.wait_for(client.send_code_request(phone), REQUEST_TIMEOUT)
+        except asyncio.TimeoutError as e:
+            await self._quiet_disconnect(client)
+            raise TgError(f"Telegram {REQUEST_TIMEOUT} soniyada javob bermadi: qayta urining yoki proksi qo'ying") from e
         except Exception as e:  # noqa: BLE001 — Telethon turli xatolar beradi
-            await client.disconnect()
+            log.warning("Telegram send_code failed: %r", e)
+            await self._quiet_disconnect(client)
             raise self._friendly(e) from e
         self._login = {"client": client, "phone": phone, "hash": getattr(sent, "phone_code_hash", None)}
 
@@ -108,9 +169,11 @@ class TgUser:
         client, phone = self._login["client"], self._login["phone"]
         try:
             if password and not code:
-                await client.sign_in(password=password)
+                await asyncio.wait_for(client.sign_in(password=password), REQUEST_TIMEOUT)
             else:
-                await client.sign_in(phone=phone, code=code, phone_code_hash=self._login["hash"])
+                await asyncio.wait_for(client.sign_in(phone=phone, code=code, phone_code_hash=self._login["hash"]), REQUEST_TIMEOUT)
+        except asyncio.TimeoutError as e:
+            raise TgError("Telegram javob bermadi: qayta urining") from e
         except Exception as e:  # noqa: BLE001
             if type(e).__name__ == "SessionPasswordNeededError":
                 if not password:
@@ -130,28 +193,36 @@ class TgUser:
 
     async def _drop_login(self):
         if self._login:
-            try:
-                await self._login["client"].disconnect()
-            except Exception:  # noqa: BLE001
-                pass
+            await self._quiet_disconnect(self._login["client"])
             self._login = None
 
-    async def logout(self) -> None:
-        """Sessiyani Telegramda ham tugatadi va faylni o'chiradi."""
-        await self._drop_login()
-        try:
-            client = self._client or self._new_client()
-            if not client.is_connected():
-                await client.connect()
-            await client.log_out()
-        except Exception:  # noqa: BLE001 — baribir mahalliy faylni o'chiramiz
-            pass
-        await self.close()
+    def _remove_files(self):
+        if self._factory:
+            return
         for suffix in (".session", ".session-journal"):
             try:
                 Path(self.s.tg_session + suffix).unlink()
             except OSError:
                 pass
+
+    async def logout(self) -> None:
+        """Sessiyani Telegramda ham tugatadi va faylni o'chiradi."""
+        await self._drop_login()
+        client = self._client
+        try:
+            if client is None and (self._factory or session_file(self.s).exists()):
+                client = self._new_client()
+            if client is not None:
+                if not client.is_connected():
+                    await asyncio.wait_for(client.connect(), CONNECT_TIMEOUT)
+                await asyncio.wait_for(client.log_out(), REQUEST_TIMEOUT)
+        except Exception:  # noqa: BLE001 — baribir mahalliy faylni o'chiramiz
+            pass
+        finally:
+            if client is not None:
+                await self._quiet_disconnect(client)  # oldin bu ulanish ochiq qolib ketardi
+            self._client = None
+        self._remove_files()
 
     # ---------- yordamchilar ----------
     @staticmethod

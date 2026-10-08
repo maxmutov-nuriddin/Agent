@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-o";
+const PANEL_V = "2026.10.08-p";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -342,9 +342,10 @@ async function tgSheet() {
   try { t = (await api("/integrations")).telegram_account; } catch (e) { return toast(e.message); }
   const again = () => tgSheet();
   const field = (label, attrs) => { const i = h("input", attrs); return [h("label", {}, label), i, i]; };
-  const run = (btn, fn) => btn.addEventListener("click", async () => {
-    btn.disabled = true;
-    try { await fn(); } catch (e) { toast(e.message); } finally { btn.disabled = false; }
+  const run = (btn, fn, busy) => btn.addEventListener("click", async () => {
+    const label = btn.textContent;
+    btn.disabled = true; if (busy) btn.textContent = busy;
+    try { await fn(); } catch (e) { toast(e.message); } finally { btn.disabled = false; btn.textContent = label; }
   });
   if (t.configured) {
     const out = h("button", { class: "btn outline full" }, "Akkauntni uzish");
@@ -369,10 +370,21 @@ async function tgSheet() {
   }
   if (!t.pending) {
     const [l, phone] = field("Telefon raqami", { placeholder: "+998901234567", inputmode: "tel", autocomplete: "off" });
+    const [lx, proxy] = field("Proksi (ixtiyoriy)", { placeholder: t.proxy ? "saqlangan proksi ishlatiladi (o'chirish: bo'sh joy qoldiring)" : "tg://proxy?server=...&port=...&secret=...  yoki  socks5://host:port", autocomplete: "off" });
+    const err = h("p", { class: "hint" });
     const go = h("button", { class: "btn lime full" }, "Kod yuborish");
-    run(go, async () => { await post("/tg/code", { phone: phone.value }); again(); });
+    run(go, async () => {
+      err.textContent = "";
+      const data = { phone: phone.value };
+      if (proxy.value.trim()) data.proxy = proxy.value.trim();
+      else if (proxy.value) data.proxy = "";            // faqat bo'sh joy = saqlangan proksini o'chirish
+      try { await post("/tg/code", data); } catch (e) { err.textContent = "⚠️ " + e.message; throw e; }
+      again();
+    }, "Telegramga ulanmoqda… (30 soniyagacha)");
     return openSheet(h("h2", {}, "Telegram akkaunt: 2/3"),
-      h("p", { class: "muted" }, "Ortiqcha akkaunt raqamini yozing. Telegram shu akkauntga (yoki SMS bilan) kod yuboradi."), l, phone, h("div", { class: "label" }), go);
+      h("p", { class: "muted" }, "Ortiqcha akkaunt raqamini yozing. Telegram shu akkauntning Telegram ilovasiga (yoki SMS bilan) kod yuboradi."), l, phone,
+      lx, proxy, h("p", { class: "hint" }, "Odatda bo'sh qoldiring. Faqat \"ulanib bo'lmadi\" xatosi chiqsa: Telegram ilovangiz Sozlamalar → Ma'lumotlar va xotira → Proksi dagi havolani shu yerga qo'ying."),
+      err, h("div", { class: "label" }), go);
   }
   const [lc, code] = field("Telegramdan kelgan kod", { placeholder: "12345", inputmode: "numeric", autocomplete: "one-time-code" });
   const [lp, pw] = field("Ikki bosqichli parol (agar qo'ygan bo'lsangiz)", { type: "password", autocomplete: "off" });
@@ -381,8 +393,8 @@ async function tgSheet() {
     const r = await post("/tg/verify", { code: code.value, password: pw.value });
     if (r.status === "password") { toast("Ikki bosqichli parolni kiriting"); return pw.focus(); }
     closeSheet(); toast("✅ Ulandi: " + r.me); refresh(true);
-  });
-  openSheet(h("h2", {}, "Telegram akkaunt: 3/3"), h("p", { class: "muted" }, "Kod ortiqcha akkaunt ochiq Telegram ilovasiga keladi (\"Telegram\" chati). Kodni hech kimga bermang."),
+  }, "Tekshirilmoqda…");
+  openSheet(h("h2", {}, "Telegram akkaunt: 3/3"), h("p", { class: "muted" }, "Kod ortiqcha akkaunt ochiq turgan Telegram ilovasiga (telefonidagi \"Telegram\" rasmiy chatiga) keladi, SMS emas. Kodni hech kimga bermang."),
     lc, code, lp, pw, h("div", { class: "label" }), go,
     h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: async () => { try { await post("/tg/logout"); again(); } catch (e) { toast(e.message); } } }, "↺ Boshqa raqam / qayta")));
 }

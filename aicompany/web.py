@@ -386,6 +386,7 @@ def make_web_app(app: App) -> web.Application:
             "telegram_bot": bool(s.telegram_token),
             "telegram_account": {"configured": bool(tg and tg.configured()), "mode": s.tg_mode,
                                  "keys": bool(tg and tg.has_keys()), "pending": bool(tg and tg.login_pending()),
+                                 "proxy": bool(tg and tg.proxy),
                                  "me": (tg.me if tg and tg.configured() else ""), "allowed": list(s.tg_allowed),
                                  "private_providers": list(s.private_providers)},
             "maps": "google" if s.google_maps_key else "osm",
@@ -411,7 +412,20 @@ def make_web_app(app: App) -> web.Application:
         return json_ok({"ok": True})
 
     async def h_tg_code(request):
-        phone = re.sub(r"[\s()\-]", "", str((await body(request)).get("phone", "")))
+        d = await body(request)
+        phone = re.sub(r"[\s()\-]", "", str(d.get("phone", "")))
+        if "proxy" in d:  # ixtiyoriy: Telegram serveriga to'g'ridan-to'g'ri ulanib bo'lmasa
+            from .tguser import parse_proxy
+            proxy = str(d.get("proxy") or "").strip()
+            try:
+                parse_proxy(proxy)
+            except ValueError as e:
+                raise web.HTTPBadRequest(reason=f"Proksi noto'g'ri: {e}")
+            if proxy:
+                await app.store.set_kv("tg_proxy", proxy)
+            else:
+                await app.store.delete_kv("tg_proxy")
+            app.tg.proxy = proxy or s.tg_proxy
         if not re.fullmatch(r"\+?\d{8,15}", phone):
             raise web.HTTPBadRequest(reason="telefon raqamini +998901234567 ko'rinishida yozing")
         try:

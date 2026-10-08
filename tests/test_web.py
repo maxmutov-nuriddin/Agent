@@ -441,7 +441,7 @@ async def test_telegram_approval_card_has_its_own_kind(web):
 async def test_integrations_overview(web2):
     c, app, provs = web2
     d = (await get(c, "/api/integrations"))[1]
-    assert d["telegram_account"] == {"configured": False, "keys": False, "pending": False, "me": "", "mode": "read", "allowed": [],
+    assert d["telegram_account"] == {"configured": False, "keys": False, "pending": False, "proxy": False, "me": "", "mode": "read", "allowed": [],
                                      "private_providers": []}
     assert d["voice"] is True and d["maps"] == "osm" and d["search"] == "duckduckgo" and d["primary"] == "auto"
     assert [(p["name"], p["enabled"]) for p in d["providers"]] == [("anthropic", True), ("openai", False), ("gemini", True)]
@@ -726,3 +726,45 @@ async def test_tg_stale_session_is_cleaned_and_login_offered(web, tmp_path):
     assert app.tg.configured()
     assert (await get(c, "/api/tg/me"))[1] == {"me": "", "stale": True}
     assert not session_file(app.tg.s).exists() and not app.tg.configured()     # endi kirish qadamlari chiqadi
+
+
+def test_parse_proxy_variants():
+    from aicompany.tguser import parse_proxy
+    assert parse_proxy("") is None
+    assert parse_proxy("tg://proxy?server=1.2.3.4&port=443&secret=dd00ff") == ("mtproxy", ("1.2.3.4", 443, "dd00ff"))
+    assert parse_proxy("https://t.me/proxy?server=p.example&port=8443&secret=abcd")[1] == ("p.example", 8443, "abcd")
+    kind, px = parse_proxy("socks5://u:p@127.0.0.1:1080")
+    assert kind == "socks" and (px["addr"], px["port"], px["username"], px["password"]) == ("127.0.0.1", 1080, "u", "p")
+    for bad in ("salom", "tg://proxy?server=x", "tg://proxy?server=x&port=1&secret=ee11", "socks5://host"):
+        with pytest.raises(ValueError):
+            parse_proxy(bad)
+
+
+async def test_tg_code_does_not_hang_when_telegram_unreachable(web, monkeypatch):
+    import aicompany.tguser as tgu
+    c, app = web
+    monkeypatch.setattr(tgu, "CONNECT_TIMEOUT", 0.2)
+
+    class Hanging(LoginClient):
+        async def connect(self):
+            await asyncio.sleep(30)                                            # tarmoq bloklangan: javob yo'q
+    app.tg = tgu.TgUser(app.settings, client_factory=lambda: Hanging())
+    app.tg.api_id, app.tg.api_hash = 1, "h"
+    st, d = await post(c, "/api/tg/code", {"phone": "+998901234567"})
+    assert st == 400 and "ulanib bo'lmadi" in d["error"] and "proksi" in d["error"].lower()
+    assert not app.tg.login_pending()
+
+
+async def test_tg_proxy_saved_from_panel_and_validated(web):
+    from aicompany.tguser import TgUser
+    c, app = web
+    app.tg = TgUser(app.settings, client_factory=lambda: LoginClient())
+    app.tg.api_id, app.tg.api_hash = 1, "h"
+    st, d = await post(c, "/api/tg/code", {"phone": "+998901234567", "proxy": "nimadir"})
+    assert st == 400 and "Proksi" in d["error"]
+    link = "tg://proxy?server=1.2.3.4&port=443&secret=dd00"
+    assert (await post(c, "/api/tg/code", {"phone": "+998901234567", "proxy": link}))[0] == 200
+    assert await app.store.get_kv("tg_proxy") == link and app.tg.proxy == link
+    assert (await get(c, "/api/integrations"))[1]["telegram_account"]["proxy"] is True
+    assert (await post(c, "/api/tg/code", {"phone": "+998901234567", "proxy": ""}))[0] == 200
+    assert await app.store.get_kv("tg_proxy") is None and not app.tg.proxy
