@@ -79,6 +79,8 @@ def scripted_company(plan=None, qa=None):
         if "durable facts" in system:
             return json.dumps({"facts": ["Owner prefers Uzbek"]})
         if "'ceo'" in system:
+            if "===ANSWER===" in user:  # yakuniy qadoqlash: qisqa javob + qayta bajarish prompti
+                return "===ANSWER===\nFINAL DELIVERABLE\n===PROMPT===\nREPRO PROMPT"
             return json.dumps(plan) if "Plan the work" in user else "FINAL DELIVERABLE"
         if "'qa'" in system:
             return json.dumps(qa_answers.pop(0) if len(qa_answers) > 1 else qa_answers[0])

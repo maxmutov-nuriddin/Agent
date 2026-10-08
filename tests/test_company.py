@@ -255,3 +255,37 @@ async def test_old_database_gets_every_new_column_including_text_defaults(tmp_pa
     assert t["note"] is None and t["archived"] == 0
     await store.init()  # takroriy ishga tushirish xavfsiz
     await store.close()
+
+
+async def test_finished_task_has_result_file_prompt_and_short_answer(make_app):
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "'ceo'" in system and "===ANSWER===" in user:
+            assert "sayt yasab ber" in user and "TO'LIQ HISOBOT" in user      # qadoqlovchi so'rov va to'liq natijani ko'radi
+            return "===ANSWER===\nSayt tayyor: index.html ni oching.\n===PROMPT===\n# Maqsad\nKofexona uchun sayt..."
+        if "'ceo'" in system and "Plan the work" not in user:
+            return "TO'LIQ HISOBOT: uzun natija"
+        return base(system, user, model)
+    app, _ = await make_app(handler)
+    res = await app.orch.run_task("sayt yasab ber", 1)
+    ws = app.settings.workspace_dir / f"task_{res['task_id']}"
+    assert res["result"] == "Sayt tayyor: index.html ni oching."                   # Natija: qisqa, aniq javob
+    assert (ws / "NATIJA.md").read_text() == "TO'LIQ HISOBOT: uzun natija"         # bitta tayyor to'liq natija
+    assert (ws / "PROMPT.md").read_text().startswith("# Maqsad")                    # boshqa AI uchun tayyor prompt
+    assert res["files"][:2] == ["NATIJA.md", "PROMPT.md"]                           # birinchi bo'lib ko'rinadi
+
+
+async def test_packaging_falls_back_when_ceo_ignores_format(make_app):
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "'ceo'" in system and "===ANSWER===" in user:
+            return ""                                                               # format buzildi
+        return base(system, user, model)
+    app, _ = await make_app(handler)
+    res = await app.orch.run_task("reja tuz", 1)
+    ws = app.settings.workspace_dir / f"task_{res['task_id']}"
+    assert res["status"] == "done" and res["result"] == "FINAL DELIVERABLE"        # natija yo'qolmaydi
+    repro = (ws / "PROMPT.md").read_text()
+    assert "reja tuz" in repro and "FINAL DELIVERABLE" in repro                     # zaxira prompt so'rov + namunadan

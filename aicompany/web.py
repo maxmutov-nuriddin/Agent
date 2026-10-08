@@ -197,7 +197,8 @@ def make_web_app(app: App) -> web.Application:
 
     def task_files(task_id: int) -> list[str]:
         ws = s.workspace_dir / f"task_{task_id}"
-        return sorted(str(f.relative_to(ws)) for f in ws.rglob("*") if f.is_file()) if ws.is_dir() else []
+        from .orchestrator import Orchestrator
+        return Orchestrator._files(ws) if ws.is_dir() else []
 
     async def h_task(request):
         t = await app.store.get_task(int(request.match_info["id"]))

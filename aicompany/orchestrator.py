@@ -17,6 +17,8 @@ from .util import clip, extract_json
 Notify = Callable[[str], Awaitable[None]]
 MAX_STEPS = 8
 REVIEW_EVERY = 10
+RESULT_FILE, PROMPT_FILE = "NATIJA.md", "PROMPT.md"  # har tugagan vazifada: bitta tayyor natija + qayta bajarish prompti
+MAIN_FILES = (RESULT_FILE, PROMPT_FILE)
 
 
 class Paused(Exception):
@@ -83,7 +85,9 @@ class Orchestrator:
 
     @staticmethod
     def _files(ws: Path) -> list[str]:
-        return sorted(str(f.relative_to(ws)) for f in ws.rglob("*") if f.is_file())
+        """Asosiy natija va tayyor prompt birinchi, qolganlari alifbo tartibida."""
+        files = sorted(str(f.relative_to(ws)) for f in ws.rglob("*") if f.is_file())
+        return [f for f in MAIN_FILES if f in files] + [f for f in files if f not in MAIN_FILES]
 
     FRONT_DESK = (
         "You are the front desk of an AI company that works for its owner. Decide how to handle the owner's "
@@ -327,7 +331,44 @@ class Orchestrator:
             await notify(f"🔎 QA {len(verdict.get('issues', []))} ta muammo topdi, tuzatilyapti...")
             deliverable = await self._synthesize(task_id, request, outputs, verdict.get("issues", []), "strong", env,
                                                  previous=deliverable)
-        return deliverable
+        return await self._package(task_id, request, deliverable, env)
+
+    async def _package(self, task_id, request, deliverable, env) -> str:
+        """Yakuniy qadoqlash: NATIJA.md (to'liq tayyor natija), PROMPT.md (boshqa AI uchun to'liq prompt)
+        va qaytariladigan qisqa, aniq javob (paneldagi «Natija»)."""
+        ws = env.workspace
+        (ws / RESULT_FILE).write_text(deliverable, encoding="utf-8")
+        previews = []
+        for rel in [f for f in self._files(ws) if f not in MAIN_FILES][:6]:
+            try:
+                previews.append(f"### {rel}\n{clip((ws / rel).read_text(encoding='utf-8'), 1500)}")
+            except (UnicodeDecodeError, OSError):
+                previews.append(f"### {rel}\n(binary)")
+        prompt = (f"# Original request\n{request}\n\n# Final deliverable\n{clip(deliverable, 10000)}\n\n"
+                  f"# Other files produced\n" + ("\n\n".join(previews) or "(none)") + "\n\n"
+                  "Write two sections in the language of the request, in plain human language (no JSON):\n"
+                  "===ANSWER===\nA short, direct answer to exactly what was asked (the conclusion, the numbers, the decision, "
+                  "or what was built and how to use it). Use markdown headings/lists only if it helps. Max ~250 words. "
+                  "Mention the main file names the owner should open.\n"
+                  "===PROMPT===\nA complete, self-contained prompt that the owner can give to ANY other AI to get this same "
+                  "result 100% correctly in one go: the goal, the context, every requirement and constraint, the decisions "
+                  "made, the exact structure/sections/files to produce, the style and language, and acceptance criteria to "
+                  "check the result. Do not refer to 'the team' or 'the files above'; include all needed details inline.")
+        try:
+            raw = await self.team.run_agent("ceo", prompt, task_id=task_id, tier="mid", env=env)
+        except (BudgetExhausted, TaskBudgetExceeded):
+            raw = ""  # limit tugasa ham tayyor natija yo'qolmaydi
+        if "===ANSWER===" not in raw and "===PROMPT===" not in raw:
+            raw = ""  # format buzilgan: zaxira yo'li (to'liq natija + namunaviy prompt)
+        answer, _, repro = raw.partition("===PROMPT===")
+        answer = answer.replace("===ANSWER===", "").strip()
+        repro = repro.strip() or (f"# Vazifa\n{request}\n\n# Kutilgan natija (namuna)\n{clip(deliverable, 6000)}\n\n"
+                                  "Yuqoridagi vazifani to'liq bajaring va natijani shu namunadagi tuzilishda bering.")
+        (ws / PROMPT_FILE).write_text(repro, encoding="utf-8")
+        if not answer:
+            return deliverable
+        warn = deliverable[deliverable.find("\n\n⚠️ QA hali ham"):] if "⚠️ QA hali ham" in deliverable else ""
+        return answer + warn
 
     @staticmethod
     async def _gather_or_cancel(coros):

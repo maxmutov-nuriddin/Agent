@@ -80,6 +80,13 @@ Rollarga guruhlar biriktirilgan (masalan faqat dasturchida `shell` bor). HR yang
 
 **Xavfsizlik chegarasi:** `run_command` to'liq izolyatsiyalangan sandbox EMAS. U workspace papkasida, API kalitlarisiz (toza muhit) ishlaydi, lekin sizning kompyuteringizdagi oddiy jarayon. Shuning uchun har buyruq tasdiqlanadi. Buyruqni o'qib chiqib keyin ruxsat bering. Kelajakda Docker sandbox qo'shiladi.
 
+## Vazifa natijasi
+Har tugagan vazifada:
+- **Natija** (panel/Telegram): so'ralgan savolga qisqa, aniq javob.
+- **`NATIJA.md`**: so'ralgan narsaning hammasi bitta tayyor faylda.
+- **`PROMPT.md`**: boshqa istalgan AI'ga bersangiz, shu ishni to'liq qayta bajaradigan tayyor prompt (panelda «Nusxalash»).
+- Jamoa ishi (reja, har xodim natijasi, QA tekshiruvi) panelda odam o'qiydigan ko'rinishda, yig'ilgan holda.
+
 ## Eslatmalar
 - Botga yoki panel chatiga: "ertaga 9:00 da onamga qo'ng'iroq qilishni eslat", "30 daqiqadan keyin choyni eslat". Rahbar eslatmani darhol qo'yadi (vazifa ochmaydi).
 - Vaqt `REPORT_TZ` bo'yicha. Vaqti kelganda Telegramga (va panel chatiga) keladi.

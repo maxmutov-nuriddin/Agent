@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-v";
+const PANEL_V = "2026.10.08-w";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -18,6 +18,101 @@ const WHY = { done: "", running: "", failed: "Vazifa xato bilan tugadi.", cancel
   limit: "Bitta vazifa uchun ajratilgan pul limiti tugadi. .env dagi MAX_TASK_USD ni oshirishingiz mumkin.", paused: "Hammasi pauzaga qo'yilgan edi.",
   interrupted: "Dastur qayta ishga tushganda vazifa o'rtada uzilgan.", stopped: "" };
 const APPR = { approved: ["✓ Ruxsat berdingiz", ""], denied: ["✕ Siz rad etdingiz", "red"], expired: ["⏱ Javob bermadingiz (muddat tugadi)", "amber"], pending: ["Javob kutilmoqda", ""] };
+const AGENT_UZ = { ceo: "Rahbar", hr: "HR", qa: "Sifat nazorati", developer: "Dasturchi", marketer: "Marketolog",
+  researcher: "Tahlilchi", generalist: "Universal xodim", assistant: "Yordamchi" };
+const agentName = (a) => AGENT_UZ[a] || a.replace(/_/g, " ");
+
+// --- Markdown -> xavfsiz DOM (innerHTML yo'q: matn faqat textNode sifatida) ---
+function inline(s) {
+  const out = [], re = /(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\[[^\]]+\]\((https?:\/\/[^)\s]+)\)|\*[^*\s][^*]*\*)/g;
+  let last = 0, m;
+  while ((m = re.exec(s))) {
+    if (m.index > last) out.push(s.slice(last, m.index));
+    const t = m[0];
+    if (t.startsWith("**") || t.startsWith("__")) out.push(h("b", {}, t.slice(2, -2)));
+    else if (t.startsWith("`")) out.push(h("code", {}, t.slice(1, -1)));
+    else if (t.startsWith("[")) out.push(h("a", { href: m[2], target: "_blank", rel: "noopener noreferrer" }, t.slice(1, t.indexOf("]"))));
+    else out.push(h("i", {}, t.slice(1, -1)));
+    last = re.lastIndex;
+  }
+  if (last < s.length) out.push(s.slice(last));
+  return out;
+}
+const LIST_RE = /^\s*([-*+•]|\d+[.)])\s+/, BLOCK_RE = /^(```|#{1,6}\s|\s*([-*+•]|\d+[.)])\s+|\s*\||>|(-{3,}|\*{3,})\s*$)/;
+function md(src) {
+  const root = h("div", { class: "md" });
+  const lines = String(src || "").replace(/\r/g, "").split("\n");
+  let i = 0;
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^```/.test(l)) {
+      const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+      i++; root.append(h("pre", { class: "pre code" }, buf.join("\n"))); continue;
+    }
+    if (/^#{1,6}\s/.test(l)) { root.append(h(l.match(/^#+/)[0].length <= 2 ? "h3" : "h4", {}, inline(l.replace(/^#+\s*/, "")))); i++; continue; }
+    if (/^(-{3,}|\*{3,})\s*$/.test(l)) { root.append(h("hr")); i++; continue; }
+    if (LIST_RE.test(l)) {
+      const list = h(/^\s*\d/.test(l) ? "ol" : "ul");
+      while (i < lines.length && LIST_RE.test(lines[i])) {
+        const item = lines[i++].replace(LIST_RE, "").replace(/^\[([ xX])\]\s*/, (_, x) => (x === " " ? "☐ " : "☑ "));
+        list.append(h("li", {}, inline(item)));
+      }
+      root.append(list); continue;
+    }
+    if (/^\s*\|/.test(l)) {
+      const rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++]);
+      const cells = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      const body = rows.filter((r) => !/^\s*\|?\s*:?-{2,}/.test(r)).map(cells);
+      const [head, ...rest] = body;
+      root.append(h("div", { class: "tbl" }, h("table", {}, h("thead", {}, h("tr", {}, (head || []).map((c) => h("th", {}, inline(c))))),
+        h("tbody", {}, rest.map((r) => h("tr", {}, r.map((c) => h("td", {}, inline(c)))))))));
+      continue;
+    }
+    if (/^>\s?/.test(l)) {
+      const buf = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) buf.push(lines[i++].replace(/^>\s?/, ""));
+      root.append(h("blockquote", {}, inline(buf.join(" ")))); continue;
+    }
+    if (!l.trim()) { i++; continue; }
+    const buf = [l]; i++;
+    while (i < lines.length && lines[i].trim() && !BLOCK_RE.test(lines[i])) buf.push(lines[i++]);
+    const p = h("p");
+    buf.forEach((b, k) => { if (k) p.append(h("br")); p.append(...inline(b).map((x) => (x.nodeType ? x : document.createTextNode(x)))); });
+    root.append(p);
+  }
+  return root;
+}
+function tryJson(text) {
+  const s = String(text || "").trim().replace(/^```(?:json)?\s*|```$/g, "").trim();
+  if (!s.startsWith("{")) return null;
+  try { return JSON.parse(s); } catch { return null; }
+}
+// Jamoa a'zosining ishini odam tushunadigan ko'rinishga keltiradi (JSON reja, QA hukmi, markdown)
+function readable(m) {
+  const j = tryJson(m.content);
+  if (j && Array.isArray(j.steps)) {
+    return h("div", { class: "md" }, j.summary ? h("p", {}, "📋 " + j.summary) : null,
+      h("ol", {}, j.steps.map((s) => h("li", {}, h("b", {}, agentName(String(s.agent || "?")) + ": "), String(s.task || "")))));
+  }
+  if (j && "verdict" in j) {
+    const issues = (j.issues || []).map(String);
+    return h("div", { class: "md" }, h("p", {}, j.verdict === "pass" ? "✅ Tekshiruvdan o'tdi" : "⚠️ Kamchiliklar topildi:"),
+      issues.length ? h("ul", {}, issues.map((x) => h("li", {}, x))) : null);
+  }
+  if (j && j.role) return h("div", { class: "md" }, h("p", {}, "🧑‍💼 Yangi lavozim: " + j.role));
+  if (j) return h("div", { class: "md" }, h("ul", {}, Object.entries(j).map(([k, v]) => h("li", {}, h("b", {}, k + ": "), typeof v === "string" ? v : JSON.stringify(v)))));
+  if (m.content.includes("===ANSWER===")) return h("div", { class: "md" }, h("p", {}, "🏁 Yakuniy javob va tayyor prompt tayyorlandi."));
+  const full = m.content, short = full.length > 1400;
+  const box = h("div", {}, md(short ? full.slice(0, 1400) + "…" : full));
+  if (short) {
+    const more = h("button", { class: "linkbtn" }, "Hammasini ko'rsatish");
+    more.addEventListener("click", () => { box.replaceChildren(md(full)); });
+    box.append(more);
+  }
+  return box;
+}
 const TEXT_EXT = /\.(txt|md|html?|css|js|mjs|json|py|ts|tsx|jsx|csv|xml|ya?ml|sh|sql|java|c|cpp|h|go|rs|php|rb|svg|toml|ini|log)$/i;
 const S = { token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, archive: false };
 
@@ -232,7 +327,13 @@ function drawTasks({ tasks, archive }) {
 async function openTask(id) {
   const t = await api("/tasks/" + id);
   const [label] = ST[t.status] || [t.status];
-  const files = t.files.map((f) => h("button", { class: "btn ghost", onclick: () => openFile(t.id, f) }, "📎 " + f));
+  const MAIN = { "NATIJA.md": ["📄 To'liq natija", "Barcha so'ralgan narsa bitta faylda"], "PROMPT.md": ["🤖 Tayyor prompt", "Boshqa AI'ga bersangiz, shu ishni to'liq qayta bajaradi"] };
+  const main = t.files.filter((f) => MAIN[f]).map((f) => h("div", { class: "card mainfile" },
+    h("div", {}, h("b", {}, MAIN[f][0]), h("p", { class: "hint" }, MAIN[f][1])),
+    h("div", { class: "acts" }, h("button", { class: "btn", onclick: () => openFile(t.id, f) }, "Ochish"),
+      f === "PROMPT.md" ? h("button", { class: "btn lime", onclick: () => copyFile(t.id, f) }, "Nusxalash") : h("button", { class: "btn ghost", onclick: () => download(t.id, f) }, "Yuklab olish"))));
+  const other = t.files.filter((f) => !MAIN[f]).map((f) => h("button", { class: "btn ghost", onclick: () => openFile(t.id, f) }, "📎 " + f));
+  const team = t.messages.filter((m) => m.agent !== "hr" && !(tryJson(m.content) || {}).facts);
   const act = (path, msg, method) => async () => {
     try { await api(path, { method: method || "POST" }); closeSheet(); toast(msg); refresh(true); } catch (e) { toast(e.message); }
   };
@@ -250,24 +351,43 @@ async function openTask(id) {
     t.approvals && t.approvals.length ? h("div", { class: "label" }, "Ruxsat so'rovlari") : null,
     ...(t.approvals || []).map((a) => { const [txt, tone] = APPR[a.status] || [a.status, ""];
       return h("div", { class: "step" }, h("b", {}, a.agent + " · " + txt), h("div", {}, a.command.slice(0, 200))); }),
-    h("div", { class: "label" }, "Natija"), h("div", { class: "pre" }, t.result || "(hali natija yo'q)"),
-    files.length ? h("div", { class: "label" }, "Fayllar") : null, files.length ? h("div", { class: "pills" }, files) : null,
-    h("div", { class: "label" }, "Jamoa ishi"),
-    ...t.messages.filter((m) => !["qa", "hr"].includes(m.agent)).map((m) => h("div", { class: "step" }, h("b", {}, m.agent), h("div", {}, m.content.slice(0, 500)))));
+    h("div", { class: "label" }, "Natija"), h("div", { class: "card result" }, t.result ? md(t.result) : h("p", { class: "muted" }, "(hali natija yo'q)")),
+    main.length ? h("div", { class: "label" }, "Tayyor natija") : null, ...main,
+    other.length ? h("div", { class: "label" }, main.length ? "Ish fayllari" : "Fayllar") : null, other.length ? h("div", { class: "pills" }, other) : null,
+    team.length ? h("details", { class: "team" }, h("summary", {}, `Jamoa ishi (${team.length} qadam)`),
+      ...team.map((m) => h("div", { class: "step" }, h("b", {}, agentName(m.agent)), readable(m)))) : null);
 }
 async function openFile(id, path) {
   if (!TEXT_EXT.test(path)) return download(id, path);
   try {
     const r = await fetch("/api/tasks/" + id + "/files/" + path.split("/").map(encodeURIComponent).join("/"), { headers: { Authorization: "Bearer " + S.token } });
     if (!r.ok) throw new Error("Ochib bo'lmadi");
-    const text = (await r.text()).slice(0, 80000);
-    const copy = async () => {
-      try { await navigator.clipboard.writeText(text); toast("Nusxalandi"); }
-      catch { const ta = h("textarea", {}); ta.value = text; document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove(); toast("Nusxalandi"); }
-    };
-    openSheet(h("button", { class: "backlink", onclick: () => openTask(id) }, "‹ Vazifaga qaytish"), h("h2", {}, path),
-      h("div", { class: "pre code" }, text),
-      h("div", { class: "acts" }, h("button", { class: "btn lime", onclick: copy }, "Nusxalash"), h("button", { class: "btn", onclick: () => download(id, path) }, "Yuklab olish")));
+    let text = (await r.text()).slice(0, 80000);
+    if (/\.json$/i.test(path)) { try { text = JSON.stringify(JSON.parse(text), null, 2); } catch { /* xom holicha */ } }
+    const isMd = /\.md$/i.test(path);
+    const view = h("div", {}, isMd ? h("div", { class: "card result" }, md(text)) : h("div", { class: "pre code" }, text));
+    const toggle = isMd ? h("button", { class: "btn ghost" }, "Matn ko'rinishi") : null;
+    if (toggle) {
+      let raw = false;
+      toggle.addEventListener("click", () => {
+        raw = !raw; toggle.textContent = raw ? "Chiroyli ko'rinish" : "Matn ko'rinishi";
+        view.replaceChildren(raw ? h("div", { class: "pre code" }, text) : h("div", { class: "card result" }, md(text)));
+      });
+    }
+    openSheet(h("button", { class: "backlink", onclick: () => openTask(id) }, "‹ Vazifaga qaytish"), h("h2", {}, path), view,
+      h("div", { class: "acts" }, h("button", { class: "btn lime", onclick: () => copyText(text) }, "Nusxalash"), toggle,
+        h("button", { class: "btn", onclick: () => download(id, path) }, "Yuklab olish")));
+  } catch (e) { toast(e.message); }
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast("Nusxalandi"); }
+  catch { const ta = h("textarea", {}); ta.value = text; document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove(); toast("Nusxalandi"); }
+}
+async function copyFile(id, path) {
+  try {
+    const r = await fetch("/api/tasks/" + id + "/files/" + path.split("/").map(encodeURIComponent).join("/"), { headers: { Authorization: "Bearer " + S.token } });
+    if (!r.ok) throw new Error("Ochib bo'lmadi");
+    await copyText(await r.text());
   } catch (e) { toast(e.message); }
 }
 async function download(id, path) {
