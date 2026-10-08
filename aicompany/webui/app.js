@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-a";
+const PANEL_V = "2026.10.09-b";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -244,7 +244,7 @@ async function prefetch() {  // boshqa tablarni oldindan yuklab qo'yamiz: birinc
 }
 
 // ---------- ko'rinishlar: har biri ma'lumot oladi va chizadi; o'zgarmasa qayta chizilmaydi ----------
-const VIEWS = { team: [loadTeam, drawTeam], cards: [loadCards, drawCards], tasks: [loadTasks, drawTasks], stats: [loadStats, drawStats] };
+const VIEWS = { team: [() => (isDesk() ? loadOverview() : loadTeam()), (d) => (d.overview ? drawOverview(d) : drawTeam(d))], cards: [loadCards, drawCards], tasks: [loadTasks, drawTasks], stats: [loadStats, drawStats] };
 async function refresh(force) {
   const [load, draw] = VIEWS[S.tab];
   try {
@@ -305,6 +305,162 @@ function drawTeam({ state, team, ceo }) {
     h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: hireSheet }, "+ Xodim yollash"),
       h("button", { class: "btn ghost", onclick: hrReview }, "🧑‍💼 HR tahlili")),
   ];
+}
+// ---------- Kompyuter (keng ekran): "Umumiy ko'rinish" dashboardi. Mobil ko'rinish o'zgarmaydi ----------
+const DESK = matchMedia("(min-width: 1100px)");
+const isDesk = () => DESK.matches;
+DESK.addEventListener("change", () => { delete S.cache.team; S.sig = {}; if (S.tab === "team") refresh(true); });
+const LIME = "#cfff1a", AMBER = "#ffb03a";
+const SVGNS = "http://www.w3.org/2000/svg";
+function sv(tag, attrs, ...kids) {
+  const el = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, v);
+  kids.forEach((k) => el.append(k));
+  return el;
+}
+function smoothPath(pts) {  // Catmull-Rom -> Bezier: videodagidek silliq to'lqin chiziq
+  let d = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6], c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    d += ` C${c1[0].toFixed(1)},${c1[1].toFixed(1)} ${c2[0].toFixed(1)},${c2[1].toFixed(1)} ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+  }
+  return d;
+}
+let gradN = 0;
+function areaChart(values, { w = 600, h = 180, labels = null, color = LIME, fill = true } = {}) {
+  const n = values.length, max = Math.max(...values, 0) || 1, bottom = h - (labels ? 22 : 6), top = 10, pad = 6;
+  const pts = values.map((v, i) => [pad + (i * (w - 2 * pad)) / Math.max(n - 1, 1), bottom - (v / max) * (bottom - top)]);
+  const el = sv("svg", { viewBox: `0 0 ${w} ${h}`, class: "chart", role: "img" });
+  const line = smoothPath(pts), id = "ag" + ++gradN;
+  if (fill) {
+    el.append(sv("defs", {}, sv("linearGradient", { id, x1: 0, y1: 0, x2: 0, y2: 1 },
+      sv("stop", { offset: "0%", "stop-color": color, "stop-opacity": ".32" }), sv("stop", { offset: "100%", "stop-color": color, "stop-opacity": "0" }))));
+    for (let g = 1; g <= 3; g++) el.append(sv("line", { x1: 0, x2: w, y1: top + ((bottom - top) * g) / 4, y2: top + ((bottom - top) * g) / 4, class: "grid" }));
+    el.append(sv("path", { d: `${line} L${pts[n - 1][0]},${bottom} L${pts[0][0]},${bottom} Z`, fill: `url(#${id})` }));
+  }
+  el.append(sv("path", { d: line, fill: "none", stroke: color, "stroke-width": fill ? 3 : 2.5, "stroke-linecap": "round", class: "glowline" }));
+  const last = pts[n - 1];
+  el.append(sv("circle", { cx: last[0], cy: last[1], r: fill ? 5 : 3.5, fill: color, class: "pulse" }));
+  if (labels) labels.forEach((t, i) => {
+    if (i % 2 && i !== n - 1) return;
+    el.append(sv("text", { x: pts[i][0], y: h - 4, "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle", class: "ax" }, t));
+  });
+  return el;
+}
+function gauge(pct) {  // videodagi yarim aylana ko'rsatkich
+  const len = Math.PI * 34, arc = "M8,44 A34,34 0 0 1 76,44";
+  return sv("svg", { viewBox: "0 0 84 50", class: "gauge" },
+    sv("path", { d: arc, fill: "none", stroke: "#25282b", "stroke-width": 8, "stroke-linecap": "round" }),
+    sv("path", { d: arc, fill: "none", stroke: pct > 85 ? "#ff5a52" : LIME, "stroke-width": 8, "stroke-linecap": "round",
+      "stroke-dasharray": `${(len * Math.min(pct, 100)) / 100} ${len}`, class: "glowline" }));
+}
+function orb(active) {  // jonli "miya": ish bo'lsa yorqinroq va tezroq
+  return h("div", { class: "orb" + (active ? " on" : ""), "aria-hidden": "true" },
+    h("i", { class: "orbit r1" }), h("i", { class: "orbit r2" }), h("i", { class: "orbit r3" }),
+    h("b", { class: "blob b1" }), h("b", { class: "blob b2" }), h("b", { class: "blob b3" }), h("span", { class: "core" }));
+}
+async function loadOverview() {
+  const d = await api("/overview");
+  S.state = d.state; renderTabs();
+  const ceo = [...S.chat].reverse().find((m) => m.role === "ceo");
+  return { ...d, ceo: ceo ? ceo.text : "", overview: true };
+}
+const TONE = { done: "ok", running: "run", failed: "bad", limit: "warn", cancelled: "warn", paused: "warn", interrupted: "warn", stopped: "warn" };
+function drawOverview(d) {
+  const st = d.state, busy = d.team.filter((a) => a.busy);
+  const now = new Date(), WD = ["Yakshanba", "Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba"];
+  const MO = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"];
+  const date = `${WD[now.getDay()]}, ${now.getDate()}-${MO[now.getMonth()]}`;  // brauzerlar uz-UZ ni har xil chiqaradi
+  const head = h("div", { class: "ov-head" },
+    h("div", {}, h("p", { class: "crumb" }, date), h("h1", { class: "title" }, "Umumiy ko'rinish")),
+    h("div", { class: "ov-status" }, liveTag(), h("span", { class: "pill-s" }, `${busy.length} faol · ${d.team.length} xodim`)));
+
+  // --- chap ustun: bugun + jonli shar + rahbarga yozish ---
+  const running = st.running_tasks.length;
+  const headline = running ? `${running} ta vazifa ishlanmoqda` + (st.pending ? `, ${st.pending} ta qaror sizni kutmoqda` : "")
+    : st.pending ? `${st.pending} ta qaror sizni kutmoqda` : "Hammasi tinch. Yangi vazifa bering.";
+  const quote = d.ceo && !d.ceo.startsWith("[Vazifa") ? d.ceo : "Salom! Men Rahbarman. Savol bering yoki vazifa topshiring.";
+  const input = h("input", { placeholder: "Rahbarga yozing…", "aria-label": "Rahbarga xabar" });
+  const ask = h("form", { class: "ov-ask", onsubmit: (e) => {
+    e.preventDefault(); const t = input.value.trim(); if (!t) return;
+    openChat(false); $("chat-input").value = t; sendChat();
+  } }, input, h("button", { class: "send", type: "submit", "aria-label": "Yuborish" }, svg(IC.send)));
+  const mini = (n, l, cls, onclick) => h(onclick ? "button" : "div", { class: "m " + (cls || ""), onclick }, h("b", {}, n), h("span", {}, l));
+  const left = h("section", { class: "ov-col" },
+    h("div", { class: "card ov-today" },
+      h("p", { class: "kick" }, "Bugun"), h("h2", {}, headline),
+      orb(busy.length > 0 || running > 0),
+      h("p", { class: "ov-quote" }, quote.length > 240 ? quote.slice(0, 240) + "…" : quote),
+      ask,
+      h("div", { class: "ov-mini" }, mini(st.done_today, "bajarildi"), mini(busy.length, "ishlayapti", busy.length ? "on" : ""),
+        mini(st.pending, "kutmoqda", st.pending ? "hot" : "", () => go("cards")))),
+    h("div", { class: "card" }, h("p", { class: "kick" }, "Eslatmalar"),
+      d.reminders.length ? d.reminders.map((r) => h("div", { class: "ov-row" }, h("span", { class: "bul amber" }),
+        h("div", { class: "grow" }, h("b", {}, r.text)), h("span", { class: "tag-s warn" }, r.local)))
+        : h("p", { class: "muted sm" }, "Eslatma yo'q. Chatda «ertaga 9 da … eslat» deb yozing.")));
+
+  // --- o'rta ustun: ko'rsatkichlar, dinamika, vazifalar ---
+  const cost14 = d.daily.map((x) => x.cost), done14 = d.daily.map((x) => x.done);
+  const sum = (a) => a.reduce((x, y) => x + y, 0);
+  const on = st.budgets.filter((b) => b.enabled), spent = sum(on.map((b) => b.spent)), budget = sum(on.map((b) => b.budget));
+  const pct = budget ? Math.round((spent / budget) * 100) : 0;
+  const kpi = (label, value, sub, viz, onclick) => h(onclick ? "button" : "div", { class: "card kpi", onclick },
+    h("div", { class: "kv-l" }, h("p", { class: "kick" }, label), h("b", { class: "big" }, value), h("p", { class: "muted sm" }, sub)), viz);
+  const stack = h("div", { class: "stack" }, d.team.slice(0, 6).map((a) => h("i", { class: a.busy ? "on" : "", title: agentName(a.name) }, agentName(a.name)[0].toUpperCase())));
+  const kpis = h("div", { class: "kpis" },
+    kpi("Bugungi sarf", usd(st.today), `14 kunda ${usd(sum(cost14))}`, areaChart(cost14, { w: 150, h: 54, fill: false })),
+    kpi("Bajarilgan vazifalar", sum(done14), "so'nggi 14 kun", areaChart(done14, { w: 150, h: 54, fill: false, color: AMBER })),
+    kpi("Byudjet ishlatildi", pct + "%", `${usd(spent)} / ${usd(budget)}`, gauge(pct), () => go("stats")),
+    kpi("Jamoa", d.team.length + " xodim", busy.length ? busy.map((a) => agentName(a.name)).join(", ") + " ishlayapti" : "hamma bo'sh", stack));
+  const labels = d.daily.map((x) => x.day.slice(8, 10) + "." + x.day.slice(5, 7));
+  let mode = S.ovMode || "cost";
+  const chartBox = h("div", { class: "chart-box" });
+  const total = h("b", { class: "big" });
+  const paintChart = () => {
+    chartBox.replaceChildren(areaChart(mode === "cost" ? cost14 : done14, { w: 760, h: 230, labels }));
+    total.textContent = mode === "cost" ? usd(sum(cost14)) : sum(done14) + " ta vazifa";
+  };
+  const seg = h("div", { class: "seg sm" }, [["cost", "Sarf"], ["done", "Vazifalar"]].map(([k, l]) => h("button", { class: mode === k ? "on" : "", onclick: (e) => {
+    S.ovMode = mode = k; [...seg.children].forEach((b) => b.classList.toggle("on", b === e.currentTarget)); paintChart();
+  } }, l)));
+  paintChart();
+  const chips = h("div", { class: "chips" }, h("span", { class: "chip run" }, `${d.counts.running} ishlayapti`),
+    h("span", { class: "chip warn" }, `${st.pending} kutmoqda`), h("span", { class: "chip bad" }, `${d.counts.failed} xato`));
+  const tgrid = h("div", { class: "tgrid" }, d.tasks.map((t) => {
+    const [lab] = ST[t.status] || [t.status], tone = TONE[t.status] || "";
+    return h("button", { class: "tcard " + tone, onclick: () => openTask(t.id) },
+      h("div", { class: "row-b" }, h("b", {}, "#" + t.id), h("span", { class: "tag-s " + tone }, lab)),
+      h("p", { class: "clamp" }, t.request),
+      h("div", { class: "row-b muted xs" }, h("span", {}, ago(t.created_at)), h("span", {}, usd(t.cost))));
+  }));
+  const middle = h("section", { class: "ov-col" },
+    h("div", { class: "row-b" }, h("p", { class: "kick" }, "Ko'rsatkichlar"), chips),
+    kpis,
+    h("div", { class: "card" }, h("div", { class: "row-b" }, h("div", {}, h("p", { class: "kick" }, "Dinamika · 14 kun"), total), seg), chartBox),
+    h("div", { class: "card" },
+      h("div", { class: "row-b" }, h("div", {}, h("p", { class: "kick" }, "Vazifalar"), h("b", { class: "big" }, `${d.tasks.length} ta so'nggi`)),
+        h("div", { class: "acts-i" }, h("button", { class: "linkbtn", onclick: () => go("tasks") }, "Hammasi →"),
+          h("button", { class: "btn lime sm", onclick: () => taskSheet() }, "+ Vazifa"))),
+      d.tasks.length ? tgrid : h("p", { class: "muted sm" }, "Hali vazifa yo'q. «+ Vazifa» bilan boshlang.")));
+
+  // --- o'ng ustun: bildirishnomalar, jamoa harakati ---
+  const notes = [
+    ...d.approvals.map((a) => ({ tone: "amber", title: (a.kind === "telegram" ? "Telegram xabari · " : "Buyruq · ") + agentName(a.agent), text: a.description, open: () => go("cards") })),
+    ...d.tasks.filter((t) => t.status === "failed").slice(0, 3).map((t) => ({ tone: "red", title: `#${t.id} xato bilan tugadi`, text: t.note || t.request, open: () => openTask(t.id) })),
+    ...d.tasks.filter((t) => t.status === "running").slice(0, 3).map((t) => ({ tone: "lime", title: `#${t.id} ishlanmoqda`, text: t.request, open: () => openTask(t.id) })),
+  ];
+  const right = h("section", { class: "ov-col" },
+    h("div", { class: "card" }, h("p", { class: "kick" }, "Bildirishnomalar"),
+      notes.length ? notes.slice(0, 6).map((n) => h("button", { class: "ov-row", onclick: n.open }, h("span", { class: "bul " + n.tone }),
+        h("div", { class: "grow" }, h("b", {}, n.title), h("p", { class: "muted sm clamp" }, n.text))))
+        : h("p", { class: "muted sm" }, "✓ Hech narsa sizni kutmayapti.")),
+    h("div", { class: "card" }, h("div", { class: "row-b" }, h("p", { class: "kick" }, "Jamoa harakati"), h("button", { class: "linkbtn", onclick: hireSheet }, "+ Yollash")),
+      [...d.team].sort((a, b) => b.busy - a.busy || b.steps - a.steps).map((a) => h("button", { class: "ov-agent", onclick: () => agentSheet(a) },
+        h("i", { class: "av-c" + (a.busy ? " on" : "") }, agentName(a.name)[0].toUpperCase()),
+        h("div", { class: "grow" }, h("b", {}, agentName(a.name)), h("p", { class: "muted sm clamp1" }, a.busy ? `vazifa #${a.task_id} ustida` : a.role)),
+        h("div", { class: "r" }, h("span", { class: "tag-s " + (a.busy ? "run" : "") }, a.busy ? "ishlayapti" : "bo'sh"), h("span", { class: "muted xs" }, a.steps + " qadam"))))));
+  return [h("div", { class: "ov" }, head, h("div", { class: "ov-grid" }, left, middle, right))];
 }
 async function hrReview() {
   try {
@@ -392,14 +548,14 @@ function drawTasks({ tasks, archive }) {
     h("button", { class: archive ? "" : "on", onclick: () => { S.archive = false; refresh(true); } }, "Faol"),
     h("button", { class: archive ? "on" : "", onclick: () => { S.archive = true; refresh(true); } }, "Arxiv"));
   if (!tasks.length) return [head("Vazifalar", liveTag()), seg, h("div", { class: "empty" }, archive ? "Arxiv bo'sh" : "Hali vazifa yo'q. «Vazifa berish» tugmasini bosing.")];
-  return [head("Vazifalar", liveTag()), seg, ...tasks.map((t) => {
+  return [head("Vazifalar", liveTag()), seg, h("div", { class: "tlist" }, tasks.map((t) => {
     const [label, tone] = ST[t.status] || [t.status, ""];
     const barTone = t.status === "running" ? "run" : t.status === "failed" ? "bad" : t.status === "done" ? "" : "warn";
     const why = t.status !== "done" && t.status !== "running" && t.note ? t.note : "";
     return h("button", { class: "item", onclick: () => openTask(t.id), "aria-label": "Vazifa " + t.id },
       h("div", { class: "grow" }, h("h3", {}, t.request), h("div", { class: "bar " + barTone }, h("i")),
         h("p", {}, `${label} · ${usd(t.cost)} · ${ago(t.created_at)}${t.based_on ? ` · #${t.based_on} ustida` : ""}`), why ? h("p", { class: "note" + (t.status === "failed" ? " red" : "") }, why) : null));
-  })];
+  }))];
 }
 async function openTask(id) {
   openSheet(h("h2", {}, "Vazifa #" + id), h("p", { class: "muted" }, "Yuklanmoqda…"));  // oyna darhol ochiladi

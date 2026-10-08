@@ -160,7 +160,7 @@ def make_web_app(app: App) -> web.Application:
     async def h_state(request):
         return json_ok(await state_data())
 
-    async def h_team(request):
+    async def team_data() -> list[dict]:
         costs = {r["agent"]: float(r["cost"]) for r in await app.store.spent_by_agent()}
         steps = await app.store.agent_message_counts()
         out = []
@@ -170,7 +170,41 @@ def make_web_app(app: App) -> web.Application:
                         "tools": [t for t in a["tools"].split(",") if t], "created_by": a["created_by"],
                         "core": a["name"] in CORE, "busy": bool(busy), "task_id": busy["task_id"] if busy else None,
                         "cost": round(costs.get(a["name"], 0.0), 4), "steps": steps.get(a["name"], 0)})
-        return json_ok(out)
+        return out
+
+    async def h_overview(request):
+        """Kompyuter dashboardi uchun hamma narsa bitta so'rovda (uzoq bazada har so'rov qimmat)."""
+        tz = ZoneInfo(s.report_tz)
+        today = datetime.now(tz).date()
+        days = [(today - timedelta(days=i)) for i in range(13, -1, -1)]
+        since = day_start_utc(datetime.now(tz) - timedelta(days=13)).isoformat()
+        state, team, spend, recent, rems = await asyncio.gather(
+            state_data(), team_data(), app.store.daily_spend(since), app.store.list_tasks(40), app.store.list_reminders(limit=6))
+        cost_by_day = {r["day"]: r["cost"] for r in spend}
+        done_by_day: dict[str, int] = {}
+        for t in recent:
+            if t["status"] == "done" and t["finished_at"]:
+                try:
+                    d = datetime.fromisoformat(t["finished_at"]).astimezone(tz).date().isoformat()
+                except ValueError:
+                    continue
+                done_by_day[d] = done_by_day.get(d, 0) + 1
+        shown = recent[:9]
+        costs = await app.store.spent_by_task([t["id"] for t in shown])
+        from .reminders import local_text
+        return json_ok({
+            "state": state, "team": team,
+            "daily": [{"day": d.isoformat(), "cost": round(cost_by_day.get(d.isoformat(), 0.0), 4),
+                       "done": done_by_day.get(d.isoformat(), 0)} for d in days],
+            "tasks": [{"id": t["id"], "status": t["status"], "request": t["request"][:160], "note": t["note"],
+                       "created_at": t["created_at"], "cost": round(costs.get(t["id"], 0.0), 4)} for t in shown],
+            "counts": {k: sum(1 for t in recent if t["status"] == k) for k in ("running", "done", "failed", "limit", "cancelled")},
+            "approvals": app.center.list() if app.center else [],
+            "reminders": [{"id": r["id"], "text": r["text"], "local": local_text(r["due_at"], s.report_tz)} for r in rems],
+        })
+
+    async def h_team(request):
+        return json_ok(await team_data())
 
     async def h_hire(request):
         d = await body(request)
@@ -710,7 +744,7 @@ def make_web_app(app: App) -> web.Application:
     for path in STATIC_FILES:
         a.router.add_get(path, static)
     a.add_routes([
-        web.get("/api/state", h_state), web.get("/api/team", h_team),
+        web.get("/api/state", h_state), web.get("/api/team", h_team), web.get("/api/overview", h_overview),
         web.post("/api/team/hire", h_hire), web.post("/api/team/fire", h_fire),
         web.get("/api/tasks", h_tasks), web.get(r"/api/tasks/{id:\d+}", h_task),
         web.get(r"/api/tasks/{id:\d+}/files/{path:.+}", h_file),

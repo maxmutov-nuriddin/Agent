@@ -924,3 +924,18 @@ def test_render_ignores_local_host_and_port_copied_from_env():
     from .conftest import settings
     s = settings(RENDER="true", PORT="10000", WEB_HOST="127.0.0.1", WEB_PORT="8080")
     assert (s.web_host, s.web_port) == ("0.0.0.0", 10000)
+
+
+async def test_overview_has_everything_for_desktop_dashboard(web):
+    c, app = web
+    await post(c, "/api/tasks", {"text": "sayt yasab ber"})
+    for _ in range(300):
+        await asyncio.sleep(0.05)
+        rows = (await get(c, "/api/tasks"))[1]
+        if rows and rows[0]["status"] != "running":
+            break
+    st, d = await get(c, "/api/overview")
+    assert st == 200 and {"state", "team", "daily", "tasks", "counts", "approvals", "reminders"} <= set(d)
+    assert len(d["daily"]) == 14 and d["daily"][-1]["done"] >= 1 and d["daily"][-1]["cost"] > 0
+    assert d["tasks"][0]["cost"] > 0 and d["counts"]["done"] >= 1
+    assert any(a["name"] == "ceo" for a in d["team"])

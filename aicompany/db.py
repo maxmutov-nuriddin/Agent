@@ -337,6 +337,20 @@ class Store:
     async def spent_since(self, iso_ts):
         return await self._sum(usage.c.ts >= iso_ts)
 
+    async def daily_spend(self, since_iso: str) -> list[dict]:
+        """Kunlik sarf (UTC sana bo'yicha): [{"day": "2026-10-08", "cost": 0.12}]. SQLite va Postgres'da bir xil."""
+        day = sa.func.substr(usage.c.ts, 1, 10).label("day")
+        rows = await self._all(sa.select(day, sa.func.sum(usage.c.cost_usd).label("cost"))
+                               .where(usage.c.ts >= since_iso).group_by(day).order_by(day))
+        return [{"day": r["day"], "cost": float(r["cost"] or 0)} for r in rows]
+
+    async def spent_by_task(self, task_ids) -> dict[int, float]:
+        if not task_ids:
+            return {}
+        rows = await self._all(sa.select(usage.c.task_id, sa.func.sum(usage.c.cost_usd).label("cost"))
+                               .where(usage.c.task_id.in_(list(task_ids))).group_by(usage.c.task_id))
+        return {r["task_id"]: float(r["cost"] or 0) for r in rows}
+
     async def spent_by_agent(self):
         return await self._all(
             sa.select(usage.c.agent, sa.func.sum(usage.c.cost_usd).label("cost"))
