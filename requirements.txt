@@ -12,3 +12,4 @@ python-socks[asyncio]>=2.4
 segno>=1.6
 asyncpg>=0.29
 cryptography>=42
+py-tgcalls>=3.0; python_version >= "3.10"

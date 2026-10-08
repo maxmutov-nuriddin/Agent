@@ -269,6 +269,21 @@ class GeminiProvider(_HttpProvider):
         tin, tout = u.get("promptTokenCount", 0), (u.get("candidatesTokenCount", 0) or 0) + (u.get("thoughtsTokenCount", 0) or 0)
         return LLMResult(text, tin, tout, 0, compute_cost(cfg, tin, tout, 0))
 
+    TTS_MODEL = "gemini-2.5-flash-preview-tts"
+
+    async def speak(self, cfg, text: str, voice: str = "Kore") -> tuple[bytes, float]:
+        """Matnni ovozga aylantiradi: xom PCM (s16le, 24 kHz, mono) va taxminiy narx ($)."""
+        body = {"contents": [{"parts": [{"text": text}]}],
+                "generationConfig": {"responseModalities": ["AUDIO"],
+                                     "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}}}
+        data = await self._generate("POST", f"{self.base}/models/{self.TTS_MODEL}:generateContent", cfg, json=body)
+        try:
+            raw = data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]
+            pcm = base64.b64decode(raw)
+        except (KeyError, IndexError, TypeError, ValueError) as e:
+            raise ProviderError(f"gemini: ovoz kelmadi ({str(data)[:200]})") from e
+        return pcm, len(pcm) / 48000 * 25 * 10 / 1_000_000   # ~25 token/soniya, ~$10 / 1M audio token
+
     async def list_models(self):
         data = await self._request("GET", f"{self.base}/models", params={"pageSize": 200})
         return [m["name"].removeprefix("models/") for m in data.get("models", [])]

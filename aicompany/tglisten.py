@@ -74,10 +74,15 @@ class TgListener:
         client.add_event_handler(handler, events.NewMessage(incoming=True))
         await client.get_me()  # Telegram yangiliklarni shu mijozga yubora boshlaydi
         self._client, self._handler = client, handler
+        if getattr(self.app, "calls", None) is not None:
+            await self.app.calls.attach(client)  # ovozli qo'ng'iroq (py-tgcalls bo'lsa)
         log.info("Telegram agent akkaunti egasining xabarlarini tinglayapti")
         return True
 
     def detach(self):
+        calls = getattr(self.app, "calls", None)
+        if calls is not None and self._client is not None:
+            asyncio.ensure_future(calls.detach())
         if self._client is not None and self._handler is not None:
             try:
                 self._client.remove_event_handler(self._handler)

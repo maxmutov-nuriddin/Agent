@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-g";
+const PANEL_V = "2026.10.09-h";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -731,6 +731,21 @@ async function showAudit() {
       ...rows.map((r) => h("div", { class: "step" }, h("b", {}, `${r.actor} · ${r.action}`), h("div", {}, `${ago(r.ts)} oldin · ${r.detail}`))));
   } catch (e) { toast(e.message); }
 }
+function callBlock(t) {
+  const C = (t && t.calls) || { available: false };
+  const save = async (d) => { try { await post("/tg/calls", d); toast("Saqlandi"); setTimeout(tgSheet, 800); } catch (e) { toast(e.message); } };
+  if (!C.available) return [h("div", { class: "label" }, "Ovozli qo'ng'iroq"), h("p", { class: "hint" }, "Serverda qo'ng'iroq moduli (py-tgcalls) o'rnatilmagan. Render'da qayta deploy qiling.")];
+  const sw = (on, key) => h("div", { class: "seg" },
+    h("button", { class: on ? "on" : "", onclick: () => save({ [key]: true }) }, "Yoqilgan"),
+    h("button", { class: on ? "" : "on", onclick: () => save({ [key]: false }) }, "O'chiq"));
+  const test = h("button", { class: "btn ghost" }, "📞 Hozir menga qo'ng'iroq qil");
+  test.onclick = async () => { test.disabled = true; test.textContent = "Qo'ng'iroq qilinmoqda…"; try { await post("/tg/call_test", {}); toast("Qo'ng'iroq ketdi"); } catch (e) { toast(e.message); } test.disabled = false; test.textContent = "📞 Hozir menga qo'ng'iroq qil"; };
+  return [h("div", { class: "label" }, "Ovozli qo'ng'iroq"), sw(C.enabled, "enabled"),
+    h("p", { class: "hint" }, C.error ? "⚠️ " + C.error : !C.enabled ? "O'chiq." : C.ready ? "✅ Tayyor: agent akkauntiga qo'ng'iroq qilsangiz ko'taradi, hisobot va savollarga ovoz bilan javob beradi." : "Ishga tushmoqda…"),
+    h("label", {}, "Vazifa tugaganda menga qo'ng'iroq qilib natijani aytsin"), sw(C.notify, "notify"),
+    h("div", { class: "acts" }, test)];
+}
+
 async function tgSheet() {
   let t;
   try { t = (await api("/integrations")).telegram_account; } catch (e) { return toast(e.message); }
@@ -775,6 +790,7 @@ async function tgSheet() {
       h("label", {}, "Faqat shu chat ID'lardan yozilsa javob beradi"), owners,
       h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: () => saveL({ owners: owners.value }) }, "ID'larni saqlash")),
       h("p", { class: "hint" }, "Boshqa odam yoki guruh yozsa, umuman javob bermaydi. Bo'sh qoldirsangiz .env dagi OWNER_TELEGRAM_ID (sizning asosiy akkauntingiz) ishlatiladi."),
+      ...callBlock(t),
       h("div", { class: "label" }, "Agentga ruxsat"), seg, h("p", { class: "hint" }, note[2]),
       h("p", { class: "hint" }, "Kirishni to'xtatish: Telegram → Sozlamalar → Qurilmalar."), h("div", { class: "label" }), out);
   }

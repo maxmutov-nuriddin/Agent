@@ -450,6 +450,7 @@ def make_web_app(app: App) -> web.Application:
                                  "keys": bool(tg and tg.has_keys()), "pending": bool(tg and tg.login_pending()),
                                  "proxy": bool(tg and tg.proxy), "login": (tg.login_info() if tg else {}),
                                  "listen": await listen_state(),
+                                 "calls": await app.calls.status() if app.calls else {"available": False},
                                  "me": (tg.me if tg and tg.configured() else ""), "allowed": list(s.tg_allowed),
                                  "private_providers": list(s.private_providers)},
             "maps": "google" if s.google_maps_key else "osm",
@@ -471,6 +472,28 @@ def make_web_app(app: App) -> web.Application:
     def kick_listener():
         if app.listener is not None:
             app.listener.kick()
+
+    async def h_tg_calls(request):
+        d = await body(request)
+        for key, kv in (("enabled", "tg_calls"), ("notify", "tg_call_notify")):
+            if key in d:
+                await app.store.set_kv(kv, "1" if d[key] else "0")
+                await app.store.audit("owner", kv, "yoqildi" if d[key] else "o'chirildi")
+        kick_listener()
+        return json_ok(await app.calls.status())
+
+    async def h_tg_call_test(request):
+        c = app.calls
+        if c is None or not c.available():
+            raise web.HTTPBadRequest(reason="Qo'ng'iroq moduli (py-tgcalls) serverda o'rnatilmagan")
+        if not await c.enabled():
+            raise web.HTTPBadRequest(reason="Avval qo'ng'iroqni yoqing")
+        if c._tgc is None:
+            raise web.HTTPBadRequest(reason=c.last_error or "Telegram akkaunt hali ulanmagan yoki tinglash ishga tushmagan")
+        ok = await c.call_owner("Salom! Bu agentdan sinov qo'ng'irog'i. Eshitayapsizmi? Savol bersangiz javob beraman.")
+        if not ok:
+            raise web.HTTPBadGateway(reason=c.last_error or "Qo'ng'iroq qilib bo'lmadi")
+        return json_ok({"ok": True})
 
     async def h_tg_listen(request):
         """{"enabled": bool, "owners": "123, 456"}: agent akkaunti faqat shu chatlardan kelgan xabarga javob beradi."""
@@ -806,7 +829,7 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
         web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend),
-        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.get("/api/tg/me", h_tg_me),
+        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.post("/api/tg/call_test", h_tg_call_test), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),

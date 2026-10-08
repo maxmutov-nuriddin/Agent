@@ -188,6 +188,26 @@ class Router:
             return text
         raise VoiceError(f"Ovozni matnga aylantirib bo'lmadi ({last})")
 
+    async def speak(self, text: str, *, task_id=None) -> bytes:
+        """Matnni ovozga aylantiradi (PCM 24 kHz mono). Faqat Gemini."""
+        cands = [p for n, p in self.s.providers.items() if n in self.providers and hasattr(self.providers[n], "speak")]
+        if not cands:
+            raise VoiceUnavailable("Ovoz bilan javob berish uchun GEMINI_API_KEY kerak")
+        last = ""
+        for pc in cands:
+            if await self.store.spent(pc.name) + 0.002 > pc.budget_usd:
+                last = f"{pc.name}: limit"
+                continue
+            try:
+                pcm, cost = await self.providers[pc.name].speak(pc.models["cheap"], text[:1500])
+            except ProviderError as e:
+                last = str(e)
+                await self.store.audit("router", "tts_error", last[:500])
+                continue
+            await self.store.add_usage(pc.name, "tts", task_id, "voice", 0, 0, 0, cost)
+            return pcm
+        raise VoiceError(f"Ovoz yaratib bo'lmadi ({last})")
+
     async def _maybe_warn(self, pc, spent):
         if not self.on_warning or spent < pc.budget_usd * self.s.warn_ratio:
             return

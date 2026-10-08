@@ -25,6 +25,7 @@ class App:
     center: ApprovalCenter | None = None
     tg: TgUser | None = None
     listener: object | None = None  # TgListener: agent akkaunti egasiga bot kabi javob beradi
+    calls: object | None = None     # CallService: Telegram ovozli qo'ng'iroq (ixtiyoriy)
 
 
 def clean_inbox(workspace: Path, days: int = 7) -> int:
@@ -82,4 +83,7 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     app = App(settings, store, router, team, orch, center, tg)
     from .tglisten import TgListener
     app.listener = TgListener(app)
+    from .calls import CallService
+    app.calls = CallService(app)
+    orch.on_done = app.calls.task_done
     return app

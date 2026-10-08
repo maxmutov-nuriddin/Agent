@@ -136,3 +136,6 @@ DATABASE_URL qo'yilmasa (bepul Render + SQLite): har deploy/qayta ishga tushishd
 Ovozli javob (TTS) va jonli qo'ng'iroq, Google Kalendar/Gmail, WhatsApp Business, Instagram (Graph API), Telegram qo'ng'iroqlari, agent uchun alohida raqam, Docker sandbox, GitHub asbobi, vektor qidiruv (xotira hozir kalit so'z bo'yicha), VPS/Supabase joylashtirish.
 
 Panelga yuklangan fayllar vazifaga nusxalanadi; `workspace/inbox` dagi 7 kundan eski yuklamalar ishga tushganda o'chiriladi.
+
+## Ovozli qo'ng'iroq (ixtiyoriy)
+Agent Telegram akkaunti (Telethon) orqali egasi bilan gaplashadi: qo'ng'iroq qilsangiz ko'taradi, hisobot/savollarga ovoz bilan javob beradi; panelda yoqilsa, vazifa tugaganda o'zi qo'ng'iroq qiladi. Faqat egasi ID'si (`OWNER_TELEGRAM_ID` yoki panelda kiritilgan) bilan ishlaydi. `py-tgcalls` kerak (requirements.txt'da), ovoz uchun `GEMINI_API_KEY`. Panel → Telegram akkaunt → Ovozli qo'ng'iroq. Doimiy ochiq server tavsiya etiladi (bepul Render uxlab qoladi).

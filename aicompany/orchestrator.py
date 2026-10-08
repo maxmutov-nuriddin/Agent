@@ -29,6 +29,13 @@ class Stopped(Exception):
     """Egasi vazifani to'xtatdi."""
 
 
+async def _safe_done(cb, res):
+    try:
+        await cb(res)
+    except Exception:  # noqa: BLE001 — ixtiyoriy xabar yetkazish asosiy ishni buzmasin
+        pass
+
+
 class Progress(str):
     """Jarayon xabari (reja, qadam tugadi...). Telegram «Faqat natija»/«O'chiq» rejimlarida ko'rsatilmaydi, panelda esa har doim."""
 
@@ -160,6 +167,8 @@ class Orchestrator:
         summary = f"[Vazifa #{res['task_id']} {res['status']}] " + (res.get("result") or res.get("error") or "")
         await self.store.add_chat(chat_id, "ceo", summary[:1500])
         res["kind"] = "task"
+        if getattr(self, "on_done", None):
+            asyncio.create_task(_safe_done(self.on_done, res))  # masalan: tugaganda qo'ng'iroq qilish
         return res
 
     async def resume_stopped(self, notify: Notify, statuses=("interrupted",), *, max_age_h: float = 6, limit: int = 3, delay: float = 15,
