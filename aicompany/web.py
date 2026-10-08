@@ -188,7 +188,7 @@ def make_web_app(app: App) -> web.Application:
         rows = await app.store.list_tasks(60, archived=archived)
         return json_ok([{"id": t["id"], "status": t["status"], "request": t["request"][:160],
                          "created_at": t["created_at"], "finished_at": t["finished_at"],
-                         "archived": bool(t["archived"]),
+                         "archived": bool(t["archived"]), "note": t["note"],
                          "cost": round(await app.store.spent_task(t["id"]), 4)} for t in rows])
 
     def task_files(task_id: int) -> list[str]:
@@ -201,7 +201,7 @@ def make_web_app(app: App) -> web.Application:
             raise web.HTTPNotFound(reason="topilmadi")
         msgs = await app.store.task_messages(t["id"])
         return json_ok({"id": t["id"], "status": t["status"], "request": t["request"], "result": t["result"],
-                        "archived": bool(t["archived"]),
+                        "archived": bool(t["archived"]), "note": t["note"],
                         "cost": round(await app.store.spent_task(t["id"]), 4), "files": task_files(t["id"]),
                         "messages": [{"agent": m["agent"], "content": clip(m["content"] or "", 6000)} for m in msgs]})
 
@@ -247,7 +247,9 @@ def make_web_app(app: App) -> web.Application:
             return
         if res.get("error"):
             await app.store.add_chat(chat_id, "sys", res["error"])
-        payload = {"task_id": res["task_id"], "status": res["status"], "text": res.get("result") or ""}
+        # qisqa ko'rinish: to'liq natija va fayllar vazifa sahifasida (chat qatori 4000 belgidan oshmasligi kerak)
+        payload = {"task_id": res["task_id"], "status": res["status"], "text": (res.get("result") or "")[:500],
+                   "files": res.get("files", [])[:8]}
         await app.store.add_chat(chat_id, "result", json.dumps(payload, ensure_ascii=False))
 
     async def report_failure(e: Exception):

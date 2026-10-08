@@ -84,7 +84,7 @@ async def test_bad_plan_fails_cleanly(make_app):
 async def test_budget_exhaustion_returns_partial(make_app):
     app, _ = await make_app(scripted_company(), MAX_TASK_USD="0.025")
     res = await app.orch.run_task("x", 1)
-    assert res["status"] == "stopped" and res["result"]
+    assert res["status"] == "limit" and res["result"]
 
 
 # ---------- to'xtatish va migratsiya ----------
@@ -106,7 +106,7 @@ async def test_stopped_task_keeps_partial_work_and_frees_resources(make_app):
             break
     assert app.orch.stop_task(1) and not app.orch.stop_task(999)
     res = await t
-    assert res["status"] == "stopped" and "to'xtatdingiz" in res["error"]
+    assert res["status"] == "cancelled" and "to'xtatdingiz" in res["error"]
     assert "researcher" in res["result"]  # to'xtatishgacha bajarilgan ish saqlanadi
     assert app.team.busy == {} and app.orch.running == {} and app.orch._stopping == set()
 
@@ -207,3 +207,22 @@ async def test_file_database_survives_heavy_concurrent_use(make_app):
     assert len(await st.chat_since(1, 0, 500)) == 60 + 40
     assert round(await st.spent("anthropic"), 6) == round(0.001 * 100, 6)
     assert len(await st.recent_memories(500)) == 100
+
+
+# ---------- vazifa holatlari: nega to'xtadi? ----------
+async def test_status_tells_why_a_task_did_not_finish(make_app):
+    from aicompany.providers import ProviderError
+    app, _ = await make_app(lambda *a: ProviderError("anthropic: 401 bad key"))
+    r = await app.orch.run_task("x", 1)
+    t = await app.store.get_task(r["task_id"])
+    assert r["status"] == t["status"] == "failed" and "bad key" in t["note"]
+
+    app, _ = await make_app(scripted_company(), MAX_TASK_USD="0.025")
+    r = await app.orch.run_task("x", 1)
+    t = await app.store.get_task(r["task_id"])
+    assert t["status"] == "limit" and "limiti" in t["note"] and r["result"]
+
+    app, _ = await make_app(scripted_company())
+    r = await app.orch.run_task("x", 1)
+    t = await app.store.get_task(r["task_id"])
+    assert t["status"] == "done" and t["note"] is None

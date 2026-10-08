@@ -9,11 +9,15 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-e";
+const PANEL_V = "2026.10.08-f";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
-const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], stopped: ["To'xtatildi", "amber"],
-  paused: ["Pauza", "amber"], interrupted: ["Uzildi", "amber"] };
+const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
+  limit: ["Limit tugadi", "amber"], paused: ["Pauza", "amber"], interrupted: ["Uzildi (dastur qayta yoqilgan)", "amber"], stopped: ["To'xtatilgan", "amber"] };
+const WHY = { done: "", running: "", failed: "Vazifa xato bilan tugadi.", cancelled: "Siz uni qo'lda to'xtatdingiz. Bajarilgan qismi saqlangan.",
+  limit: "Bitta vazifa uchun ajratilgan pul limiti tugadi. .env dagi MAX_TASK_USD ni oshirishingiz mumkin.", paused: "Hammasi pauzaga qo'yilgan edi.",
+  interrupted: "Dastur qayta ishga tushganda vazifa o'rtada uzilgan.", stopped: "" };
+const TEXT_EXT = /\.(txt|md|html?|css|js|mjs|json|py|ts|tsx|jsx|csv|xml|ya?ml|sh|sql|java|c|cpp|h|go|rs|php|rb|svg|toml|ini|log)$/i;
 const S = { token: localStorage.getItem("aij_token") || "", tab: "team", state: null, sig: {}, chat: [], lastChat: 0, chatOpen: false, typing: false, skip: 0, archive: false };
 
 // ---------- yordamchilar ----------
@@ -107,7 +111,7 @@ function drawTeam({ state, team, ceo }) {
     head("Jamoa", liveTag()),
     h("div", { class: "label" }, "Hozir ishda"),
     sorted.some((a) => a.busy)
-      ? h("div", { class: "avatars" }, sorted.filter((a) => a.busy).map((a) => h("div", { class: "av busy" }, h("i", {}, initials(a.name)), a.name)))
+      ? h("div", { class: "avatars" }, sorted.filter((a) => a.busy).map((a) => h("div", { class: "av busy" }, h("i", {}, initials(a.name)), h("span", { class: "nm" }, a.name))))
       : h("p", { class: "hint" }, "Hozir hamma bo'sh. Vazifa bering."),
     h("div", { class: "card lime" },
       h("div", { class: "row" }, h("div", { class: "ava" }, "R"),
@@ -165,7 +169,8 @@ function hireSheet() {
 async function loadCards() { const [state, items] = await Promise.all([api("/state"), api("/approvals")]); S.state = state; renderTabs(); return items; }
 function drawCards(items) {
   const sub = items.length ? h("p", { class: "sub" }, items.length + " ta qaror kutmoqda") : null;
-  if (!items.length) return [head("Kartalar", liveTag()), h("div", { class: "empty" }, h("b", {}, "✓"), "Hozircha qaror kutayotgan narsa yo'q")];
+  if (!items.length) return [head("Kartalar", liveTag()), h("div", { class: "empty" }, h("b", {}, "✓"), "Hozircha qaror kutayotgan narsa yo'q.",
+    h("p", { class: "hint" }, "Agent kompyuterda buyruq bajarmoqchi bo'lganda, ruxsat kartasi shu yerda paydo bo'ladi."))];
   const a = items[S.skip % items.length];
   const decide = async (ok) => { try { await post("/approvals/" + a.id, { approve: ok }); toast(ok ? "Ruxsat berildi" : "Rad etildi"); } catch (e) { toast(e.message); } S.skip = 0; refresh(true); };
   const col = (label, circle) => h("div", {}, circle, h("div", { class: "cap" }, label));
@@ -192,15 +197,16 @@ function drawTasks({ tasks, archive }) {
   return [head("Vazifalar", liveTag()), seg, ...tasks.map((t) => {
     const [label, tone] = ST[t.status] || [t.status, ""];
     const barTone = t.status === "running" ? "run" : t.status === "failed" ? "bad" : t.status === "done" ? "" : "warn";
+    const why = t.status !== "done" && t.status !== "running" && t.note ? t.note : "";
     return h("button", { class: "item", onclick: () => openTask(t.id), "aria-label": "Vazifa " + t.id },
       h("div", { class: "grow" }, h("h3", {}, t.request), h("div", { class: "bar " + barTone }, h("i")),
-        h("p", {}, `${label} · ${usd(t.cost)} · ${ago(t.created_at)}`)));
+        h("p", {}, `${label} · ${usd(t.cost)} · ${ago(t.created_at)}`), why ? h("p", { class: "note" + (t.status === "failed" ? " red" : "") }, why) : null));
   })];
 }
 async function openTask(id) {
   const t = await api("/tasks/" + id);
   const [label] = ST[t.status] || [t.status];
-  const files = t.files.map((f) => h("button", { class: "btn ghost", onclick: () => download(t.id, f) }, "📎 " + f));
+  const files = t.files.map((f) => h("button", { class: "btn ghost", onclick: () => openFile(t.id, f) }, "📎 " + f));
   const act = (path, msg, method) => async () => {
     try { await api(path, { method: method || "POST" }); closeSheet(); toast(msg); refresh(true); } catch (e) { toast(e.message); }
   };
@@ -210,12 +216,29 @@ async function openTask(id) {
       ? [h("button", { class: "btn", onclick: act(`/tasks/${t.id}/restore`, "Qaytarildi") }, "↩ Qaytarish"),
          h("button", { class: "btn red", onclick: () => { if (confirm("Vazifa va uning fayllari butunlay o'chiriladi. Davom etasizmi?")) act(`/tasks/${t.id}`, "O'chirildi", "DELETE")(); } }, "🗑 Butunlay o'chirish")]
       : [h("button", { class: "btn", onclick: act(`/tasks/${t.id}/archive`, "Arxivga olindi") }, "🗄 Arxivga olish")];
-  openSheet(h("h2", {}, "Vazifa #" + t.id), h("p", { class: "muted" }, `${label} · ${usd(t.cost)}${t.archived ? " · arxivda" : ""}`), h("p", {}, t.request),
+  const why = WHY[t.status] || "";
+  openSheet(h("h2", {}, "Vazifa #" + t.id), h("p", { class: "muted" }, `${label} · ${usd(t.cost)}${t.archived ? " · arxivda" : ""}`),
+    why || t.note ? h("p", { class: "note" + (t.status === "failed" ? " red" : "") }, [why, t.note].filter(Boolean).join(" ")) : null, h("p", {}, t.request),
     h("div", { class: "acts" }, acts),
     h("div", { class: "label" }, "Natija"), h("div", { class: "pre" }, t.result || "(hali natija yo'q)"),
     files.length ? h("div", { class: "label" }, "Fayllar") : null, files.length ? h("div", { class: "pills" }, files) : null,
     h("div", { class: "label" }, "Jamoa ishi"),
     ...t.messages.filter((m) => !["qa", "hr"].includes(m.agent)).map((m) => h("div", { class: "step" }, h("b", {}, m.agent), h("div", {}, m.content.slice(0, 500)))));
+}
+async function openFile(id, path) {
+  if (!TEXT_EXT.test(path)) return download(id, path);
+  try {
+    const r = await fetch("/api/tasks/" + id + "/files/" + path.split("/").map(encodeURIComponent).join("/"), { headers: { Authorization: "Bearer " + S.token } });
+    if (!r.ok) throw new Error("Ochib bo'lmadi");
+    const text = (await r.text()).slice(0, 80000);
+    const copy = async () => {
+      try { await navigator.clipboard.writeText(text); toast("Nusxalandi"); }
+      catch { const ta = h("textarea", {}); ta.value = text; document.body.append(ta); ta.select(); document.execCommand("copy"); ta.remove(); toast("Nusxalandi"); }
+    };
+    openSheet(h("button", { class: "backlink", onclick: () => openTask(id) }, "‹ Vazifaga qaytish"), h("h2", {}, path),
+      h("div", { class: "pre code" }, text),
+      h("div", { class: "acts" }, h("button", { class: "btn lime", onclick: copy }, "Nusxalash"), h("button", { class: "btn", onclick: () => download(id, path) }, "Yuklab olish")));
+  } catch (e) { toast(e.message); }
 }
 async function download(id, path) {
   try {
@@ -268,14 +291,22 @@ function drawStats({ state, spend, mem }) {
 }
 
 // ---------- Chat (to'liq ekran) ----------
+function parseResult(m) {
+  try { return JSON.parse(m.text); } catch { /* eski, kesilgan yozuvlar uchun */ }
+  const id = m.text.match(/"task_id":\s*(\d+)/), st = m.text.match(/"status":\s*"(\w+)"/);
+  const body = m.text.match(/"text":\s*"((?:[^"\\]|\\.)*)/);
+  return { task_id: id ? +id[1] : null, status: st ? st[1] : "", text: body ? body[1].replace(/\\n/g, "\n").replace(/\\"/g, '"').slice(0, 500) : "", files: [] };
+}
 function msgEl(m) {
   if (m.role === "result") {
-    let p = {}; try { p = JSON.parse(m.text); } catch { p = { text: m.text }; }
+    const p = parseResult(m);
     const [label] = ST[p.status] || [p.status || ""];
-    const long = (p.text || "").length > 400;
-    return h("div", { class: "msg result" }, h("b", {}, `Vazifa #${p.task_id} · ${label}`),
+    const long = (p.text || "").length > 300;
+    const files = (p.files || []).slice(0, 4).map((f) => h("button", { class: "btn ghost", onclick: () => openFile(p.task_id, f) }, "📎 " + f.split("/").pop()));
+    return h("div", { class: "msg result" }, h("b", {}, p.task_id ? `Vazifa #${p.task_id} · ${label}` : "Vazifa natijasi"),
       h("div", { class: "t" + (long ? " fade" : "") }, p.text || "(natija yo'q)"),
-      h("button", { class: "btn lime", onclick: () => openTask(p.task_id) }, "To'liq ko'rish"));
+      files.length ? h("div", { class: "files" }, files, (p.files || []).length > 4 ? h("span", { class: "muted" }, "+" + (p.files.length - 4)) : null) : null,
+      p.task_id ? h("button", { class: "btn lime", onclick: () => openTask(p.task_id) }, "To'liq ko'rish") : null);
   }
   if (m.role === "proposal") {
     let p = {}; try { p = JSON.parse(m.text); } catch { p = { task: m.text }; }

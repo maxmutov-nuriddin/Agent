@@ -164,20 +164,21 @@ class Orchestrator:
             out.update(status="done", result=result)
             await self._learn(task_id, request, result)
         except Stopped:
-            out.update(status="stopped", error="Siz vazifani to'xtatdingiz.")
+            out.update(status="cancelled", error="Siz vazifani to'xtatdingiz.")
         except Paused:
             out.update(status="paused", error="Vazifa /pause sababli to'xtatildi.")
         except TaskBudgetExceeded as e:
-            out.update(status="stopped", error=f"Vazifa byudjet limiti sabab to'xtatildi: {e}")
+            out.update(status="limit", error=f"Vazifa limiti ({self.settings.max_task_usd}$) tugadi: {e}")
         except BudgetExhausted as e:
-            out.update(status="stopped", error=f"AI ishlamadi (limit, kalit yoki model nomi): {str(e)[:350]}")
+            out.update(status="failed", error=f"AI ishlamadi (limit, kalit yoki model nomi): {str(e)[:350]}")
         except Exception as e:  # noqa: BLE001 — vazifa jimgina yo'qolmasligi kerak
             await self.store.audit("orchestrator", "task_error", f"#{task_id}: {e!r}")
             out.update(status="failed", error=f"Xatolik: {e}")
         if out["status"] != "done":
             out["result"] = "\n\n".join(f"[{m['agent']}]\n{m['content']}" for m in await self.store.task_messages(task_id)
                                         if m["agent"] not in ("hr", "qa"))
-            await self.store.update_task(task_id, status=out["status"], result=out["result"] or None, finished_at=now())
+            await self.store.update_task(task_id, status=out["status"], result=out["result"] or None, finished_at=now(),
+                                         note=(out.get("error") or "")[:400] or None)
         out["files"] = self._files(ws)
         await self._maybe_review(task_id, notify)
         return out

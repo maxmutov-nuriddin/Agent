@@ -34,6 +34,7 @@ tasks = sa.Table(
     sa.Column("result", sa.Text),
     sa.Column("created_at", sa.String),
     sa.Column("finished_at", sa.String),
+    sa.Column("note", sa.Text),  # to'xtash/xato sababi (foydalanuvchiga ko'rsatiladi)
     sa.Column("archived", sa.Integer, server_default=sa.text("0")),
     sa.Column("archived_at", sa.String),
 )

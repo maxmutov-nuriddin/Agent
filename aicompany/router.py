@@ -5,7 +5,7 @@ from .db import Store, cache_key
 import dataclasses
 
 from .config import TIERS
-from .providers import (LLMResult, ModelNotFound, Provider, ProviderError, VoiceError, VoiceUnavailable,
+from .providers import (LLMResult, MalformedCall, ModelNotFound, Provider, ProviderError, VoiceError, VoiceUnavailable,
                         suggest_model)
 
 MAX_TOKENS = {"cheap": 4096, "mid": 6000, "strong": 8000}
@@ -141,6 +141,8 @@ class Router:
                     await self._warn(f"⚙️ {pc.name}: '{cfg.id}' topilmadi, '{lower.id}' ishlatiladi. "
                                      "To'g'ri nomni `python -m aicompany check` ko'rsatadi.")
                     cfg = lower
+                except MalformedCall:
+                    raise  # chaqiruvchi (agent sikli) qisqaroq so'rab qayta urinadi
                 except ProviderError as e:
                     errors.append(str(e))
                     await self.store.audit("router", "provider_error", str(e)[:500])

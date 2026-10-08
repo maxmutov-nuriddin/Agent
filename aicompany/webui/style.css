@@ -38,9 +38,10 @@ input, textarea { font: inherit; color: var(--text); }
 .btn[disabled] { opacity: .5; }
 
 /* Avatarlar */
-.avatars { display: flex; gap: 14px; overflow-x: auto; padding: 4px 2px 6px; scrollbar-width: none; }
+.avatars { display: flex; gap: 14px; overflow-x: auto; padding: 12px 12px 8px; margin: -8px -12px 0; scrollbar-width: none; }  /* halqa va yorug'lik chetdan kesilmasin */
 .avatars::-webkit-scrollbar { display: none; }
-.av { flex: none; width: 62px; text-align: center; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.av { flex: none; width: 62px; text-align: center; font-size: 12px; color: var(--muted); }
+.av .nm { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }  /* faqat matn qisqaradi, halqa kesilmaydi */
 .av i, .ava { display: grid; place-items: center; border-radius: 50%; background: var(--s2); color: var(--text); font-style: normal; font-weight: 800; }
 .av i { width: 58px; height: 58px; margin: 0 auto 6px; font-size: 20px; box-shadow: 0 0 0 2px var(--s3); }
 .av.busy i { box-shadow: 0 0 0 3px var(--lime), 0 0 16px rgba(207,255,26,.4); color: var(--lime); }
@@ -236,3 +237,10 @@ textarea.big { min-height: 140px; }
 .ver { text-align: center; margin-top: 18px; font-size: 12px; }
 
 .seg button.off { opacity: .4; }
+
+.pre.code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 55dvh; white-space: pre; overflow: auto; overflow-wrap: normal; }
+.note { color: var(--amber); font-size: 14px; margin-top: 4px; overflow-wrap: anywhere; }
+.note.red { color: var(--red); }
+.msg.result .files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.msg.result .files .btn { margin: 0; padding: 7px 12px; font-size: 13px; }
+.sheet-body .backlink { color: var(--muted); font-weight: 600; margin-bottom: 8px; }

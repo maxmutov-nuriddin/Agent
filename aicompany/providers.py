@@ -16,6 +16,10 @@ class ProviderError(Exception):
     status: int | None = None
 
 
+class MalformedCall(ProviderError):
+    """Model asbob chaqiruvini noto'g'ri formatda yubordi (tashlab yuborilgan): qisqaroq qilib qayta urinish kerak."""
+
+
 class ModelNotFound(ProviderError):
     """Model nomi provayderda mavjud emas (models.yaml dagi nom noto'g'ri yoki eskirgan)."""
 
@@ -232,14 +236,15 @@ class GeminiProvider(_HttpProvider):
         data = await self._generate("POST", f"{self.base}/models/{cfg.id}:generateContent", cfg, json=body)
         try:
             cand = data["candidates"][0]
-            content = cand["content"]
-            parts = content.get("parts", [])
         except (KeyError, IndexError, TypeError) as e:
-            raise ProviderError(f"gemini: no content ({str(data)[:200]})") from e
+            raise ProviderError(f"gemini: no candidates ({str(data)[:200]})") from e
+        parts = (cand.get("content") or {}).get("parts") or []  # buzuq chaqiruvda 'content' bo'lmasligi ham mumkin
         text = "".join(p.get("text", "") for p in parts if not p.get("thought"))
         calls = [{"id": f"g{i}", "name": p["functionCall"]["name"], "input": p["functionCall"].get("args") or {}}
                  for i, p in enumerate(x for x in parts if "functionCall" in x)]
         if not text and not calls:
+            if cand.get("finishReason") == "MALFORMED_FUNCTION_CALL":
+                raise MalformedCall("gemini: asbob chaqiruvi buzuq formatda keldi")
             raise ProviderError(f"gemini: empty answer (finish={cand.get('finishReason')})")
         u = data.get("usageMetadata", {})
         cached = u.get("cachedContentTokenCount", 0) or 0

@@ -340,3 +340,57 @@ async def test_check_command_suggests_correct_names(make_app, capsys):
     await cmd_check(app)
     out = capsys.readouterr().out
     assert "TOPILMADI" in out and "gemini-3-flash-preview" in out and "taklif" in out
+
+
+# ---------- Gemini MALFORMED_FUNCTION_CALL ----------
+from aicompany.providers import MalformedCall  # noqa: E402
+
+
+def malformed_resp():
+    return httpx.Response(200, json={"candidates": [{"finishReason": "MALFORMED_FUNCTION_CALL"}],
+                                     "usageMetadata": {"promptTokenCount": 50}})
+
+
+async def test_gemini_reports_malformed_function_call_distinctly():
+    with pytest.raises(MalformedCall):
+        await GeminiProvider("k", gclient(lambda q: malformed_resp())).complete(CFG, "S", [{"role": "user", "content": "x"}], 10, TOOLS)
+
+
+async def test_malformed_call_is_retried_with_a_smaller_calls_hint(make_app, tmp_path):
+    n = {"i": 0}
+
+    def handler(system, user, model):
+        n["i"] += 1
+        if "durable facts" in system:
+            return "{}"
+        return MalformedCall("gemini: buzuq") if n["i"] == 1 else "tuzatildi"
+    app, provs = await make_app(handler, names=("gemini",))
+    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings)
+    assert await app.team.run_agent("developer", "sayt yoz", env=env) == "tuzatildi"
+    retry_msgs = provs["gemini"].msgs_seen[1]
+    assert "SMALLER tool calls" in retry_msgs[-1]["content"] and retry_msgs[-1]["content"].startswith("sayt yoz")
+
+
+async def test_hint_is_added_to_tool_results_message_too(make_app, tmp_path):
+    n = {"i": 0}
+
+    def handler(system, user, model):
+        n["i"] += 1
+        if n["i"] == 1:
+            return tool_call(0)
+        if n["i"] == 2:
+            return MalformedCall("buzuq")
+        return "ok"
+    app, provs = await make_app(handler, names=("anthropic",))
+    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings)
+    assert await app.team.run_agent("developer", "x", env=env) == "ok"
+    last = provs["anthropic"].msgs_seen[2][-1]["content"]
+    assert last[0]["type"] == "tool_result" and last[-1]["type"] == "text" and "SMALLER" in last[-1]["text"]
+
+
+async def test_repeated_malformed_calls_end_in_a_clear_failure(make_app, tmp_path):
+    app, _ = await make_app(lambda *a: MalformedCall("buzuq"), names=("gemini",))
+    env = ToolEnv(workspace=tmp_path, store=app.store, settings=app.settings)
+    with pytest.raises(ProviderError, match="3 marta"):
+        await app.team.run_agent("developer", "x", env=env)
+    assert app.team.busy == {}

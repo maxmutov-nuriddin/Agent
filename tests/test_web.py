@@ -272,7 +272,7 @@ async def test_stop_running_task_via_web(make_app):
             if (await app.store.get_task(1))["status"] != "running":
                 break
         t = await app.store.get_task(1)
-        assert t["status"] == "stopped" and app.team.busy == {} and app.orch.running == {}
+        assert t["status"] == "cancelled" and t["note"] and app.team.busy == {} and app.orch.running == {}
         assert (await post(client, "/api/tasks/1/stop"))[0] == 409  # endi ishlamayapti
     finally:
         await client.close()
@@ -383,3 +383,21 @@ async def test_state_reports_running_version(web):
     st = (await get(c, "/api/state"))[1]
     assert isinstance(st["version"], str) and st["version"]
     assert "Versiya" in (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()
+
+
+async def test_result_card_payload_stays_valid_json_even_for_huge_results(web):
+    c, app = web
+    app.orch.run_task_orig = app.orch.run_task
+    big = "kod " * 5000
+
+    async def fake_run_task(text, chat_id, notify, attachments=None):
+        return {"task_id": 1, "status": "done", "result": big, "files": ["index.html", "css/style.css"], "workspace": ""}
+    app.orch.run_task = fake_run_task
+    await post(c, "/api/tasks", {"text": "sayt"})
+    for _ in range(100):
+        await asyncio.sleep(0.05)
+        rows = (await get(c, "/api/chat"))[1]
+        if any(r["role"] == "result" for r in rows):
+            break
+    payload = json.loads(next(r["text"] for r in rows if r["role"] == "result"))   # kesilmagan, yaroqli JSON
+    assert payload["task_id"] == 1 and len(payload["text"]) == 500 and payload["files"] == ["index.html", "css/style.css"]
