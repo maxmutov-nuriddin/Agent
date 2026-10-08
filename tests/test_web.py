@@ -221,3 +221,12 @@ async def test_chat_task_produces_result_row_and_after_cursor(web):
     assert payload["status"] == "done" and payload["text"] == "FINAL DELIVERABLE" and payload["task_id"] == 1
     last = rows[-1]["id"]
     assert (await get(c, f"/api/chat?after={last}"))[1] == []  # kursor: yangi xabar yo'q
+
+
+def test_responsive_foundations_present():
+    root = Path(__file__).parent.parent / "aicompany/webui"
+    html, css = (root / "index.html").read_text(), (root / "style.css").read_text()
+    assert "viewport-fit=cover" in html and "width=device-width" in html
+    assert "env(safe-area-inset-bottom)" in css and "100dvh" in css  # iPhone chuqurligi va manzil paneli
+    assert "@media (max-width: 360px)" in css and "@media (max-height: 500px)" in css  # kichik va yotiq ekran
+    assert "overflow-wrap: anywhere" in css
