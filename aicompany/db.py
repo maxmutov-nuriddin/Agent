@@ -34,6 +34,7 @@ tasks = sa.Table(
     sa.Column("result", sa.Text),
     sa.Column("created_at", sa.String),
     sa.Column("finished_at", sa.String),
+    sa.Column("based_on", sa.Integer),  # qaysi vazifa natijasi ustida davom etilgan
     sa.Column("note", sa.Text),  # to'xtash/xato sababi (foydalanuvchiga ko'rsatiladi)
     sa.Column("archived", sa.Integer, server_default=sa.text("0")),
     sa.Column("archived_at", sa.String),
@@ -200,9 +201,9 @@ class Store:
         return res.rowcount > 0
 
     # tasks
-    async def create_task(self, chat_id, request) -> int:
+    async def create_task(self, chat_id, request, based_on=None) -> int:
         res = await self._exec(sa.insert(tasks).values(
-            chat_id=chat_id, request=request, status="running", created_at=now()))
+            chat_id=chat_id, request=request, status="running", created_at=now(), based_on=based_on))
         return res.inserted_primary_key[0]
 
     async def update_task(self, task_id, **fields):

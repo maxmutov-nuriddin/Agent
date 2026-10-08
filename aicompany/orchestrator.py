@@ -95,6 +95,8 @@ class Orchestrator:
         "is clear enough. Put a one-line acknowledgement in \"reply\" and a COMPLETE self-contained description of "
         "the work in \"task\", merging details from earlier messages (including answers to your questions).\n"
         "If a sensible default exists, do the task instead of asking. Never claim work is done in chat mode. "
+        "If the owner wants to change, fix or continue the result of an earlier task (lines like '[Vazifa #N ...]'), "
+        "add \"based_on\": N so the team starts from that task's files. "
         "Reply in the language the owner uses (Uzbek, Russian or English).")
 
     CHAT_ONLY = (
@@ -105,7 +107,8 @@ class Orchestrator:
         "in the owner's language). If, and only if, the owner clearly asks for real work to be done (create, write, "
         "research, build, analyze...), set \"proposed_task\" to a COMPLETE self-contained description (merging earlier "
         "messages) and make the reply a short offer such as 'Buni vazifa qilib topshiraymi?'; the app shows a "
-        "'Submit as task' button. Otherwise proposed_task is an empty string.")
+        "'Submit as task' button. Otherwise proposed_task is an empty string. If the work changes or continues an earlier "
+        "task's result (lines like '[Vazifa #N ...]'), also add \"based_on\": N.")
 
     async def handle(self, text: str, chat_id: int = 0, notify: Notify = _noop,
                      attachments: list[Path] | None = None, allow_tasks: bool = True) -> dict:
@@ -119,21 +122,22 @@ class Orchestrator:
             await self.store.add_chat(chat_id, "ceo", decision["reply"])
             await notify(decision["reply"])
             if decision.get("task"):
-                await self.store.add_chat(chat_id, "proposal", json.dumps({"task": decision["task"]}, ensure_ascii=False))
+                await self.store.add_chat(chat_id, "proposal", json.dumps(
+                    {"task": decision["task"], "based_on": decision.get("based_on")}, ensure_ascii=False))
             return {"kind": "chat", "reply": decision["reply"], "proposed_task": decision.get("task") or None}
         if decision["reply"]:
             await self.store.add_chat(chat_id, "ceo", decision["reply"])
             await notify(decision["reply"])
-        return await self._run_and_log(decision["task"], chat_id, notify, attachments)
+        return await self._run_and_log(decision["task"], chat_id, notify, attachments, decision.get("based_on"))
 
     async def submit_task(self, text: str, chat_id: int = 0, notify: Notify = _noop,
-                          attachments: list[Path] | None = None) -> dict:
-        """Aniq vazifa (suhbatsiz): «Vazifa berish» tugmasi."""
-        await self.store.add_chat(chat_id, "owner", "📌 " + text)
-        return await self._run_and_log(text, chat_id, notify, attachments)
+                          attachments: list[Path] | None = None, based_on: int | None = None) -> dict:
+        """Aniq vazifa (suhbatsiz): «Vazifa berish» tugmasi. based_on: shu vazifa natijasi ustida davom etish."""
+        await self.store.add_chat(chat_id, "owner", "📌 " + (f"(#{based_on} ustida) " if based_on else "") + text)
+        return await self._run_and_log(text, chat_id, notify, attachments, based_on)
 
-    async def _run_and_log(self, task_text, chat_id, notify, attachments) -> dict:
-        res = await self.run_task(task_text, chat_id, notify, attachments)
+    async def _run_and_log(self, task_text, chat_id, notify, attachments, based_on=None) -> dict:
+        res = await self.run_task(task_text, chat_id, notify, attachments, based_on)
         summary = f"[Vazifa #{res['task_id']} {res['status']}] " + (res.get("result") or res.get("error") or "")
         await self.store.add_chat(chat_id, "ceo", summary[:1500])
         res["kind"] = "task"
@@ -161,28 +165,52 @@ class Orchestrator:
         try:
             d = extract_json(res.text)
             reply = str(d.get("reply", "")).strip()
+            based_on = await self._valid_task_id(d.get("based_on"))
             if allow_tasks and d.get("mode") == "task":
-                return {"mode": "task", "reply": reply, "task": str(d.get("task", "")).strip() or text}
+                return {"mode": "task", "reply": reply, "task": str(d.get("task", "")).strip() or text, "based_on": based_on}
             if not allow_tasks:  # faqat suhbat: ish so'ralgan bo'lsa taklif sifatida qaytaramiz
                 proposal = str(d.get("proposed_task") or (d.get("task") if d.get("mode") == "task" else "") or "").strip()
                 return {"mode": "chat", "reply": reply or ("Buni vazifa qilib topshiraymi?" if proposal else "Tushundim."),
-                        "task": proposal}
+                        "task": proposal, "based_on": based_on if proposal else None}
             if reply:
                 return {"mode": "chat", "reply": reply, "task": ""}
         except (ValueError, TypeError):
             pass
         return {"mode": "chat", "reply": res.text.strip() or "Tushunmadim, qaytadan yozing.", "task": ""}
 
+    async def _valid_task_id(self, value) -> int | None:
+        try:
+            tid = int(str(value).lstrip("#"))
+        except (TypeError, ValueError):
+            return None
+        return tid if await self.store.get_task(tid) else None
+
     async def run_task(self, request: str, chat_id: int = 0, notify: Notify = _noop,
-                       attachments: list[Path] | None = None) -> dict:
+                       attachments: list[Path] | None = None, based_on: int | None = None) -> dict:
         async with self.sem:
-            return await self._run_task(request, chat_id, notify, attachments)
+            return await self._run_task(request, chat_id, notify, attachments, based_on)
+
+    async def _continue_from(self, based_on: int, ws: Path) -> str:
+        """Avvalgi vazifa fayllarini yangi ish papkasiga ko'chiradi va jamoaga kontekst beradi."""
+        prev = await self.store.get_task(based_on)
+        if not prev:
+            return ""
+        src = self.settings.workspace_dir / f"task_{based_on}"
+        if src.is_dir():
+            shutil.copytree(src, ws, dirs_exist_ok=True)
+        files = self._files(ws)
+        return (f"\n\n[This continues task #{based_on}: \"{clip(prev['request'], 300)}\". "
+                f"Its files are already in the workspace: {', '.join(files) or '(none)'}. Modify or extend them as "
+                f"requested instead of starting over.\nPrevious result:\n{clip(prev['result'] or '', 2500)}]")
 
     async def _run_task(self, request: str, chat_id: int, notify: Notify,
-                        attachments: list[Path] | None) -> dict:
+                        attachments: list[Path] | None, based_on: int | None = None) -> dict:
         notify = _safe(notify)
-        task_id = await self.store.create_task(chat_id, request)
+        based_on = await self._valid_task_id(based_on) if based_on else None
+        task_id = await self.store.create_task(chat_id, request, based_on)
         ws = self._workspace(task_id)
+        if based_on:
+            request += await self._continue_from(based_on, ws)
         for src in attachments or []:
             shutil.copy(src, ws / Path(src).name)
         if attachments:

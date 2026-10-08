@@ -9,15 +9,17 @@ def desk(decisions):
     """Front desk javoblari ketma-ket; qolgan chaqiruvlar oddiy kompaniya."""
     seq = list(decisions)
     base = scripted_company()
-    seen = []
+    seen, plans = [], []
 
     def handler(system, user, model):
-        if "front desk" in system:
+        if "Plan the work" in user:
+            plans.append(user)
+        if "front desk" in system or "in a CHAT" in system:
             seen.append((user, model))
             d = seq.pop(0)
             return d if isinstance(d, str) else json.dumps(d)
         return base(system, user, model)
-    handler.seen = seen
+    handler.seen, handler.plans = seen, plans
     return handler
 
 
@@ -136,3 +138,31 @@ async def test_parallel_task_limit(make_app):
     app.orch._run = tracked
     await asyncio.gather(app.orch.run_task("a", 1), app.orch.run_task("b", 1))
     assert peak == 1
+
+
+
+async def test_front_desk_can_continue_an_earlier_task(make_app):
+    h = desk([{"mode": "task", "reply": "", "task": "landing"},
+              {"mode": "task", "reply": "O'zgartiraman", "task": "Sarlavhani qizil qil", "based_on": 1},
+              {"mode": "task", "reply": "", "task": "yangi ish", "based_on": 77}])      # mavjud bo'lmagan vazifa
+    app, _ = await make_app(h)
+    await app.orch.handle("landing yarat", 1)
+    (app.settings.workspace_dir / "task_1" / "page.html").write_text("eski")
+    r2 = await app.orch.handle("sarlavhani qizil qil", 1)
+    t2 = await app.store.get_task(r2["task_id"])
+    assert t2["based_on"] == 1 and (app.settings.workspace_dir / f"task_{r2['task_id']}" / "page.html").exists()
+    assert t2["request"] == "Sarlavhani qizil qil"                                         # bazada sizning matningiz
+    assert "continues task #1" in h.plans[-1] and "page.html" in h.plans[-1]               # rahbar kontekstni oladi
+    r3 = await app.orch.handle("yangi narsa", 1)
+    assert (await app.store.get_task(r3["task_id"]))["based_on"] is None                   # noto'g'ri raqam e'tiborsiz
+
+
+async def test_chat_proposal_carries_based_on(make_app):
+    h = desk([{"mode": "task", "reply": "", "task": "landing"},
+              {"reply": "Shu saytni o'zgartiraymi?", "proposed_task": "Rangni o'zgartir", "based_on": "#1"}])
+    app, _ = await make_app(h)
+    await app.orch.handle("landing yarat", 1)
+    r = await app.orch.handle("rangini o'zgartirsa bo'ladimi?", 1, allow_tasks=False)
+    assert r["kind"] == "chat" and r["proposed_task"] == "Rangni o'zgartir"
+    prop = [m for m in await app.store.recent_chat(1, 20) if m["role"] == "proposal"][-1]
+    assert json.loads(prop["text"]) == {"task": "Rangni o'zgartir", "based_on": 1}

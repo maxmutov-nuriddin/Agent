@@ -217,7 +217,7 @@ async def test_chat_never_starts_tasks_but_proposes_them(web):
     await asyncio.sleep(0.2)
     _, rows = await get(c, "/api/chat")
     assert [r["role"] for r in rows] == ["owner", "ceo", "proposal"]
-    assert json.loads(rows[2]["text"]) == {"task": "sayt yasab ber"}
+    assert json.loads(rows[2]["text"]) == {"task": "sayt yasab ber", "based_on": None}
     assert await app.store.list_tasks() == []  # suhbat vazifa ochmadi
 
 
@@ -390,7 +390,7 @@ async def test_result_card_payload_stays_valid_json_even_for_huge_results(web):
     app.orch.run_task_orig = app.orch.run_task
     big = "kod " * 5000
 
-    async def fake_run_task(text, chat_id, notify, attachments=None):
+    async def fake_run_task(text, chat_id, notify, attachments=None, based_on=None):
         return {"task_id": 1, "status": "done", "result": big, "files": ["index.html", "css/style.css"], "workspace": ""}
     app.orch.run_task = fake_run_task
     await post(c, "/api/tasks", {"text": "sayt"})
@@ -570,3 +570,26 @@ async def test_widget_link_and_limits_shown_in_the_panel(web):
     js = (Path(__file__).parent.parent / "aicompany/webui/app.js").read_text()
     for needle in ("/models", "/widget-link", "Modellarni tekshirish", "iPhone vidjeti", "Limitlar"):
         assert needle in js, needle
+
+
+
+async def test_continue_previous_task_via_panel(web):
+    c, app = web
+    first = await app.orch.run_task("landing page", 1)
+    ws1 = app.settings.workspace_dir / f"task_{first['task_id']}"
+    (ws1 / "index.html").write_text("<h1>v1</h1>")
+    assert (await post(c, "/api/tasks", {"text": "sarlavhani o'zgartir", "based_on": 999}))[0] == 400
+    assert (await post(c, "/api/tasks", {"text": "sarlavhani o'zgartir", "based_on": "1"}))[0] == 400
+    assert (await post(c, "/api/tasks", {"text": "sarlavhani o'zgartir", "based_on": first["task_id"]}))[0] == 200
+    for _ in range(200):
+        await asyncio.sleep(0.05)
+        t2 = await app.store.get_task(2)
+        if t2 and t2["status"] == "done":
+            break
+    assert t2["based_on"] == first["task_id"]
+    assert (app.settings.workspace_dir / "task_2" / "index.html").read_text() == "<h1>v1</h1>"     # fayllar ko'chirildi
+    assert t2["request"] == "sarlavhani o'zgartir"
+    lst = (await get(c, "/api/tasks"))[1]
+    assert next(t for t in lst if t["id"] == 2)["based_on"] == 1
+    chat = (await get(c, "/api/chat"))[1]
+    assert any(r["text"].startswith("📌 (#1 ustida)") for r in chat)

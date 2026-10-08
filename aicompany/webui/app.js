@@ -119,7 +119,7 @@ function drawTeam({ state, team, ceo }) {
         h("div", {}, h("div", { class: "who" }, "Rahbar"), h("div", { class: "st" }, state.pending ? `onlayn · ${state.pending} ta qaror kutmoqda` : "onlayn"))),
       h("blockquote", {}, quote),
       h("div", { class: "btns" }, h("button", { class: "btn black", onclick: () => openChat(false) }, "Chatni ochish"),
-        h("button", { class: "btn outline", onclick: taskSheet }, "Vazifa berish"))),
+        h("button", { class: "btn outline", onclick: () => taskSheet() }, "Vazifa berish"))),
     h("div", { class: "stats" },
       h("div", { class: "stat" }, h("b", {}, state.done_today), h("span", {}, "bugun bajarildi")),
       h("div", { class: "stat" }, h("b", {}, state.working.length), h("span", {}, "hozir ishlayapti")),
@@ -149,7 +149,8 @@ function agentSheet(a) {
       a.tools.map((t) => h("span", { class: "pill" }, t)), h("span", { class: "pill" }, a.steps + " ish"), h("span", { class: "pill" }, usd(a.cost))),
     a.core ? null : h("div", { class: "label" }), a.core ? null : h("button", { class: "btn red full", onclick: fire }, "Ishdan bo'shatish"));
 }
-function taskSheet() {
+function taskSheet(basedOn) {
+  basedOn = Number.isInteger(basedOn) ? basedOn : null;
   const text = h("textarea", { class: "big", rows: "5", placeholder: "Nima qilish kerak? Qanchalik aniq bo'lsa, shuncha yaxshi." });
   const picker = h("input", { type: "file", multiple: "multiple", hidden: "hidden" });
   const chips = h("div", { class: "pills" });
@@ -169,10 +170,11 @@ function taskSheet() {
   btn.addEventListener("click", async () => {
     if (!text.value.trim()) return toast("Vazifani yozing");
     btn.disabled = true;
-    try { await post("/tasks", { text: text.value, files: uploaded }); closeSheet(); toast("Vazifa topshirildi"); if (!S.chatOpen) go("tasks"); }
+    try { await post("/tasks", { text: text.value, files: uploaded, based_on: basedOn }); closeSheet(); toast("Vazifa topshirildi"); if (!S.chatOpen) go("tasks"); }
     catch (e) { toast(e.message); btn.disabled = false; }
   });
-  openSheet(h("h2", {}, "Yangi vazifa"), h("p", { class: "muted" }, "Jamoa mustaqil bajaradi va natijani sizga topshiradi."),
+  openSheet(h("h2", {}, basedOn ? `Vazifa #${basedOn} ustida davom` : "Yangi vazifa"),
+    h("p", { class: "muted" }, basedOn ? "Jamoa avvalgi natija va fayllardan boshlaydi. Nimani o'zgartirish yoki qo'shish kerakligini yozing." : "Jamoa mustaqil bajaradi va natijani sizga topshiradi."),
     h("div", { class: "label" }), text, h("div", { class: "label" }), chips, picker,
     h("button", { class: "btn ghost full", onclick: () => picker.click() }, "📎 Fayl biriktirish"), h("div", { class: "label" }), btn);
   setTimeout(() => text.focus(), 50);
@@ -224,7 +226,7 @@ function drawTasks({ tasks, archive }) {
     const why = t.status !== "done" && t.status !== "running" && t.note ? t.note : "";
     return h("button", { class: "item", onclick: () => openTask(t.id), "aria-label": "Vazifa " + t.id },
       h("div", { class: "grow" }, h("h3", {}, t.request), h("div", { class: "bar " + barTone }, h("i")),
-        h("p", {}, `${label} · ${usd(t.cost)} · ${ago(t.created_at)}`), why ? h("p", { class: "note" + (t.status === "failed" ? " red" : "") }, why) : null));
+        h("p", {}, `${label} · ${usd(t.cost)} · ${ago(t.created_at)}${t.based_on ? ` · #${t.based_on} ustida` : ""}`), why ? h("p", { class: "note" + (t.status === "failed" ? " red" : "") }, why) : null));
   })];
 }
 async function openTask(id) {
@@ -239,7 +241,8 @@ async function openTask(id) {
     : t.archived
       ? [h("button", { class: "btn", onclick: act(`/tasks/${t.id}/restore`, "Qaytarildi") }, "↩ Qaytarish"),
          h("button", { class: "btn red", onclick: () => { if (confirm("Vazifa va uning fayllari butunlay o'chiriladi. Davom etasizmi?")) act(`/tasks/${t.id}`, "O'chirildi", "DELETE")(); } }, "🗑 Butunlay o'chirish")]
-      : [h("button", { class: "btn", onclick: act(`/tasks/${t.id}/archive`, "Arxivga olindi") }, "🗄 Arxivga olish")];
+      : [h("button", { class: "btn lime", onclick: () => taskSheet(t.id) }, "✏️ O'zgartirish / davom"),
+         h("button", { class: "btn", onclick: act(`/tasks/${t.id}/archive`, "Arxivga olindi") }, "🗄 Arxivga olish")];
   const why = WHY[t.status] || "";
   openSheet(h("h2", {}, "Vazifa #" + t.id), h("p", { class: "muted" }, `${label} · ${usd(t.cost)}${t.archived ? " · arxivda" : ""}`),
     why || t.note ? h("p", { class: "note" + (t.status === "failed" ? " red" : "") }, [why, t.note].filter(Boolean).join(" ")) : null, h("p", {}, t.request),
@@ -432,10 +435,10 @@ function msgEl(m) {
     const btn = h("button", { class: "btn lime" }, "Vazifa qilib topshirish");
     btn.addEventListener("click", async () => {
       btn.disabled = true;
-      try { await post("/tasks", { text: p.task }); btn.textContent = "Topshirildi ✓"; toast("Vazifa topshirildi"); }
+      try { await post("/tasks", { text: p.task, based_on: Number.isInteger(p.based_on) ? p.based_on : null }); btn.textContent = "Topshirildi ✓"; toast("Vazifa topshirildi"); }
       catch (e) { toast(e.message); btn.disabled = false; }
     });
-    return h("div", { class: "msg proposal" }, h("div", { class: "q" }, "Taklif qilingan vazifa"), h("div", {}, p.task), btn);
+    return h("div", { class: "msg proposal" }, h("div", { class: "q" }, "Taklif qilingan vazifa" + (p.based_on ? ` (#${p.based_on} ustida)` : "")), h("div", {}, p.task), btn);
   }
   return h("div", { class: "msg " + m.role }, m.text);
 }
@@ -497,7 +500,7 @@ async function toggleMic() {
 $("chat-mic").append(svg(IC.mic));
 $("chat-mic").addEventListener("click", toggleMic);
 $("chat-back").addEventListener("click", closeChat);
-$("chat-task").addEventListener("click", taskSheet);
+$("chat-task").addEventListener("click", () => taskSheet());
 $("chat-clear").addEventListener("click", async () => {
   if (!confirm("Suhbat tarixi tozalansinmi? (Vazifalar va natijalar o'chmaydi)")) return;
   try { await post("/chat/clear"); S.chat = []; S.lastChat = 0; openChat(false); toast("Suhbat tozalandi"); } catch (e) { toast(e.message); }

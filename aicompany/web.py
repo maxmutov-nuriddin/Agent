@@ -191,7 +191,7 @@ def make_web_app(app: App) -> web.Application:
         rows = await app.store.list_tasks(60, archived=archived)
         return json_ok([{"id": t["id"], "status": t["status"], "request": t["request"][:160],
                          "created_at": t["created_at"], "finished_at": t["finished_at"],
-                         "archived": bool(t["archived"]), "note": t["note"],
+                         "archived": bool(t["archived"]), "note": t["note"], "based_on": t["based_on"],
                          "cost": round(await app.store.spent_task(t["id"]), 4)} for t in rows])
 
     def task_files(task_id: int) -> list[str]:
@@ -204,7 +204,7 @@ def make_web_app(app: App) -> web.Application:
             raise web.HTTPNotFound(reason="topilmadi")
         msgs = await app.store.task_messages(t["id"])
         return json_ok({"id": t["id"], "status": t["status"], "request": t["request"], "result": t["result"],
-                        "archived": bool(t["archived"]), "note": t["note"],
+                        "archived": bool(t["archived"]), "note": t["note"], "based_on": t["based_on"],
                         "approvals": [{"agent": a["agent"], "command": a["description"], "status": a["status"], "kind": a["kind"],
                                        "at": a["decided_at"] or a["created_at"]} for a in await app.store.task_approvals(t["id"])],
                         "cost": round(await app.store.spent_task(t["id"]), 4), "files": task_files(t["id"]),
@@ -287,10 +287,14 @@ def make_web_app(app: App) -> web.Application:
         d = await body(request)
         text = text_of(d)
         attachments = uploads_for(d.get("files"))
+        based_on = d.get("based_on")
+        if based_on is not None:
+            if not isinstance(based_on, int) or not await app.store.get_task(based_on):
+                raise web.HTTPBadRequest(reason="asos vazifa topilmadi")
 
         async def job():
             try:
-                await post_result(await app.orch.submit_task(text, chat_id, notify, attachments or None))
+                await post_result(await app.orch.submit_task(text, chat_id, notify, attachments or None, based_on))
             except Exception as e:  # noqa: BLE001
                 await report_failure(e)
         spawn(job())
