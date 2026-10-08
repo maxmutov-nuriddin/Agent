@@ -154,9 +154,12 @@ class Store:
         self.remote = not url.startswith("sqlite")  # tashqi baza: fayllar va Telegram sessiyasi ham bazada saqlanadi
         if url.startswith("sqlite") and ":memory:" not in url:
             Path(url.split("///", 1)[1]).parent.mkdir(parents=True, exist_ok=True)
-        # tashqi baza: ulanishlar soni kichik (Supabase bepul pooler limiti), uzilgan ulanish tekshiriladi
-        extra = {"pool_pre_ping": True, "pool_recycle": 1800, "pool_size": 3, "max_overflow": 5} if self.remote else {}
+        # tashqi baza uzoqda (har borib kelish ~0.2 s): ulanishlar doimiy ochiq turadi (har so'rovda yangi SSL ulanish
+        # ochilmaydi), pre_ping yo'q (har so'rovga +1 borib kelish), soni Supabase bepul pooler limitidan kichik
+        extra = {"pool_recycle": 600, "pool_size": 8, "max_overflow": 2} if self.remote else {}
         self.engine = create_async_engine(url, connect_args=connect_args, **extra)
+        # o'qish: BEGIN/ROLLBACK siz (har o'qishda 2 ta ortiqcha borib kelish tejaladi)
+        self.reader = self.engine.execution_options(isolation_level="AUTOCOMMIT") if self.remote else self.engine
         if url.startswith("sqlite") and ":memory:" not in url:
             @sa.event.listens_for(self.engine.sync_engine, "connect")
             def _pragmas(dbapi_conn, _):  # parallel o'qish/yozish uchun (agentlar bir vaqtda ishlaydi)
@@ -201,7 +204,7 @@ class Store:
         await self.engine.dispose()
 
     async def _all(self, stmt):
-        async with self.engine.connect() as c:
+        async with self.reader.connect() as c:
             return [dict(r._mapping) for r in await c.execute(stmt)]
 
     async def _one(self, stmt):

@@ -9,7 +9,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.08-x";
+const PANEL_V = "2026.10.08-y";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -133,7 +133,7 @@ const initials = (n) => n.split("_").map((p) => p[0] || "").join("").slice(0, 2)
 function toast(msg) { const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 2400); }
 async function api(path, opts = {}) {
   // Vaqt chegarasi: server uxlab qolsa yoki osilsa, sahifa abadiy qora turib qolmasin
-  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), opts.timeout || 30000);
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), opts.timeout || 45000);
   let r;
   try { r = await fetch("/api" + path, { ...opts, signal: ctl.signal, headers: { Authorization: "Bearer " + S.token, "Content-Type": "application/json" } }); }
   catch (e) { throw new Error(e.name === "AbortError" ? "Server javob bermadi" : "Aloqa yo'q"); }
@@ -228,7 +228,13 @@ async function refresh(force) {
     S.sig[S.tab] = sig;
     const v = $("view"), top = v.scrollTop;
     v.replaceChildren(...draw(data).filter((n) => n != null && n !== false)); v.scrollTop = top;
-  } catch (e) { if (e.message !== "auth") $("view").replaceChildren(h("div", { class: "empty" }, e.message)); }
+  } catch (e) {
+    if (e.message === "auth") return;
+    S.sig[S.tab] = null;  // keyingi muvaffaqiyatli yuklashda albatta qayta chiziladi (oldin xato ekranda qotib qolardi)
+    const v = $("view");
+    if (!v.children.length || v.querySelector(".empty.err")) v.replaceChildren(h("div", { class: "empty err" }, "Sekin aloqa: " + e.message + ". Qayta urinilmoqda…"));
+    else toast("Sekin aloqa, qayta urinilmoqda…");  // eski ma'lumot ko'rinib turadi
+  }
 }
 function head(title, extra) { return h("div", { class: "head" }, h("h1", { class: "title" }, title), extra); }
 function liveTag() {
@@ -824,12 +830,16 @@ $("chat-input").addEventListener("input", (e) => { const t = e.target; t.style.h
 $("chat-input").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey && !matchMedia("(pointer: coarse)").matches) { e.preventDefault(); sendChat(); } });
 
 // ---------- so'rov va ishga tushirish ----------
+let polling = false;
 async function poll() {
+  if (polling) return;  // oldingi so'rov tugamagan bo'lsa, ustiga yangisini yubormaymiz (sekin aloqada navbat to'planardi)
+  polling = true;
   try {
     await pollChat();
     if (S.chatOpen) { S.state = await api("/state"); $("chat-sub").textContent = S.state.paused ? "pauza" : S.state.working.length ? S.state.working.map((w) => w.agent).join(", ") + " ishlayapti" : "onlayn"; if (!S.state.working.length && !S.state.running_tasks.length) document.querySelectorAll(".typing").forEach((n) => n.remove()); }
     else await refresh(false);
   } catch (e) { if (e.message !== "auth") toast("Aloqa yo'q…"); }
+  finally { polling = false; }
 }
 function start() {
   renderTabs(); poll().then(() => refresh(true));
