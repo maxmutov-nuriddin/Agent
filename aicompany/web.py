@@ -432,6 +432,18 @@ def make_web_app(app: App) -> web.Application:
             await app.store.audit("owner", "tg_login", f"Telegram akkaunt ulandi: {app.tg.me}"[:200])
         return json_ok({"status": status, "me": app.tg.me if status == "ok" else ""})
 
+    async def h_tg_me(request):
+        """Hozir qaysi akkauntga ulanganini ko'rsatadi (eski tglogin sessiyasi bo'lishi mumkin)."""
+        if not app.tg.configured():
+            return json_ok({"me": ""})
+        try:
+            me = await (await app.tg.client()).get_me()
+        except TgError as e:
+            raise web.HTTPBadRequest(reason=str(e))
+        app.tg.me = app.tg.name_of(me) + (f" (@{me.username})" if getattr(me, "username", None) else "")
+        await app.store.set_kv("tg_me", app.tg.me)
+        return json_ok({"me": app.tg.me})
+
     async def h_tg_logout(request):
         await app.tg.logout()
         await app.store.delete_kv("tg_me")
@@ -602,7 +614,7 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
-        web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/logout", h_tg_logout),
+        web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/logout", h_tg_logout), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),

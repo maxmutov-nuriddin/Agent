@@ -702,3 +702,14 @@ async def test_tg_keys_from_panel_survive_restart(make_app):
     from aicompany.app import build_app
     again = await build_app(app.settings, providers={})
     assert (again.tg.api_id, again.tg.api_hash) == (777, "b" * 32) and not again.tg.configured()
+
+
+async def test_tg_me_shows_connected_account(web):
+    from aicompany.tguser import TgUser
+    c, app = web
+    assert (await get(c, "/api/tg/me"))[1] == {"me": ""}                       # ulanmagan
+    client = LoginClient()
+    client.authed = True
+    app.tg = TgUser(app.settings, client_factory=lambda: client)
+    app.tg.api_id, app.tg.api_hash = 1, "h"
+    assert (await get(c, "/api/tg/me"))[1] == {"me": "Agent (@agent_x)"}
