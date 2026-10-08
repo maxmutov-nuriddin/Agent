@@ -12,6 +12,8 @@ python -m aicompany ask "Kofexona uchun Instagram kontent rejasi tuz"   # Telegr
 python -m aicompany run     # Telegram botni ishga tushirish
 python -m pytest            # testlar
 ```
+Faqat Claude bilan boshlash: `.env` da faqat `ANTHROPIC_API_KEY` ni to'ldiring, boshqa provayderlar kalitsiz avtomatik o'tkazib yuboriladi.
+
 `.env` da kerak: `TELEGRAM_BOT_TOKEN` (@BotFather), `OWNER_TELEGRAM_ID` (@userinfobot), kamida bitta API kalit.
 
 ## Telegram buyruqlari
