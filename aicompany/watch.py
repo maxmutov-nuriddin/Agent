@@ -124,6 +124,10 @@ class Watcher:
         self.app = app
         self.store = app.store
 
+    async def kind_on(self, kind: str) -> bool:
+        """Umumiy o'chirgich (Sozlamalar): «tg» yoki «price» turidagi hamma kuzatuv."""
+        return (await self.store.get_kv(f"watch_on:{kind}")) != "0"
+
     async def smart_on(self) -> bool:
         return (await self.store.get_kv("watch_smart")) == "1"
 
@@ -258,7 +262,10 @@ class Watcher:
         while True:
             try:
                 now = time.monotonic()
+                on = {k: await self.kind_on(k) for k in ("tg", "price")}
                 for w in await self.store.list_watches(enabled_only=True):
+                    if not on.get(w["kind"], True):
+                        continue  # bu tur Sozlamalarda butunlay o'chirilgan
                     every = TG_EVERY if w["kind"] == "tg" else PRICE_EVERY
                     if now >= due.get(w["id"], 0):
                         due[w["id"]] = now + every

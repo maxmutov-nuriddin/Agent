@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-r";
+const PANEL_V = "2026.10.09-s";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -753,6 +753,8 @@ function watchSection({ watch, smart }, on) {
         w.enabled ? "⏸ To'xtatish" : "▶ Yoqish")));
   return h("section", { class: "plans-sec watch-sec" + (on ? " on" : "") },
     h("div", { class: "row-b" }, h("p", { class: "kick" }, "Kuzatuv"), h("button", { class: "btn lime sm", onclick: () => watchSheet() }, "+ Kuzatuv")),
+    ...[["tg", "📡 Telegram kanal kuzatuvi"], ["price", "🏷 Narx kuzatuvi"]].filter(([k]) => S.state && S.state.watch_on && S.state.watch_on[k] === false)
+      .map(([, l]) => h("p", { class: "note" }, "⏸ " + l + " Sozlamalarda butunlay o'chirilgan.")),
     h("p", { class: "hint" }, smart ? "🧠 Aqlli kuzatuv yoqilgan (AI mos postlarni tekshiradi). O'chirish: Hisob → Sozlamalar." : "Kalit so'z rejimi (AI'siz, bepul). Aqlli kuzatuvni Hisob → Sozlamalar da yoqasiz."),
     watch.watches.length ? watch.watches.map(card) : h("p", { class: "muted sm" }, "Kuzatuv yo'q. Telegram kanal (ish e'lonlari, narxlar, yangiliklar) yoki mahsulot narxini qo'shing. Chatda «@kanalni frontend so'zi bo'yicha kuzat» deb yozsangiz ham bo'ladi."),
     watch.hits.length ? h("p", { class: "kick sub" }, "Oxirgi topilganlar") : null,
@@ -1203,6 +1205,14 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
       : "Sifat rejimi: rahbar o'rta/kuchli modeldan foydalanadi, QA e'tirozida eng kuchli model qayta yozadi. Murakkab ishlar uchun."),
     h("div", { class: "label" }, "Bildirishnomalar (telefonga)"), ...pushBlock(),
     h("div", { class: "label" }, "Ertalabki xulosa"), ...morningBlock(state),
+    h("div", { class: "label" }, "Kuzatuvlar"),
+    ...[["tg", "📡 Telegram kanal kuzatuvi"], ["price", "🏷 Narx kuzatuvi"]].map(([k, l]) => {
+      const onK = !state.watch_on || state.watch_on[k] !== false;
+      return h("div", { class: "kv" }, h("span", {}, l), h("div", { class: "seg sm", style: "margin:0" },
+        [[true, "Yoqilgan"], [false, "O'chiq"]].map(([v, t]) => h("button", { class: onK === v ? "on" : "", onclick: async () => {
+          try { await post("/watch_kind", { kind: k, enabled: v }); toast(l + ": " + t); refresh(true); } catch (e) { toast(e.message); } } }, t))));
+    }),
+    h("p", { class: "hint" }, "O'chiq bo'lsa, shu turdagi birorta kuzatuv tekshirilmaydi va xabar kelmaydi. Ro'yxat saqlanib qoladi, qayta yoqsangiz davom etadi."),
     h("div", { class: "label" }, "Aqlli kuzatuv (AI)"),
     h("div", { class: "seg" }, [[true, "🧠 Yoqilgan"], [false, "O'chiq"]].map(([v, l]) => h("button", { class: !!state.watch_smart === v ? "on" : "", onclick: async () => {
       try { await post("/watch_smart", { enabled: v }); toast(v ? "Aqlli kuzatuv yoqildi" : "Faqat kalit so'z rejimi"); refresh(true); } catch (e) { toast(e.message); } } }, l))),

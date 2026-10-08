@@ -179,6 +179,7 @@ def make_web_app(app: App) -> web.Application:
             "bot_push": (await app.store.get_kv("bot_push")) or "all",
             "morning": await morning_settings(app.store),
             "watch_smart": (await app.store.get_kv("watch_smart")) == "1",
+            "watch_on": {k: (await app.store.get_kv(f"watch_on:{k}")) != "0" for k in ("tg", "price")},
             "today": round(await today_spend(), 4),
             "budgets": [{"provider": n, **v} for n, v in budgets.items()],
             "working": [{"agent": a, "task_id": b["task_id"]} for a, b in app.team.busy.items()],
@@ -920,6 +921,15 @@ def make_web_app(app: App) -> web.Application:
         w = await app.store.get_watch(w["id"])
         return json_ok({"hits": hits, "watch": watch_out(w)})
 
+    async def h_watch_kind(request):
+        d = await body(request)
+        if d.get("kind") not in ("tg", "price"):
+            raise web.HTTPBadRequest(reason="tur: tg yoki price")
+        on = bool(d.get("enabled"))
+        await app.store.set_kv(f"watch_on:{d['kind']}", "1" if on else "0")
+        await app.store.audit("owner", "watch_kind", f"{d['kind']}: {'yoqildi' if on else 'o`chirildi'}")
+        return json_ok({"kind": d["kind"], "enabled": on})
+
     async def h_watch_smart(request):
         on = bool((await body(request)).get("enabled"))
         await app.store.set_kv("watch_smart", "1" if on else "0")
@@ -1082,7 +1092,7 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/tasks", h_task_submit),
         web.post(r"/api/tasks/{id:\d+}/stop", h_task_stop), web.post(r"/api/tasks/{id:\d+}/archive", h_task_archive),
         web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
-        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/morning", h_morning), web.get("/api/watches", h_watches), web.post("/api/watches", h_watch_add), web.post(r"/api/watches/{id:\d+}", h_watch_update), web.delete(r"/api/watches/{id:\d+}", h_watch_delete), web.post(r"/api/watches/{id:\d+}/check", h_watch_check), web.post("/api/watch_smart", h_watch_smart), web.post("/api/morning/test", h_morning_test), web.post("/api/resume", h_resume),
+        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/morning", h_morning), web.get("/api/watches", h_watches), web.post("/api/watches", h_watch_add), web.post(r"/api/watches/{id:\d+}", h_watch_update), web.delete(r"/api/watches/{id:\d+}", h_watch_delete), web.post(r"/api/watches/{id:\d+}/check", h_watch_check), web.post("/api/watch_smart", h_watch_smart), web.post("/api/watch_kind", h_watch_kind), web.post("/api/morning/test", h_morning_test), web.post("/api/resume", h_resume),
         web.post("/api/provider", h_provider), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),

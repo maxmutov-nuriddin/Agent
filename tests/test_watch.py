@@ -138,3 +138,25 @@ async def test_watch_api_and_chat_creation(web):
     assert (await c.delete(f"/api/watches/{w['id']}", headers=TOK)).status == 200
     title = await app.orch._save_watch({"kind": "price", "target": "https://shop.uz/p/9", "target_price": "500000"})
     assert title == "Narx: shop.uz" and (await app.store.list_watches())[0]["target_price"] == 500000
+
+
+async def test_kind_master_switch_stops_all_watches_of_that_kind(make_app, monkeypatch, web):
+    c, _ = web
+    app, _ = await make_app(scripted_company())
+    checked = []
+
+    async def fake_check(w):
+        checked.append(w["kind"])
+        return []
+    app.watch.check = fake_check
+    await app.store.add_watch(kind="tg", title="a", target="@a")
+    await app.store.add_watch(kind="price", title="b", target="https://x.uz/p")
+    await app.store.set_kv("watch_on:price", "0")
+    import asyncio
+    t = asyncio.create_task(app.watch.loop([], tick=0.01))
+    await asyncio.sleep(0.05)
+    t.cancel()
+    assert checked == ["tg"]                                                     # narx kuzatuvi butunlay o'chiq
+    assert (await post(c, "/api/watch_kind", {"kind": "tg", "enabled": False}))[1] == {"kind": "tg", "enabled": False}
+    assert (await get(c, "/api/state"))[1]["watch_on"] == {"tg": False, "price": True}
+    assert (await post(c, "/api/watch_kind", {"kind": "x", "enabled": False}))[0] == 400
