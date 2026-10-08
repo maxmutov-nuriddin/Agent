@@ -90,6 +90,7 @@ class Orchestrator:
         self._stopping: set[int] = set()
         self.on_done = None
         self._summarizing: set[int] = set()
+        self.call_ready = lambda: False   # app.py ulaydi: qo'ng'iroq moduli tayyormi
         self.call_owner = None   # app.py ulaydi: egasiga qo'ng'iroq qilish (ovozli modul bo'lsa)
 
     async def _check_pause(self):
@@ -168,12 +169,17 @@ class Orchestrator:
             from . import reminders
             try:
                 r = await reminders.create(self.store, self.settings, chat_id, decision["reminder"]["text"], decision["reminder"]["when"],
-                                           call=bool(decision["reminder"].get("call")) and self.call_owner is not None)
-                decision["reply"] = f"⏰ Eslatma qo'yildi: {r['local']} — {r['text']}" + (" (qo'ng'iroq qilib aytaman)" if r.get("call") else "")
+                                           call=bool(decision["reminder"].get("call")) and self.call_ready())
+                wants_call = bool(decision["reminder"].get("call"))
+                decision["reply"] = (f"⏰ Eslatma yangilandi: {r['local']} — {r['text']}" if r.get("merged") else f"⏰ Eslatma qo'yildi: {r['local']} — {r['text']}")
+                if r.get("call"):
+                    decision["reply"] += " (vaqti kelganda Telegram orqali sizga qo'ng'iroq qilaman)"
+                elif wants_call:
+                    decision["reply"] += " (qo'ng'iroq moduli ulanmagan, shuning uchun faqat matn yuboraman: Hisob → Telegram akkaunt → Ovozli qo'ng'iroq)"
             except ValueError as e:
                 decision["reply"] = f"Eslatmani qo'ya olmadim: {e}. Vaqtni aniqroq yozing (masalan: ertaga 9:00)."
         if decision.get("call"):
-            ok = bool(self.call_owner) and await self.call_owner(decision["call"])
+            ok = self.call_ready() and await self.call_owner(decision["call"])
             decision["reply"] = (decision["reply"] or "Qo'ng'iroq qilyapman.") if ok else \
                 "Qo'ng'iroq qila olmadim: qo'ng'iroq moduli yoqilmagan yoki akkaunt ulanmagan (Hisob → Telegram akkaunt → Ovozli qo'ng'iroq)."
         if decision["mode"] == "chat":

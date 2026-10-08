@@ -232,6 +232,7 @@ async def test_call_now_and_phone_reminder(make_app):
         calls.append(text)
         return True
     app.orch.call_owner = fake_call
+    app.orch.call_ready = lambda: True
     res = await app.orch.handle("menga qo'ng'iroq qil", 5)
     assert calls == ["Vazifa tayyor"] and res["kind"] == "chat"
     res = await app.orch.handle("30 daqiqadan keyin tel qilib eslat", 5)
@@ -281,3 +282,27 @@ async def test_older_messages_are_recalled_and_long_chats_summarized(make_app):
     assert "Summary of the earlier conversation" in [u for k, u in seen if k == "fd"][-1]
     await st.clear_chat(7)
     assert await app.orch._chat_summary(7) == ""
+
+
+async def test_same_reminder_is_merged_not_duplicated_and_call_needs_module(make_app):
+    base = scripted_company()
+    n = {"i": 0}
+
+    def handler(system, user, model):
+        if "front desk" in system:
+            n["i"] += 1
+            return json.dumps({"mode": "chat", "reply": "", "task": "",
+                               "reminder": {"when": "+120m", "text": "Uyg'onish vaqti: soat 9:00", "call": n["i"] == 2}})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID="1")
+    r1 = await app.orch.handle("ertaga 9 da uygot", 5)
+    assert "qo'yildi" in r1["reply"]
+    r2 = await app.orch.handle("telefon qilib uygotgin", 5)
+    assert "yangilandi" in r2["reply"] and "ulanmagan" in r2["reply"]          # modul yo'q: halol aytadi
+    assert len(await app.store.list_reminders()) == 1                           # takror yo'q
+    app.orch.call_ready = lambda: True
+    n["i"] = 1
+    await app.orch.handle("telefon qilib uygotgin", 5)
+    assert len(await app.store.list_reminders()) == 1
+    rid = (await app.store.list_reminders())[0]["id"]
+    assert await app.store.get_kv(f"rcall:{rid}") == "1"

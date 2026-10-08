@@ -95,4 +95,5 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
         await app.calls.task_done(res)
     orch.on_done = on_done
     orch.call_owner = app.calls.call_owner
+    orch.call_ready = lambda: app.calls._tgc is not None
     return app

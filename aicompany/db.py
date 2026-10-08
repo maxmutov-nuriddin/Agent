@@ -481,6 +481,17 @@ class Store:
         res = await self._exec(sa.insert(reminders).values(chat_id=chat_id, text=text, due_at=due_iso, status="pending", created_at=now()))
         return res.inserted_primary_key[0]
 
+    async def similar_pending_reminder(self, chat_id, text, due_iso):
+        """Xuddi shu vaqtdagi, mazmuni o'xshash kutilayotgan eslatma (takror yaratilmasin)."""
+        from datetime import datetime
+        words, due = self._stems(text), datetime.fromisoformat(due_iso)
+        for r in await self._all(sa.select(reminders).where(reminders.c.chat_id == chat_id, reminders.c.status == "pending")):
+            if abs((datetime.fromisoformat(r["due_at"]) - due).total_seconds()) > 90:   # «30 daq» kabi nisbiy vaqt soniyalarga farq qiladi
+                continue
+            if r["text"].strip().lower() == text.strip().lower() or words & self._stems(r["text"]):
+                return r
+        return None
+
     async def due_reminders(self, now_iso):
         return await self._all(sa.select(reminders).where(reminders.c.status == "pending", reminders.c.due_at <= now_iso)
                                .order_by(reminders.c.due_at))

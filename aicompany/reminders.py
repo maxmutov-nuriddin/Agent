@@ -48,6 +48,12 @@ async def create(store, settings, chat_id: int, text: str, when: str, call: bool
     if not text or len(text) > 500:
         raise ValueError("eslatma matni 1-500 belgi bo'lsin")
     due = parse_when(when, settings.report_tz)
+    dup = await store.similar_pending_reminder(chat_id, text, due.isoformat())
+    if dup:  # xuddi shu vaqt va mazmun: yangisini ochmaymiz, mavjudini yangilaymiz (masalan «telefon qilib ham eslat»)
+        if call:
+            await store.set_kv(f"rcall:{dup['id']}", "1")
+        return {"id": dup["id"], "text": dup["text"], "due_at": due.isoformat(), "local": local_text(due.isoformat(), settings.report_tz),
+                "call": call or bool(await store.get_kv(f"rcall:{dup['id']}")), "merged": True}
     rid = await store.add_reminder(chat_id, text, due.isoformat())
     if call:
         await store.set_kv(f"rcall:{rid}", "1")  # vaqti kelganda egasiga qo'ng'iroq ham qilinadi
@@ -66,7 +72,7 @@ async def deliver_due(app, senders) -> int:
             except Exception:  # noqa: BLE001 — bitta kanal ishlamasa boshqasi yetkazadi
                 log.exception("eslatma yuborilmadi")
         await app.store.mark_reminder(r["id"], "sent" if ok else "failed")
-        if await app.store.get_kv(f"rcall:{r['id']}") and getattr(app.orch, "call_owner", None):
+        if await app.store.get_kv(f"rcall:{r['id']}") and getattr(app.orch, "call_owner", None) and app.orch.call_ready():
             try:
                 await app.orch.call_owner(f"Eslatma. {r['text']}")
             except Exception:  # noqa: BLE001 — qo'ng'iroq bo'lmasa ham matn yuborilgan
