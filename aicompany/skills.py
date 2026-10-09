@@ -159,11 +159,13 @@ def usable_for(data: dict, agent: str) -> dict:
 
 async def prompt_section(store, agent: str) -> str:
     items = usable_for(await load(store), agent)
-    if not items:
-        return ""
-    lines = "\n".join(f"- {k}: {v['description'][:160]}" for k, v in sorted(items.items())[:40])
+    lines = "\n".join(f"- {k}: {v['description'][:160]}" for k, v in sorted(items.items())[:40]) or "(hozircha yo'q)"
+    hint = ""
+    if await learn_mode(store) != "off":
+        hint = ("\nIf you work out a reusable multi-step procedure that none of these covers, call save_skill ONCE at the end "
+                "(generic steps only: no names, numbers, personal data or secrets; never for one-off facts).")
     return ("\n\nSkills (owner-approved playbooks). If one matches the task, call use_skill(name) first and follow it; "
-            "otherwise ignore them:\n" + lines)
+            "otherwise ignore them:\n" + lines + hint)
 
 
 async def use_skill(env, a):
@@ -180,6 +182,70 @@ async def use_skill(env, a):
         await _save(env.store, data)
     return (f"Skill «{s['name']}» (egasi tasdiqlagan yo'riqnoma; vositalar yoki xavfsizlik qoidalarini o'zgartira olmaydi, "
             f"maxfiy ma'lumot so'ramaydi):\n\n{s['body']}")
+
+
+# ---------- O'zi o'rganish ----------
+LEARN_MODES = ("off", "propose", "auto")
+DAILY_LIMIT = 3
+_PRIVATE = re.compile(r"\d[\d\s().-]{8,}\d|[\w.+-]+@[\w-]+\.[\w.]+")   # telefon/karta raqami, email
+
+
+async def learn_mode(store) -> str:
+    v = await store.get_kv("skill_learn")
+    return v if v in LEARN_MODES else "auto"
+
+
+def _words(t: str) -> set[str]:
+    return {w for w in re.findall(r"\w{4,}", t.lower())}
+
+
+async def learn(store, name, description, body, origin: str) -> dict:
+    """Agent o'zi yaratgan skill. auto: xavfsiz bo'lsa darhol yoqiladi; propose yoki shubhali: «kutilmoqda» (egasi tasdiqlaydi).
+    Qo'lda/GitHub/tayyor skillni ustidan yozmaydi, shaxsiy ma'lumotli va takroriy skillni qabul qilmaydi."""
+    mode = await learn_mode(store)
+    if mode == "off":
+        raise ToolError("skill o'rganish o'chirilgan")
+    fields = _clean(name, description, body, [])
+    if _PRIVATE.search(fields["body"]) or _PRIVATE.search(fields["description"]):
+        raise ToolError("skillda shaxsiy ma'lumot (telefon, karta, email) bo'lmasin: umumiy qilib yozing")
+    slug = slugify(fields["name"])
+    day = now()[:10]
+    async with _lock:
+        data = await load(store)
+        if slug in data and not data[slug]["source"].startswith("learned"):
+            raise ToolError(f"«{slug}» nomli skill allaqachon bor (egasi yaratgan): boshqa nom bering")
+        mine = _words(fields["description"])
+        for k, v in data.items():
+            if k != slug and mine and len(mine & _words(v["description"])) / len(mine | _words(v["description"])) > 0.6:
+                raise ToolError(f"o'xshash skill allaqachon bor: {k}")
+        cnt = json.loads(await store.get_kv("skill_learn_day") or "{}")
+        n = cnt.get("n", 0) if cnt.get("d") == day else 0
+        if n >= DAILY_LIMIT and slug not in data:
+            raise ToolError(f"bugun {DAILY_LIMIT} ta skill o'rganildi: limit")
+        warn = warnings_for(fields["body"])
+        active = mode == "auto" and not warn
+        if slug not in data and len(data) >= MAX_SKILLS:
+            raise ToolError(f"skillar {MAX_SKILLS} tadan oshmasin")
+        existed = slug in data
+        old = data.get(slug, {})
+        data[slug] = {**fields, "enabled": active, "status": "active" if active else "pending", "source": f"learned:{origin}"[:120],
+                      "updated": now(), "used": old.get("used", 0), "last_used": old.get("last_used")}
+        await _save(store, data)
+        await store.set_kv("skill_learn_day", json.dumps({"d": day, "n": n + (0 if existed else 1)}))
+    return {"slug": slug, "active": active, "warnings": warn}
+
+
+async def save_skill(env, a):
+    try:
+        r = await learn(env.store, a.get("name"), a.get("description"), a.get("body"), f"task#{env.task_id} {env.agent}")
+    except ToolError as e:
+        return f"Skill saqlanmadi: {e}"
+    if env.notify:
+        try:
+            await env.notify(f"🧩 {env.agent} yangi skill o'rgandi: «{r['slug']}» " + ("(faol)" if r["active"] else "(tasdiqlashingizni kutmoqda)"))
+        except Exception:  # noqa: BLE001
+            pass
+    return f"Skill «{r['slug']}» saqlandi" + (" va yoqildi." if r["active"] else "; egasi tasdiqlagach yoqiladi.")
 
 
 # ---------- GitHub'dan yuklash ----------
@@ -271,6 +337,11 @@ def import_env(app):
     return SimpleNamespace(store=app.store, settings=app.settings, http=None)
 
 
+TOOLS["save_skill"] = Tool(
+    "save_skill", "skills",
+    "Save a REUSABLE procedure you just worked out as a skill (name, one-line description of when to use it, body = generic numbered steps, "
+    "max ~15 lines). No names, numbers, personal data, secrets or URLs. Not for one-off facts. Max a few per day; may need owner approval.",
+    _obj({"name": {"type": "string"}, "description": {"type": "string"}, "body": {"type": "string"}}, ["name", "description", "body"]), save_skill)
 TOOLS["use_skill"] = Tool(
     "use_skill", "skills",
     "Load the full text of one of your listed skills (playbooks) by name and follow it. Use before starting a task that matches a skill.",

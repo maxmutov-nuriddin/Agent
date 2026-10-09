@@ -630,7 +630,16 @@ def make_web_app(app: App) -> web.Application:
 
     async def h_skills(request):
         from . import skills
-        return json_ok({"skills": await skills.listing(app.store)})
+        return json_ok({"skills": await skills.listing(app.store), "learn": await skills.learn_mode(app.store)})
+
+    async def h_skill_learn(request):
+        from . import skills
+        m = str((await body(request)).get("mode", ""))
+        if m not in skills.LEARN_MODES:
+            raise web.HTTPBadRequest(reason="rejim: off, propose yoki auto")
+        await app.store.set_kv("skill_learn", m)
+        await app.store.audit("owner", "skill_learn", m)
+        return json_ok({"learn": m})
 
     async def h_skill_get(request):
         from . import skills
@@ -1452,7 +1461,7 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/widget-script", h_widget_script), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
         web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend),
-        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/say", h_tts_say), web.post("/api/voice_reply", h_voice_reply), web.post("/api/qa_rounds", h_qa_rounds), web.post("/api/github", h_github), web.get("/api/skills", h_skills), web.post("/api/skills", h_skill_save), web.post("/api/skills/toggle", h_skill_toggle), web.post("/api/skills/import", h_skill_import), web.get("/api/skills/{slug}", h_skill_get), web.delete("/api/skills/{slug}", h_skill_delete), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
+        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/say", h_tts_say), web.post("/api/voice_reply", h_voice_reply), web.post("/api/qa_rounds", h_qa_rounds), web.post("/api/github", h_github), web.get("/api/skills", h_skills), web.post("/api/skills", h_skill_save), web.post("/api/skills/toggle", h_skill_toggle), web.post("/api/skills/import", h_skill_import), web.post("/api/skills/learn", h_skill_learn), web.get("/api/skills/{slug}", h_skill_get), web.delete("/api/skills/{slug}", h_skill_delete), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),

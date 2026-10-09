@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-zj";
+const PANEL_V = "2026.10.09-zk";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -994,7 +994,7 @@ async function skillsSheet() {
       k.status === "pending" ? "kutilmoqda" : k.enabled ? "yoqilgan" : "o'chiq")),
     h("p", { class: "muted sm clamp" }, k.description),
     h("div", { class: "muted xs" }, (k.agents.length ? k.agents.map(agentName).join(", ") : "hamma xodim") + " · " + k.used + " marta ishlatilgan" +
-      (k.source.startsWith("github:") ? " · GitHub" : "") + (k.warnings.length ? " · ⚠️ " + k.warnings.length : "")));
+      (k.source.startsWith("github:") ? " · GitHub" : k.source.startsWith("learned") ? " · 🤖 o'zi o'rgangan" : "") + (k.warnings.length ? " · ⚠️ " + k.warnings.length : "")));
   const url = h("input", { placeholder: "github.com/egasi/repo yoki .../tree/main/skills" });
   const imp = h("button", { class: "btn", onclick: async () => {
     if (!url.value.trim()) return;
@@ -1005,8 +1005,13 @@ async function skillsSheet() {
       reload();
     } catch (e) { toast(e.message); imp.disabled = false; imp.textContent = "Yuklash"; } } }, "Yuklash");
   const pend = list.skills.filter((k) => k.status === "pending");
+  const LM = [["auto", "Avto"], ["propose", "Taklif"], ["off", "O'chiq"]];
+  const learn = h("div", { class: "seg sm" }, LM.map(([m, l]) => h("button", { class: list.learn === m ? "on" : "", onclick: async () => {
+    try { await post("/skills/learn", { mode: m }); toast("O'zi o'rganish: " + l); reload(); } catch (e) { toast(e.message); } } }, l)));
   openSheet(h("h2", {}, "🧩 Skillar"),
     pend.length ? h("p", { class: "hint" }, "⚠️ " + pend.length + " ta skill tasdiqlashni kutmoqda. Matnini o'qib chiqing: tasdiqlamaguncha agentlar ko'rmaydi.") : null,
+    h("div", { class: "label" }, "🤖 Xodimlar o'zi skill o'rgansinmi?"), learn,
+    h("p", { class: "hint" }, "Avto: vazifadan keyin yoki ish paytida foydali tartibni o'zi saqlaydi va yoqadi (kuniga 3 tagacha). Taklif: saqlaydi, lekin siz tasdiqlamaguncha ishlatmaydi. Shubhali matnli yoki shaxsiy ma'lumotli skill hech qachon avtomatik yoqilmaydi."),
     ...list.skills.map(row),
     h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: () => skillEdit(null, org.agents) }, "+ Yangi skill")),
     h("div", { class: "label" }, "GitHub'dan yuklash"), url, h("div", { class: "acts" }, imp),

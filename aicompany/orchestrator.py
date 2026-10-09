@@ -564,6 +564,7 @@ class Orchestrator:
             await self.store.delete_kv(f"ckpt:{task_id}")   # tugadi: nazorat nuqtasi kerak emas
             out.update(status="done", result=result)
             await self._learn(task_id, request, result)
+            self._bg(self._learn_skill(task_id, request, result, notify))
         except Stopped:
             out.update(status="cancelled", error="Siz vazifani to'xtatdingiz.")
         except Paused:
@@ -953,6 +954,33 @@ class Orchestrator:
             except Exception:  # noqa: BLE001 — tekshiruv ishlamasa, vazifa to'xtamaydi
                 pass
         return {u: cache[u] for u in urls if u in cache}
+
+    async def _learn_skill(self, task_id, request, result, notify):
+        """Murakkab vazifadan so'ng qayta ishlatiladigan tartib (skill) bormi? Arzon model, kichik so'rov; ko'pchilik vazifada «yo'q»."""
+        from . import skills
+        try:
+            if await skills.learn_mode(self.store) == "off" or len(result or "") < 800 or len(request or "") < 30:
+                return
+            data = await skills.load(self.store)
+            have = "\n".join(f"- {k}: {v['description'][:100]}" for k, v in list(data.items())[:60])
+            res = await self.team.router.call(
+                "cheap", "You decide whether a finished task revealed a reusable procedure worth saving as a skill.",
+                [{"role": "user", "content":
+                  f"Request:\n{clip(request, 1500)}\n\nResult summary:\n{clip(result, 1500)}\n\nExisting skills:\n{have}\n\n"
+                  'Return ONLY JSON {"skill": null} or {"skill": {"name": "...", "description": "when to use, one line", '
+                  '"body": "generic numbered steps, max 15 lines"}}. Save only a GENERIC multi-step procedure, checklist or template that '
+                  "would clearly help on similar future tasks and is not covered by existing skills. No names, numbers, personal data, "
+                  "secrets or URLs. Most tasks: null."}],
+                task_id=task_id, agent="memory")
+            j = extract_json(res.text).get("skill")
+            if not isinstance(j, dict):
+                return
+            r = await skills.learn(self.store, j.get("name"), j.get("description"), j.get("body"), f"task#{task_id}")
+            await notify(f"🧩 Yangi skill o'rganildi: «{r['slug']}» " + ("(faol)" if r["active"] else "(Sozlamalar → Skillar: tasdiqlashingizni kutmoqda)"))
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — ixtiyoriy: tayyor vazifaga ta'sir qilmaydi
+            return
 
     async def _learn(self, task_id, request, result):
         """Vazifadan so'ng 0-2 ta uzoq muddatli fakt saqlaydi (arzon model, kichik so'rov)."""
