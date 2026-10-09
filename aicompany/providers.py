@@ -149,12 +149,13 @@ class _HttpProvider(Provider):
 class OpenAIProvider(_HttpProvider):
     name = "openai"
     base = "https://api.openai.com/v1"
+    token_field = "max_completion_tokens"
 
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}"}
 
     async def complete(self, cfg, system, messages, max_tokens, tools=None):
-        body = {"model": cfg.id, "max_completion_tokens": max_tokens,
+        body = {"model": cfg.id, self.token_field: max_tokens,
                 "messages": [{"role": "system", "content": system}, *messages]}
         data = await self._generate("POST", f"{self.base}/chat/completions", cfg, json=body)
         try:
@@ -170,6 +171,16 @@ class OpenAIProvider(_HttpProvider):
     async def list_models(self):
         data = await self._request("GET", f"{self.base}/models")
         return [m["id"] for m in data.get("data", [])]
+
+
+class OpenRouterProvider(OpenAIProvider):
+    """OpenRouter: bitta kalit bilan ko'p model; ':free' modellar bepul (limit bilan). OpenAI formatida ishlaydi."""
+    name = "openrouter"
+    base = "https://openrouter.ai/api/v1"
+    token_field = "max_tokens"
+
+    def _headers(self):
+        return {"Authorization": f"Bearer {self.api_key}", "X-Title": "AI Jamoa"}
 
 
 def _gemini_schema(node):
@@ -308,7 +319,7 @@ class GeminiProvider(_HttpProvider):
 
 
 def build_providers(settings) -> dict[str, Provider]:
-    classes = {"anthropic": AnthropicProvider, "openai": OpenAIProvider, "gemini": GeminiProvider}
+    classes = {"anthropic": AnthropicProvider, "openai": OpenAIProvider, "gemini": GeminiProvider, "openrouter": OpenRouterProvider}
     return {n: classes[n](p.api_key) for n, p in settings.providers.items() if p.api_key}
 
 

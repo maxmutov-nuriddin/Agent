@@ -174,3 +174,53 @@ async def test_say_survives_tts_failure(make_app):
     assert not call.closed and call.say_fails == 2     # qo'ng'iroq uzilmaydi
     await app.calls.say(call, "salom")
     assert call.closed                                  # 3 marta ketma-ket: jim qo'ng'iroq tugatiladi
+
+
+async def test_free_ai_gating(make_app):
+    """OpenRouter (bepul) faqat: yoqilgan + free_ok + cheap + asbobsiz. Xato bersa, dam oladi va pulliga o'tadi."""
+    from aicompany.providers import ProviderError
+    state = {"fail": False}
+
+    def handler(system, user, model):
+        if "openrouter" in model or model.endswith(":free"):
+            return ProviderError("429 limit") if state["fail"] else "bepul javob"
+        return "pullik javob"
+    app, provs = await make_app(handler, names=("anthropic", "openrouter"), OWNER_TELEGRAM_ID="1")
+    r = app.router
+
+    async def run(**kw):
+        return (await r.call("cheap", "s", [{"role": "user", "content": "x"}], **kw)).provider
+    assert await run(free_ok=True) == "anthropic"          # o'chiq: ishlatilmaydi
+    await app.store.set_kv("openrouter_on", "1")
+    assert await run() == "anthropic"                       # free_ok berilmagan (suhbat/agent): ishlatilmaydi
+    assert await run(free_ok=True, tools=[{"name": "t", "description": "", "input_schema": {}}]) == "anthropic"
+    assert await run(free_ok=True) == "openrouter"          # yoqilgan fon ishi: bepul
+    assert (await r.call("mid", "s", [{"role": "user", "content": "x"}], free_ok=True)).provider == "anthropic"
+    state["fail"] = True
+    assert await run(free_ok=True) == "anthropic"           # xato: pulliga o'tdi
+    assert (await r.free_status())["cooldown_s"] > 0
+    state["fail"] = False
+    n = len(provs["openrouter"].calls)
+    assert await run(free_ok=True) == "anthropic" and len(provs["openrouter"].calls) == n   # dam olayotganda urinmaydi
+
+
+async def test_free_ai_api(web):
+    from .test_web import post
+    c, app = web
+    assert (await post(c, "/api/free_ai", {"enabled": True}))[0] == 400       # kalit yo'q
+    assert (await post(c, "/api/free_ai", {"enabled": False}))[0] == 200
+
+
+async def test_openrouter_provider_request():
+    from aicompany.config import ModelCfg
+    from aicompany.providers import OpenRouterProvider
+    prov = OpenRouterProvider("k")
+    sent = {}
+
+    async def fake_gen(method, url, cfg, json=None, **kw):
+        sent.update(url=url, body=json)
+        return {"choices": [{"message": {"content": "salom"}}], "usage": {"prompt_tokens": 10, "completion_tokens": 3}}
+    prov._generate = fake_gen
+    res = await prov.complete(ModelCfg("m:free", 0, 0, 0), "sys", [{"role": "user", "content": "x"}], 100)
+    assert res.text == "salom" and res.cost_usd == 0 and sent["url"].startswith("https://openrouter.ai/api/v1") and sent["body"]["max_tokens"] == 100
+    assert prov._headers()["Authorization"] == "Bearer k"

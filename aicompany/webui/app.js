@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-x";
+const PANEL_V = "2026.10.09-y";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -1181,6 +1181,15 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("div", { class: "seg" }, ["auto", ...known].map(opt)),
     h("p", { class: "hint" }, (connected.length ? "Ulangan: " + connected.join(", ") + ". " : "Hech qanday AI ulanmagan. ") +
       (connected.length < known.length ? "Ikkinchisini qo'shish uchun .env ga kalit qo'ying. " : "") + "Avto = eng arzonidan boshlaydi; tanlangani birinchi, boshqasi zaxira."));
+  const F = integ.free_ai || {};
+  const freeSw = (on) => h("div", { class: "seg" },
+    h("button", { class: on ? "on" : "", onclick: () => setFree(true) }, "Yoqilgan"),
+    h("button", { class: on ? "" : "on", onclick: () => setFree(false) }, "O'chiq"));
+  const setFree = async (v) => { try { await post("/free_ai", { enabled: v }); toast(v ? "Bepul AI yoqildi" : "Bepul AI o'chirildi"); refresh(true); } catch (e) { toast(e.message); } };
+  const free = h("div", {}, h("div", { class: "label" }, "Bepul AI (OpenRouter)"), freeSw(!!F.enabled),
+    h("p", { class: "hint" }, !F.ready ? "Kalit yo'q: .env ga OPENROUTER_API_KEY qo'ying. "
+      : (F.enabled ? (F.cooldown_s ? "⏸ Limit/xato: " + F.cooldown_s + " s dam oladi, hozir pullik AI ishlaydi. " : "✅ Ishlayapti. ") : "O'chiq. ") + "Model: " + F.model + ". ") ,
+    h("p", { class: "hint" }, "Faqat oddiy, maxfiy bo'lmagan fon ishlari uchun (narx/kanal kuzatuvlari): Gemini/Claude byudjeti tejaladi. Suhbat, maxfiy yozishmalar va agent ishlariga ishlatilmaydi. Xato bersa, o'zi pulliga o'tadi."));
   const ta = integ.telegram_account;
   const links = h("div", { class: "card" },
     ...[["Telegram bot", integ.telegram_bot, ""],
@@ -1238,6 +1247,7 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("div", { class: "label" }, "Tekshiruvlar"),
     h("div", { class: "acts" }, checkBtn, h("button", { class: "btn", onclick: showModels }, "🔎 Modellarni tekshirish")), checkOut,
     primary,
+    free,
     h("div", { class: "label" }, "Xarajat"),
     h("div", { class: "seg" },
       [[true, "💰 Tejamkor"], [false, "💎 Sifat"]].map(([v, l]) => h("button", { class: (state.eco !== false) === v ? "on" : "", onclick: async () => {

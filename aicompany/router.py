@@ -36,6 +36,7 @@ class Router:
         self._bad_models: set[tuple[str, str]] = set()  # (provayder, model) shu jarayonda topilmagan
         self._model_lists: dict[str, list[str]] = {}
         self._tts_down: dict[str, float] = {}   # ovoz xizmati -> shu vaqtgacha (monotonic) dam oladi
+        self._free_down = 0.0                   # OpenRouter xato bergach shu vaqtgacha (monotonic) o'tkazib yuboriladi
         self.tts_last = ""                      # oxirgi muvaffaqiyatli ovoz xizmati
 
     def _estimate(self, cfg, system, messages, max_tokens) -> float:
@@ -90,20 +91,35 @@ class Router:
                 return cfg
         return None
 
-    async def _candidates(self, tier, tools, only, exclude):
+    FREE = "openrouter"
+    FREE_COOLDOWN = 300
+
+    async def free_on(self) -> bool:
+        return await self.store.get_kv("openrouter_on") == "1"
+
+    async def free_status(self) -> dict:
+        wait = max(0, int(self._free_down - time.monotonic()))
+        return {"ready": self.FREE in self.providers, "enabled": await self.free_on(), "cooldown_s": wait,
+                "model": self.s.providers[self.FREE].models["cheap"].id if self.FREE in self.s.providers else ""}
+
+    async def _candidates(self, tier, tools, only, exclude, free_ok=False):
+        use_free = (free_ok and tier == "cheap" and not tools and only is None and await self.free_on()
+                    and time.monotonic() >= self._free_down)
         provs = [p for n, p in self.s.providers.items() if n in self.providers and n not in exclude
-                 and (only is None or n == only)]
+                 and (only is None or n == only) and (n != self.FREE or use_free)]
         provs.sort(key=lambda p: p.models[tier].price_out)  # 'auto': eng arzoni birinchi
         prefer = self.s.tier_providers.get(tier) or await self.primary()
         if prefer in {p.name for p in provs}:  # tanlangani birinchi, qolganlari zaxira (arzonlik tartibida)
             provs.sort(key=lambda p: p.name != prefer)
         if tools:  # asbob qo'llaydigan provayderlar oldinda
             provs.sort(key=lambda p: not self.providers[p.name].supports_tools)
+        if use_free:   # bepul model avval; xato bersa, pullik zaxiralar ishlaydi
+            provs.sort(key=lambda p: p.name != self.FREE)
         return provs
 
     async def call(self, tier: str, system: str, messages: list[dict], *, task_id=None,
                    agent="?", use_cache=False, tools: list[dict] | None = None,
-                   only: str | None = None, exclude: frozenset = frozenset()) -> LLMResult:
+                   only: str | None = None, exclude: frozenset = frozenset(), free_ok: bool = False) -> LLMResult:
         if task_id is not None and await self.store.spent_task(task_id) >= self.s.max_task_usd:
             raise TaskBudgetExceeded(f"vazifa limiti {self.s.max_task_usd}$ tugadi")
         max_tokens = MAX_TOKENS[tier]
@@ -111,7 +127,7 @@ class Router:
         if key and (hit := await self.store.cache_get(key)) is not None:
             return LLMResult(hit, 0, 0, 0, 0.0)
 
-        candidates = await self._candidates(tier, tools, only, exclude)
+        candidates = await self._candidates(tier, tools, only, exclude, free_ok)
         errors = []
         for pc in candidates:
             cfg = await self._model_for(pc, tier)
@@ -148,6 +164,8 @@ class Router:
                 except ProviderError as e:
                     errors.append(str(e))
                     await self.store.audit("router", "provider_error", str(e)[:500])
+                    if pc.name == self.FREE:
+                        self._free_down = time.monotonic() + self.FREE_COOLDOWN
                     break
             if res is None:
                 continue

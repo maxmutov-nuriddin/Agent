@@ -181,14 +181,14 @@ def make_web_app(app: App) -> web.Application:
             "watch_smart": (await app.store.get_kv("watch_smart")) == "1",
             "watch_on": {k: (await app.store.get_kv(f"watch_on:{k}")) != "0" for k in ("tg", "price")},
             "today": round(await today_spend(), 4),
-            "budgets": [{"provider": n, **v} for n, v in budgets.items()],
+            "budgets": [{"provider": n, **v} for n, v in budgets.items() if n != app.router.FREE],
             "working": [{"agent": a, "task_id": b["task_id"]} for a, b in app.team.busy.items()],
             "done_today": done_today,
             "running_tasks": [{"id": t["id"], "request": t["request"][:100]} for t in running],
             "pending": len(app.center.list()) if app.center else 0,
             "version": VERSION,
             "primary": await app.router.primary(),
-            "providers": sorted(app.router.providers),
+            "providers": sorted(n for n in app.router.providers if n != app.router.FREE),
         }
 
     async def h_state(request):
@@ -418,6 +418,16 @@ def make_web_app(app: App) -> web.Application:
         await app.store.set_kv("primary_provider", value)
         return json_ok({"primary": value})
 
+    async def h_free_ai(request):
+        """Bepul AI (OpenRouter) yoqish/o'chirish: faqat oddiy, maxfiy bo'lmagan fon ishlari (kuzatuvlar) uchun."""
+        d = await body(request)
+        if d.get("enabled") and app.router.FREE not in app.router.providers:
+            raise web.HTTPBadRequest(reason="OPENROUTER_API_KEY .env da yo'q")
+        await app.store.set_kv("openrouter_on", "1" if d.get("enabled") else "0")
+        app.router._free_down = 0.0
+        await app.store.audit("owner", "openrouter", "yoqildi" if d.get("enabled") else "o'chirildi")
+        return json_ok(await app.router.free_status())
+
     async def h_voice(request):
         """Ovozli xabar -> matn (Gemini). Tana: audio baytlari, Content-Type: audio/*"""
         mime = request.headers.get("Content-Type", "audio/ogg").split(";")[0].strip()
@@ -466,7 +476,8 @@ def make_web_app(app: App) -> web.Application:
             "voice": any(p.supports_audio for p in app.router.providers.values()),
             "stt": await stt_status(),
             "search": "brave" if s.brave_key else "duckduckgo",
-            "providers": [{"name": n, "enabled": n in app.router.providers} for n in s.providers],
+            "providers": [{"name": n, "enabled": n in app.router.providers} for n in s.providers if n != app.router.FREE],
+            "free_ai": await app.router.free_status(),
             "primary": await app.router.primary(),
             "limits": {"task_usd": s.max_task_usd, "agents": s.max_agents, "parallel": s.max_parallel, "revisions": s.max_revisions,
                        "tool_turns": s.max_tool_turns, "command_s": s.command_timeout, "report": f"{s.report_hour}:00 ({s.report_tz})",
@@ -1142,7 +1153,7 @@ def make_web_app(app: App) -> web.Application:
         web.post(r"/api/tasks/{id:\d+}/stop", h_task_stop), web.post(r"/api/tasks/{id:\d+}/archive", h_task_archive),
         web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
         web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/morning", h_morning), web.post("/api/stt", h_stt), web.get("/api/watches", h_watches), web.post("/api/watches", h_watch_add), web.post(r"/api/watches/{id:\d+}", h_watch_update), web.delete(r"/api/watches/{id:\d+}", h_watch_delete), web.post(r"/api/watches/{id:\d+}/check", h_watch_check), web.post("/api/watch_smart", h_watch_smart), web.post("/api/watch_kind", h_watch_kind), web.post("/api/morning/test", h_morning_test), web.post("/api/resume", h_resume),
-        web.post("/api/provider", h_provider), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
+        web.post("/api/provider", h_provider), web.post("/api/free_ai", h_free_ai), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
