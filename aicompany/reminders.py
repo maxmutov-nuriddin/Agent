@@ -128,12 +128,14 @@ async def reminder_loop(app, senders, interval: float = 20):
 # ---------- "menga qo'ng'iroq qil": modelga ishonmay, qoida bilan aniqlash ----------
 _PHONE = re.compile(
     r"\btel\b|\btel\.|\btlf\b|\btelf\w*|telefon\w*|(?:q|k)[o']{0,2}ng'?ir[oa]?[qk']?\w*|zvon\w*|dozvon\w*|"
-    r"звон\w*|позвон\w*|созвон\w*|\bтел\b|телефон\w*|набер\w*|[қк][ўу]?[нғ]+[ғг]?[иi]р[оа]қ\w*|call\s*me|ring\s*me|\bdial\b|"
-    r"bog'?lan\w*|aloqaga\s*chiq\w*|\bchaqir\w*", re.I)
+    r"звон\w*|позвон\w*|созвон\w*|\bтел\b|телефон\w*|набер\w*|[қк][ўу]?[нғ]+[ғг]?[иi]р[оа]қ\w*|call\s*me|ring\s*me|\bdial\b", re.I)
+# "bog'lan", "chaqir" faqat o'ziga qaratilganda: "menga bog'lan", "meni chaqir" ("marketologni chaqir" — qo'ng'iroq emas)
+_CONTACT = re.compile(r"\b(?:menga|manga|meni|mani|men\s+bilan|man\s+bilan)\b.{0,25}?\b(?:bog'?lan(?:ing|gin)?|aloqaga\s+chiq(?:ing|gin)?|"
+                      r"chaqir(?:ing|gin)?)\b", re.I)
 # "qil" ning turli ko'rinishlari ("ql", "qlb", "qilb", "qiling", ...) va o'xshash fe'llar ("ur", "chaqir", "bog'lan", "et")
 _ASK = re.compile(
     r"\bq(?:i)?l(?:i)?(?:b|ib|ing|gin|sang|vor|ay)?\b|\b[қк]ил(?:иб|инг|гин)?\b|\bқл\b|\bur(?:ib|ing|gin)?\b|\bet(?:ing|gin)?\b|"
-    r"chaqir\w*|bog'?lan\w*|aloqaga\s*chiq\w*|\bulan\b|zvon\w*|звони\w*|позвони\w*|набери\w*|call\s*me|ring\s*me|\bdial\b|"
+    r"\bulan\b|zvon\w*|звони\w*|позвони\w*|набери\w*|call\s*me|ring\s*me|\bdial\b|"
     r"(?:q|k)[o']{0,2}ng'?ir\w*\s+ber\w*|zvon\w*\s+ber\w*", re.I)
 _NOT_REQUEST = re.compile(
     r"\?|olasan|oladimi|mumkinmi|bormi|qila ol|qilolasan|qiladimi|nega|nima uchun|qanday|nimaga|raqam|nomer|номер|batareya|zaryad|"
@@ -157,7 +159,9 @@ def _norm(text: str) -> str:
 def call_requested(text: str) -> bool:
     """Egasi o'ziga qo'ng'iroq qilishni so'rayaptimi (savol/izoh emas)?"""
     t = _norm(text)
-    return bool(_PHONE.search(t) and _ASK.search(t) and not _NOT_REQUEST.search(t))
+    if _NOT_REQUEST.search(t):
+        return False
+    return bool((_PHONE.search(t) and _ASK.search(t)) or _CONTACT.search(t))
 
 
 def call_when(text: str, tz: str, now: datetime | None = None) -> tuple[str, str]:
@@ -165,7 +169,7 @@ def call_when(text: str, tz: str, now: datetime | None = None) -> tuple[str, str
     zone = ZoneInfo(tz)
     now_local = (now or datetime.now(timezone.utc)).astimezone(zone)
     t = _norm(text)
-    num = r"(\d+(?:[.,]\d+)?|" + "|".join(map(re.escape, _WORDNUM)) + r")"
+    num = r"\b(\d+(?:[.,]\d+)?|" + "|".join(map(re.escape, _WORDNUM)) + r")"
 
     def val(x):
         return float(x.replace(",", ".")) if x[0].isdigit() else _WORDNUM[x]

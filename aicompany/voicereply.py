@@ -16,6 +16,7 @@ MODES = ("mirror", "always", "off")
 _ASK = re.compile(r"ovozli|ovoz\s+bilan|ovozda|golos\w*|голос\w*|voice|audio\s*xabar|eshittir", re.I)
 _VERB = re.compile(r"javob|ayt|yubor|qaytar|gapir|jo'?nat|ber|answer|reply|ответ|скажи|отправ|запиш", re.I)
 MAX_CHARS = 700
+CACHE_KEEP = 200   # panelda qayta tinglash uchun saqlanadigan oxirgi javoblar (eskilari o'chiriladi: disk to'lmasin)
 
 
 def asked(text: str) -> bool:
@@ -59,18 +60,23 @@ async def synth(app, text: str, fmt: str = "ogg") -> bytes | None:
     key = hashlib.sha1(f"{voice}|{await app.router.tts_mode()}|{fmt}|{text}".encode()).hexdigest()[:20]
     d = app.settings.workspace_dir / ".voice_cache" / "replies"
     f = d / f"{key}.{fmt}"
-    if f.exists():
+    cache = fmt == "mp3"   # faqat panel (qayta tinglanadi); Telegramga bir marta yuboriladi, saqlash shart emas
+    if cache and f.exists():
         return f.read_bytes()
     try:
         audio = await _encode(await app.router.speak(text), fmt)
     except Exception as e:  # noqa: BLE001 — ovoz bo'lmasa ham matn javob yetib boradi
         log.warning("ovozli javob yaratilmadi: %s %s", type(e).__name__, str(e)[:150])
         return None
-    try:
-        d.mkdir(parents=True, exist_ok=True)
-        f.write_bytes(audio)
-    except OSError:
-        pass
+    if cache:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(audio)
+            old = sorted(d.glob("*.mp3"), key=lambda p: p.stat().st_mtime)
+            for p in old[:-CACHE_KEEP]:
+                p.unlink(missing_ok=True)
+        except OSError:
+            pass
     return audio
 
 

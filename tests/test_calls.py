@@ -401,3 +401,23 @@ async def test_voice_reply_web(web, monkeypatch):
     monkeypatch.setattr(voicereply, "synth", fake_synth)
     r = await c.post("/api/tts/say", json={"text": "salom"}, headers={"Authorization": "Bearer " + app.settings.web_token})
     assert r.status == 200 and r.headers["Content-Type"].startswith("audio/mpeg") and await r.read() == b"ID3mp3"
+
+
+async def test_voice_reply_cache_is_bounded(make_app, monkeypatch):
+    from aicompany import voicereply
+
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
+
+    async def speak(text, **kw):
+        return b"\0\0" * 10
+
+    async def enc(pcm, fmt, rate=24000):
+        return b"A" + fmt.encode()
+    app.router.speak = speak
+    monkeypatch.setattr(voicereply, "_encode", enc)
+    monkeypatch.setattr(voicereply, "CACHE_KEEP", 3)
+    for i in range(6):
+        assert await voicereply.synth(app, f"javob {i}", "mp3") == b"Amp3"
+    assert await voicereply.synth(app, "tg uchun", "ogg") == b"Aogg"
+    d = app.settings.workspace_dir / ".voice_cache" / "replies"
+    assert len(list(d.glob("*.mp3"))) == 3 and not list(d.glob("*.ogg"))     # eskilari o'chadi, Telegram ovozi saqlanmaydi

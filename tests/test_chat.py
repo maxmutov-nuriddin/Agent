@@ -365,13 +365,14 @@ def test_call_intent_and_time_parsing():
     yes = ("menga qo'ng'iroq qil", "manga qongiroq qil hozir", "tel qil", "мне позвони", "call me", "tel ql", "menga tel qlb ber",
            "telefon qil", "telefon qilib yuboring", "manga tel ur", "tel qiling", "meni telefon qilgin", "qongirok qil", "kongiroq qil",
            "qo\u2018ng\u2018iroq qil", "qo`ng`iroq qil", "zvonok qil", "zvon qil", "menga zvon ber", "qo'ng'iroq bering", "menga bog'lan",
-           "aloqaga chiq", "mening telefonimga chaqir", "тел қил", "телефон қил", "қўнғироқ қил", "позвони мне", "набери меня",
+           "men bilan aloqaga chiqing", "meni chaqir", "тел қил", "телефон қил", "қўнғироқ қил", "позвони мне", "набери меня",
            "10 daqiqadan keyin tel qil", "ertaga 7 da telefon qilib uyg'ot", "hozir telefon qil")
     for t in yes:
         assert call_requested(t), t
     no = ("qo'ng'iroq qila olasanmi?", "qo'ng'iroq qanday ishlaydi", "bugun ob-havo qanday", "vazifa tayyor bo'lsin",
           "telefon raqamim 901234567", "telefonimning batareyasi tugadi", "kecha onamga tel qildim", "telefon narxi qancha",
-          "telefon sozlamasini qil", "onamga tel qilishni eslat", "tel qilgan edingmi")
+          "telefon sozlamasini qil", "onamga tel qilishni eslat", "tel qilgan edingmi",
+          "marketologni chaqir", "HR ni chaqirib yangi xodim ol", "internet bog'lanishi yo'q, tekshir", "menga bog'landingmi")
     for t in no:
         assert not call_requested(t), t
     assert call_when("menga qo'ng'iroq qil", tz, now) == ("now", "")

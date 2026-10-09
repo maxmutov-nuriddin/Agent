@@ -45,7 +45,7 @@ def rms(pcm: bytes) -> float:
 class Segmenter:
     """Doimiy PCM oqimidan gap bo'laklarini ajratadi: ovoz boshlanadi, keyin `silence` soniya jimlik -> bo'lak tayyor."""
 
-    def __init__(self, rate: int = IN_RATE, threshold: float = 500, silence: float = 0.7,
+    def __init__(self, rate: int = IN_RATE, threshold: float = 500, silence: float = 0.8,
                  min_speech: float = 0.35, max_len: float = 25):
         self.rate, self.threshold, self.silence = rate, threshold, silence
         self.min_speech, self.max_len = min_speech, max_len
