@@ -563,3 +563,6 @@ details.team summary { cursor: pointer; color: var(--muted); font-weight: 700; f
 .org-card .seg { margin: 2px 0; }
 .org-card .sm { font-size: 13px; margin: 0; } .org-card .xs, .org-dhead .xs { font-size: 12px; }
 .org-card .clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pill.warn { background: rgba(255,176,58,.14); color: var(--amber); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.chips .chip { background: rgba(255,255,255,.06); display: inline-flex; align-items: center; gap: 4px; }

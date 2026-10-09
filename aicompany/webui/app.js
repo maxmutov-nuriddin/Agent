@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-zi";
+const PANEL_V = "2026.10.09-zj";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -985,6 +985,54 @@ function newsSitesInput(sites, save) {
   return [h("label", {}, "Saytlar (vergul bilan)"), inp, h("p", { class: "hint" }, "RSS manzilini tizim sayt sahifasidan o'zi topadi. Agentlar ham «news» asbobi orqali o'qiydi."), h("div", { class: "acts" }, chk), out];
 }
 
+async function skillsSheet() {
+  let list, org;
+  try { [list, org] = await Promise.all([api("/skills"), api("/org")]); } catch (e) { return toast(e.message); }
+  const reload = () => skillsSheet();
+  const row = (k) => h("button", { class: "org-card" + (k.status === "pending" ? " busy" : ""), onclick: () => skillEdit(k.slug, org.agents) },
+    h("div", { class: "org-top" }, h("b", {}, k.name), h("span", { class: "pill" + (k.status === "pending" ? " warn" : k.enabled ? " lime" : "") },
+      k.status === "pending" ? "kutilmoqda" : k.enabled ? "yoqilgan" : "o'chiq")),
+    h("p", { class: "muted sm clamp" }, k.description),
+    h("div", { class: "muted xs" }, (k.agents.length ? k.agents.map(agentName).join(", ") : "hamma xodim") + " · " + k.used + " marta ishlatilgan" +
+      (k.source.startsWith("github:") ? " · GitHub" : "") + (k.warnings.length ? " · ⚠️ " + k.warnings.length : "")));
+  const url = h("input", { placeholder: "github.com/egasi/repo yoki .../tree/main/skills" });
+  const imp = h("button", { class: "btn", onclick: async () => {
+    if (!url.value.trim()) return;
+    imp.disabled = true; imp.textContent = "Yuklanmoqda…";
+    try {
+      const r = await post("/skills/import", { url: url.value.trim() });
+      toast(r.added.length ? r.added.length + " ta skill yuklandi — ko'rib tasdiqlang" : "Yangi skill yo'q" + (r.skipped.length ? ": " + r.skipped[0] : ""));
+      reload();
+    } catch (e) { toast(e.message); imp.disabled = false; imp.textContent = "Yuklash"; } } }, "Yuklash");
+  const pend = list.skills.filter((k) => k.status === "pending");
+  openSheet(h("h2", {}, "🧩 Skillar"),
+    pend.length ? h("p", { class: "hint" }, "⚠️ " + pend.length + " ta skill tasdiqlashni kutmoqda. Matnini o'qib chiqing: tasdiqlamaguncha agentlar ko'rmaydi.") : null,
+    ...list.skills.map(row),
+    h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: () => skillEdit(null, org.agents) }, "+ Yangi skill")),
+    h("div", { class: "label" }, "GitHub'dan yuklash"), url, h("div", { class: "acts" }, imp),
+    h("p", { class: "hint" }, "Repo, papka yoki bitta SKILL.md havolasi. Faqat SKILL.md matni olinadi (skript va qo'shimcha fayllar olinmaydi). Yuklangan skill avval «kutilmoqda» holatida turadi. Begona skillni o'qimay tasdiqlamang."));
+}
+async function skillEdit(slug, agents) {
+  let k = { name: "", description: "", body: "", agents: [], enabled: true, status: "active", warnings: [], source: "manual" };
+  if (slug) { try { k = await api("/skills/" + slug); } catch (e) { return toast(e.message); } }
+  const name = h("input", { value: k.name, placeholder: "Nomi (masalan: SEO maqola)" });
+  const desc = h("input", { value: k.description, placeholder: "Qachon ishlatiladi (bir qator)" });
+  const bodyEl = h("textarea", { class: "big", rows: "10" }); bodyEl.value = k.body;
+  const picks = agents.map((a) => { const c = h("input", { type: "checkbox" }); c.checked = k.agents.includes(a.name); return [a.name, c]; });
+  const save = async () => { try { await post("/skills", { slug, name: name.value, description: desc.value, body: bodyEl.value, agents: picks.filter(([, c]) => c.checked).map(([n]) => n) }); toast("Saqlandi"); skillsSheet(); } catch (e) { toast(e.message); } };
+  const tog = async (en) => { try { await post("/skills/toggle", { slug, enabled: en }); skillsSheet(); } catch (e) { toast(e.message); } };
+  openSheet(h("h2", {}, slug ? "Skill" : "Yangi skill"),
+    k.status === "pending" ? h("p", { class: "hint" }, "⚠️ GitHub'dan yuklangan, hali tasdiqlanmagan. Pastdagi matnni to'liq o'qing.") : null,
+    k.source.startsWith("github:") ? h("p", { class: "hint" }, "Manba: " + k.source.slice(7)) : null,
+    k.warnings.length ? h("p", { class: "hint" }, "⚠️ Diqqat: " + k.warnings.join("; ")) : null,
+    h("label", {}, "Nomi"), name, h("label", {}, "Tavsif"), desc, h("label", {}, "Matn (yo'riqnoma)"), bodyEl,
+    h("label", {}, "Kimlarga (hech biri = hamma)"), h("div", { class: "chips" }, ...picks.map(([n, c]) => h("label", { class: "chip" }, c, " " + agentName(n)))),
+    h("div", { class: "acts" }, h("button", { class: "btn", onclick: save }, "Saqlash"),
+      slug && k.status === "pending" ? h("button", { class: "btn lime", onclick: () => tog(true) }, "✅ Tasdiqlash") : null,
+      slug && k.status !== "pending" ? h("button", { class: "btn ghost", onclick: () => tog(!k.enabled) }, k.enabled ? "O'chirish" : "Yoqish") : null,
+      slug ? h("button", { class: "btn ghost", onclick: async () => { if (!confirm("O'chirib tashlaymi?")) return; try { await api("/skills/" + slug, { method: "DELETE" }); skillsSheet(); } catch (e) { toast(e.message); } } }, "🗑 Butunlay o'chirish") : null,
+      h("button", { class: "btn ghost", onclick: skillsSheet }, "Orqaga")));
+}
 function githubBlock(state) {
   const inp = h("input", { type: "password", placeholder: state.github ? "Token saqlangan (almashtirish uchun yangisini kiriting)" : "ghp_… yoki github_pat_… (ixtiyoriy)", autocomplete: "off" });
   const save = async (t) => { try { await post("/github", { token: t }); inp.value = ""; toast(t ? "Token saqlandi" : "Token o'chirildi"); refresh(true); } catch (e) { toast(e.message); } };
@@ -1368,6 +1416,9 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("div", { class: "label" }, "Ish paytida ekran o'chmasin (shu qurilma)"), awakeSwitch(),
     h("p", { class: "hint" }, "Vazifa ishlayotganda va panel ochiq turganda ekran o'chib qolmaydi, tugagach odatdagidek o'chadi. Qulf ekranida jarayonni ko'rish uchun: Bildirishnomalar → «⚙️ Vazifa jarayoni» ni yoqing va Scriptable vidjetini qulf ekraniga qo'shing."),
     h("div", { class: "label" }, "Ertalabki xulosa"), ...morningBlock(state),
+    h("div", { class: "label" }, "🧩 Skillar"),
+    h("p", { class: "hint" }, "Agentlar uchun tayyor yo'riqnomalar. Kerak bo'lganda o'zlari yuklab ishlatadi. GitHub'dan ham olish mumkin."),
+    h("div", { class: "acts" }, h("button", { class: "btn lime", onclick: skillsSheet }, "Skillarni boshqarish")),
     h("div", { class: "label" }, "🐙 GitHub"), ...githubBlock(state),
     h("div", { class: "label" }, "Kuzatuvlar"),
     ...[["tg", "📡 Telegram kanal kuzatuvi"], ["price", "🏷 Narx kuzatuvi"]].map(([k, l]) => {

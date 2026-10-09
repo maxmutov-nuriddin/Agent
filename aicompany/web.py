@@ -628,6 +628,63 @@ def make_web_app(app: App) -> web.Application:
         await app.store.audit("owner", "github_token", "set" if token else "removed")
         return json_ok({"token": bool(token)})
 
+    async def h_skills(request):
+        from . import skills
+        return json_ok({"skills": await skills.listing(app.store)})
+
+    async def h_skill_get(request):
+        from . import skills
+        s_ = await skills.get(app.store, request.match_info["slug"])
+        if not s_:
+            raise web.HTTPNotFound(reason="skill topilmadi")
+        return json_ok(s_)
+
+    async def h_skill_save(request):
+        from . import skills
+        from .tools import ToolError
+        d = await body(request)
+        slug = d.get("slug")
+        if slug is not None and not re.fullmatch(r"[a-z0-9-]{1,40}", str(slug)):
+            raise web.HTTPBadRequest(reason="slug noto'g'ri")
+        try:
+            old = (await skills.load(app.store)).get(slug) if slug else None
+            slug = await skills.save(app.store, d.get("name"), d.get("description"), d.get("body"), d.get("agents"), slug=slug,
+                                     source=(old or {}).get("source", "manual"), enabled=(old or {}).get("enabled", True),
+                                     status=(old or {}).get("status", "active"))
+        except ToolError as e:
+            raise web.HTTPBadRequest(reason=str(e)[:200])
+        await app.store.audit("owner", "skill_save", slug)
+        return json_ok({"slug": slug})
+
+    async def h_skill_toggle(request):
+        from . import skills
+        from .tools import ToolError
+        d = await body(request)
+        try:
+            await skills.set_enabled(app.store, str(d.get("slug", "")), bool(d.get("enabled")))
+        except ToolError as e:
+            raise web.HTTPNotFound(reason=str(e))
+        await app.store.audit("owner", "skill_toggle", f"{d.get('slug')}={bool(d.get('enabled'))}")
+        return json_ok({"ok": True})
+
+    async def h_skill_delete(request):
+        from . import skills
+        if not await skills.remove(app.store, request.match_info["slug"]):
+            raise web.HTTPNotFound(reason="skill topilmadi")
+        await app.store.audit("owner", "skill_delete", request.match_info["slug"])
+        return json_ok({"ok": True})
+
+    async def h_skill_import(request):
+        from . import skills
+        from .tools import ToolError
+        url = str((await body(request)).get("url") or "").strip()[:300]
+        try:
+            res = await skills.import_github(skills.import_env(app), url)
+        except ToolError as e:
+            raise web.HTTPBadRequest(reason=str(e)[:200])
+        await app.store.audit("owner", "skill_import", url[:150])
+        return json_ok(res)
+
     async def h_voice_reply(request):
         m = str((await body(request)).get("mode", ""))
         if m not in voicereply.MODES:
@@ -1395,7 +1452,7 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/widget-script", h_widget_script), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
         web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend),
-        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/say", h_tts_say), web.post("/api/voice_reply", h_voice_reply), web.post("/api/qa_rounds", h_qa_rounds), web.post("/api/github", h_github), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
+        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/say", h_tts_say), web.post("/api/voice_reply", h_voice_reply), web.post("/api/qa_rounds", h_qa_rounds), web.post("/api/github", h_github), web.get("/api/skills", h_skills), web.post("/api/skills", h_skill_save), web.post("/api/skills/toggle", h_skill_toggle), web.post("/api/skills/import", h_skill_import), web.get("/api/skills/{slug}", h_skill_get), web.delete("/api/skills/{slug}", h_skill_delete), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),

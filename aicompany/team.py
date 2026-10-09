@@ -185,6 +185,9 @@ class Team:
         by_name = {t.name: t for t in tools}
         from datetime import date
         system = agent["system_prompt"] + f"\nToday's date: {date.today().isoformat()}." + (TOOL_RULES if defs else "")
+        if "use_skill" in by_name:
+            from . import skills
+            system += await skills.prompt_section(self.store, agent["name"])
         if env:
             env.agent = agent["name"]
         failed: set[str] = set()   # bu ish davomida yiqilgan provayderlar

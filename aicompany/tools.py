@@ -246,6 +246,8 @@ GROUPS = ("files", "web", "memory", "shell", "maps", "telegram", "time")
 
 def tools_for(groups: str, env: "ToolEnv | None" = None) -> list[Tool]:
     wanted = {g.strip() for g in groups.split(",") if g.strip()}
+    if wanted:
+        wanted.add("skills")   # use_skill: asbobi bor har bir xodimga (alohida guruh sifatida tanlanmaydi)
     return [t for t in TOOLS.values() if t.group in wanted and (t.requires != "tg" or (env is not None and env.tg is not None and env.tg.configured()))]
 
 
@@ -256,3 +258,4 @@ def tool_defs(tools: list[Tool]) -> list[dict]:
 from . import tools_ext  # noqa: E402,F401  (joylashuv va Telegram asboblarini ro'yxatga oladi)
 from . import opendata  # noqa: E402,F401  (bepul ochiq manbalar: Overpass, Wikipedia/Wikidata, World Bank, RSS)
 from . import github_api  # noqa: E402,F401  (GitHub ochiq API)
+from . import skills  # noqa: E402,F401  (skillar: use_skill)
