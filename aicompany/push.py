@@ -13,7 +13,8 @@ import logging
 log = logging.getLogger("aicompany.push")
 
 KINDS = {"done": "Vazifa tayyor bo'lganda", "failed": "Vazifa bajarilmaganda / xato", "approval": "Ruxsat so'ralganda",
-         "reminder": "Eslatma vaqti kelganda", "morning": "Ertalabki xulosa", "watch": "Kuzatuv topganda"}
+         "reminder": "Eslatma vaqti kelganda", "morning": "Ertalabki xulosa", "watch": "Kuzatuv topganda",
+         "auto": "Avtonom agent ogohlantirsa"}
 MAX_SUBS = 10
 
 

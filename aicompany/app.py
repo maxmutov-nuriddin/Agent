@@ -28,6 +28,7 @@ class App:
     push: object | None = None      # PushService: PWA bildirishnomalar
     watch: object | None = None     # Watcher: Telegram kanal va narx kuzatuvi
     calls: object | None = None     # CallService: Telegram ovozli qo'ng'iroq (ixtiyoriy)
+    auto: object | None = None      # AutoAgents: fonda ishlaydigan avtonom agentlar
 
 
 def clean_inbox(workspace: Path, days: int = 7) -> int:
@@ -89,6 +90,8 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     app.calls = CallService(app)
     from .watch import Watcher
     app.watch = Watcher(app)
+    from .autonomy import AutoAgents
+    app.auto = AutoAgents(app)
     from .push import PushService
     app.push = PushService(app)
     center.announcers.append(app.push.approval)

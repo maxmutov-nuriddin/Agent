@@ -103,18 +103,21 @@ class Router:
                     "cooldown_s": max(0, int(self._free_down.get(n, 0) - now)),
                     "model": self.s.providers[n].models["cheap"].id if n in self.s.providers else ""} for n in self.FREE}
 
-    async def _candidates(self, tier, tools, only, exclude, free_ok=False):
+    async def _candidates(self, tier, tools, only, exclude, free_ok=False, prefer=None):
         now = time.monotonic()
         free = []
-        if free_ok and tier == "cheap" and not tools and only is None:
+        if prefer in self.FREE and not tools and prefer in self.providers and only is None and prefer not in exclude \
+                and now >= self._free_down.get(prefer, 0):
+            free = [prefer]   # egasi shu agentga bepul AI'ni o'zi tanlagan (Jamoa → agent → AI)
+        elif free_ok and tier == "cheap" and not tools and only is None:
             free = [n for n in self.FREE if n in self.providers and n not in exclude
                     and await self.free_on(n) and now >= self._free_down.get(n, 0)]
         provs = [p for n, p in self.s.providers.items() if n in self.providers and n not in exclude
                  and (only is None or n == only) and (n not in self.FREE or n in free)]
         provs.sort(key=lambda p: p.models[tier].price_out)  # 'auto': eng arzoni birinchi
-        prefer = self.s.tier_providers.get(tier) or await self.primary()
-        if prefer in {p.name for p in provs}:  # tanlangani birinchi, qolganlari zaxira (arzonlik tartibida)
-            provs.sort(key=lambda p: p.name != prefer)
+        main = prefer if prefer and prefer not in self.FREE else (self.s.tier_providers.get(tier) or await self.primary())
+        if main in {p.name for p in provs}:  # tanlangani birinchi (agent sozlamasi > daraja > asosiy AI), qolganlari zaxira
+            provs.sort(key=lambda p: p.name != main)
         if tools:  # asbob qo'llaydigan provayderlar oldinda
             provs.sort(key=lambda p: not self.providers[p.name].supports_tools)
         if free:   # bepul modellar avval (yoqilgan tartibda); xato bersa, pullik zaxiralar ishlaydi
@@ -123,7 +126,8 @@ class Router:
 
     async def call(self, tier: str, system: str, messages: list[dict], *, task_id=None,
                    agent="?", use_cache=False, tools: list[dict] | None = None,
-                   only: str | None = None, exclude: frozenset = frozenset(), free_ok: bool = False) -> LLMResult:
+                   only: str | None = None, exclude: frozenset = frozenset(), free_ok: bool = False,
+                   prefer: str | None = None) -> LLMResult:
         if task_id is not None and await self.store.spent_task(task_id) >= self.s.max_task_usd:
             raise TaskBudgetExceeded(f"vazifa limiti {self.s.max_task_usd}$ tugadi")
         max_tokens = MAX_TOKENS[tier]
@@ -131,7 +135,7 @@ class Router:
         if key and (hit := await self.store.cache_get(key)) is not None:
             return LLMResult(hit, 0, 0, 0, 0.0)
 
-        candidates = await self._candidates(tier, tools, only, exclude, free_ok)
+        candidates = await self._candidates(tier, tools, only, exclude, free_ok, prefer)
         errors = []
         for pc in candidates:
             cfg = await self._model_for(pc, tier)

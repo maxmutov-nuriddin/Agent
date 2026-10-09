@@ -55,7 +55,9 @@ async def test_hr_hires_missing_role_and_downgrades_strong(make_app):
 
 
 async def test_hire_limit_and_fire_protection(make_app):
-    app, _ = await make_app(scripted_company(), MAX_AGENTS="8")  # seed = 8 ta, joy yo`q
+    app, _ = await make_app(scripted_company(), MAX_AGENTS="8")  # asosiy 11 ta + kamida 4 joy = 15
+    for i in range(4):
+        assert await app.team.hire(f"yangi{i}", "why") == f"yangi{i}"
     assert await app.team.hire("newbie", "why") is None
     assert not await app.team.fire("ceo")
     assert await app.team.fire("marketer")

@@ -638,6 +638,8 @@ class Orchestrator:
         steps = plan["steps"][:MAX_STEPS]
         await notify(f"📋 Reja: {str(plan.get('summary', ''))[:500]}\n" + "\n".join(
             f"• {s['agent']} [{s.get('tier') or 'auto'}]: {s['task'][:80]}" for s in steps))
+        if not simple and not outputs and await self.store.get_kv("dept_leads") == "1":
+            await self._dept_refine(task_id, request, steps, env, eco, notify)
         remaining = {s["id"]: s for s in steps if s["id"] not in outputs}
         steps_dir = env.workspace / ".steps"
         steps_dir.mkdir(exist_ok=True)
@@ -675,6 +677,39 @@ class Orchestrator:
         return await self._package(task_id, request, deliverable, env, eco)
 
     QA_MAX = 6
+
+    async def _dept_refine(self, task_id, request, steps, env, eco, notify):
+        """Bo'lim boshliqlari (yoqilgan bo'lsa): har bo'lim boshlig'i o'z bo'limiga tushgan qadamlarni ekspert
+        ko'zi bilan aniqlashtiradi (talablar, standartlar, tekshiruv mezonlari). Bo'lim uchun 1 ta qo'shimcha so'rov."""
+        from .team import DEPT_LEADS, DEPTS
+        groups: dict[str, list] = {}
+        for st in steps:
+            dept = (await self.team.meta(st["agent"]))["dept"]
+            if dept in DEPT_LEADS:
+                groups.setdefault(dept, []).append(st)
+        for dept, items in groups.items():
+            lead = DEPT_LEADS[dept]
+            if not await self.store.get_agent(lead):
+                continue
+            listing = "\n".join(f"- id {st['id']} ({st['agent']}): {st['task']}" for st in items)
+            try:
+                raw = await self.team.run_agent(lead, (
+                    f"# Original request\n{request}\n\n# Steps assigned to your department ({DEPTS[dept]})\n{listing}\n\n"
+                    "You lead this department. Rewrite each step instruction so a specialist can deliver expert-level work: "
+                    "add the exact requirements from the request, the quality standard, what evidence/sources are needed and "
+                    "how the result will be checked. Keep each step's goal; do not add new steps. "
+                    'Return ONLY JSON: {"steps": [{"id": "...", "task": "..."}]}'), task_id=task_id, tier="cheap" if eco else "mid")
+                new = {str(x.get("id")): str(x.get("task") or "").strip() for x in extract_json(raw).get("steps", [])}
+            except Exception:  # noqa: BLE001 — boshliq ishlamasa, reja o'zgarmay davom etadi
+                continue
+            changed = 0
+            for st in items:
+                t = new.get(st["id"], "")
+                if len(t) >= 20:
+                    st["task"] = t[:4000]
+                    changed += 1
+            if changed:
+                await notify(Progress(f"👔 {DEPTS[dept]} bo'limi boshlig'i ({lead}) {changed} ta qadamni aniqlashtirdi"))
 
     async def _qa_rounds(self) -> int:
         """Nechta tuzatish aylanishi: panel sozlamasi (kv qa_rounds), bo'lmasa MAX_REVISIONS (kamida 3)."""

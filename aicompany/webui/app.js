@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-ze";
+const PANEL_V = "2026.10.09-zf";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -21,7 +21,7 @@ const WHY = { done: "", running: "", failed: "Vazifa xato bilan tugadi. «Davom 
   interrupted: "Dastur qayta ishga tushganda vazifa o'rtada uzilgan. «Davom ettirish» bilan bajarilgan qismidan davom etadi.", stopped: "" };
 const APPR = { approved: ["✓ Ruxsat berdingiz", ""], denied: ["✕ Siz rad etdingiz", "red"], expired: ["⏱ Javob bermadingiz (muddat tugadi)", "amber"], pending: ["Javob kutilmoqda", ""] };
 const AGENT_UZ = { ceo: "Rahbar", hr: "HR", qa: "Sifat nazorati", developer: "Dasturchi", marketer: "Marketolog",
-  researcher: "Tahlilchi", generalist: "Universal xodim", assistant: "Yordamchi" };
+  researcher: "Tahlilchi", generalist: "Universal xodim", assistant: "Yordamchi", architect: "Arxitektor", fact_checker: "Fakt-tekshiruvchi", finance_analyst: "Moliya tahlilchisi" };
 const agentName = (a) => AGENT_UZ[a] || a.replace(/_/g, " ");
 
 // --- Markdown -> xavfsiz DOM (innerHTML yo'q: matn faqat textNode sifatida) ---
@@ -339,7 +339,7 @@ function drawTeam({ state, team, ceo }) {
       h("div", { class: "grow" }, h("h3", {}, a.name), h("p", {}, a.busy ? "ishlayapti · vazifa #" + a.task_id : a.role)),
       h("span", { class: "dot" + (a.busy ? " on" : "") }))),
     h("div", { class: "label" }),
-    h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: hireSheet }, "+ Xodim yollash"),
+    h("div", { class: "acts" }, h("button", { class: "btn lime", onclick: orgSheet }, "🏢 Tuzilma"), h("button", { class: "btn ghost", onclick: hireSheet }, "+ Xodim yollash"),
       h("button", { class: "btn ghost", onclick: hrReview }, "🧑‍💼 HR tahlili")),
   ];
 }
@@ -500,7 +500,7 @@ function drawOverview(d) {
       notes.length ? notes.slice(0, 6).map((n) => h("button", { class: "ov-row", onclick: n.open }, h("span", { class: "bul " + n.tone }),
         h("div", { class: "grow" }, h("b", {}, n.title), h("p", { class: "muted sm clamp" }, n.text))))
         : h("p", { class: "muted sm" }, "✓ Hech narsa sizni kutmayapti.")),
-    h("div", { class: "card ov-agents" }, h("div", { class: "row-b" }, h("p", { class: "kick" }, "Jamoa harakati"), h("button", { class: "linkbtn", onclick: hireSheet }, "+ Yollash")),
+    h("div", { class: "card ov-agents" }, h("div", { class: "row-b" }, h("p", { class: "kick" }, "Jamoa harakati"), h("span", {}, h("button", { class: "linkbtn", onclick: orgSheet }, "🏢 Tuzilma"), " ", h("button", { class: "linkbtn", onclick: hireSheet }, "+ Yollash"))),
       [...d.team].sort((a, b) => b.busy - a.busy || b.steps - a.steps).map((a) => h("button", { class: "ov-agent", onclick: () => agentSheet(a) },
         h("i", { class: "av-c" + (a.busy ? " on" : "") }, agentName(a.name)[0].toUpperCase()),
         h("div", { class: "grow" }, h("b", {}, agentName(a.name)), h("p", { class: "muted sm clamp1" }, a.busy ? `vazifa #${a.task_id} ustida` : a.role)),
@@ -514,13 +514,66 @@ async function hrReview() {
     refresh(true);
   } catch (e) { toast(e.message); }
 }
-function agentSheet(a) {
+const DEPT_IC = { boshqaruv: "🧭", tech: "🛠", marketing: "📣", tadqiqot: "🔎", aloqa: "💬", sifat: "✅" };
+const MODEL_L = { auto: "Avto", gemini: "Gemini", anthropic: "Claude", openai: "ChatGPT", groq: "Groq (bepul)", openrouter: "OpenRouter (bepul)" };
+const TIER_L = { cheap: "Arzon", mid: "O'rta", strong: "Kuchli" };
+const AUTO_L = { off: "O'chiq", report: "Xabar beradi", auto: "O'zi tuzatadi" };
+async function agentSheet(a) {
+  let org = null;
+  try { org = await api("/org"); a = org.agents.find((x) => x.name === a.name) || a; } catch { /* tarmoq yo'q: faqat ko'rinish */ }
   const fire = async () => { if (!confirm(a.name + " ishdan bo'shatilsinmi?")) return;
     try { await post("/team/fire", { name: a.name }); closeSheet(); toast("Bo'shatildi"); refresh(true); } catch (e) { toast(e.message); } };
-  openSheet(h("h2", {}, a.name), h("p", { class: "muted" }, a.role),
-    h("div", { class: "pills" }, h("span", { class: "pill" + (a.busy ? " lime" : "") }, a.busy ? "ishlayapti" : "bo'sh"), h("span", { class: "pill" }, a.tier),
-      a.tools.map((t) => h("span", { class: "pill" }, t)), h("span", { class: "pill" }, a.steps + " ish"), h("span", { class: "pill" }, usd(a.cost))),
+  const save = async (d, msg) => { try { await post("/team/meta", { name: a.name, ...d }); toast(msg); refresh(true); agentSheet(a); } catch (e) { toast(e.message); } };
+  const select = (opts, cur, onPick) => { const el = h("select", {}, opts.map(([k, l]) => h("option", { value: k, selected: k === cur ? "selected" : null }, l)));
+    el.addEventListener("change", () => onPick(el.value)); return el; };
+  const tools = a.tools && a.tools.length;
+  const edit = org ? [
+    h("label", {}, "Bo'lim"), select(org.depts.map((d) => [d.key, (DEPT_IC[d.key] || "") + " " + d.title]), a.dept, (v) => save({ dept: v }, "Bo'lim saqlandi")),
+    h("label", {}, "Qaysi AI ishlaydi"), select(org.models.map((m) => [m, MODEL_L[m] || m]), a.model || "auto", (v) => save({ model: v }, "AI: " + (MODEL_L[v] || v))),
+    h("p", { class: "hint" }, "Avto: Sozlamalardagi asosiy AI. Tanlangan AI ishlamasa, boshqasi zaxira bo'ladi." +
+      (tools ? " Bu xodim asboblar (fayl, internet) ishlatadi: bepul AI'lar asbob qo'llamaydi, shuning uchun ular faqat asbobsiz qismlarda ishlaydi." : "")),
+    h("label", {}, "Model darajasi"), select(Object.entries(TIER_L), a.tier, (v) => save({ tier: v }, "Daraja: " + TIER_L[v])),
+    h("p", { class: "hint" }, "Arzon: oddiy ishlar. O'rta: asosiy ish. Kuchli: eng qiyin tahlil (qimmat). Reja qadamda boshqasini so'rasa, o'sha ishlatiladi."),
+  ] : [];
+  openSheet(h("h2", {}, agentName(a.name)), h("p", { class: "muted" }, a.role),
+    a.replaces ? h("p", { class: "hint" }, "Nimani almashtiradi: " + a.replaces) : null,
+    h("div", { class: "pills" }, h("span", { class: "pill" + (a.busy ? " lime" : "") }, a.busy ? "ishlayapti" : "bo'sh"), h("span", { class: "pill" }, TIER_L[a.tier] || a.tier),
+      (a.tools || []).map((t) => h("span", { class: "pill" }, t)), h("span", { class: "pill" }, a.steps + " ish"), h("span", { class: "pill" }, usd(a.cost))),
+    ...edit,
     a.core ? null : h("div", { class: "label" }), a.core ? null : h("button", { class: "btn red full", onclick: fire }, "Ishdan bo'shatish"));
+}
+async function orgSheet() {
+  let d;
+  try { d = await api("/org"); } catch (e) { return toast(e.message); }
+  const card = (a) => h("button", { class: "org-card" + (a.busy ? " busy" : ""), onclick: () => agentSheet(a) },
+    h("div", { class: "org-top" }, h("b", {}, agentName(a.name)), h("span", { class: "pill" }, MODEL_L[a.model] || a.model)),
+    h("p", { class: "muted sm clamp" }, a.replaces || a.role),
+    h("div", { class: "muted xs" }, (a.busy ? "🟢 ishlayapti" : "bo'sh") + " · " + (TIER_L[a.tier] || a.tier) + " · " + a.steps + " ish · " + usd(a.cost)));
+  const autoCard = (j) => h("div", { class: "org-card auto" },
+    h("div", { class: "org-top" }, h("b", {}, "🤖 " + j.title), h("span", { class: "pill" + (j.mode !== "off" ? " lime" : "") }, j.every)),
+    h("p", { class: "muted sm" }, j.replaces + (j.ai ? " · «O'zi tuzatadi» rejimida AI ishlatadi" : " · AI'siz, bepul")),
+    h("div", { class: "seg sm" }, j.modes.map((m) => h("button", { class: j.mode === m ? "on" : "", onclick: async () => {
+      try { await post("/auto", { name: j.name, mode: m }); toast(j.title + ": " + AUTO_L[m]); orgSheet(); } catch (e) { toast(e.message); } } }, AUTO_L[m]))),
+    j.result ? h("p", { class: "hint" }, j.result + (j.last ? " (" + ago(j.last) + ")" : "")) : null,
+    h("button", { class: "btn ghost sm", onclick: async (ev) => { ev.target.disabled = true; ev.target.textContent = "Tekshirilmoqda…";
+      try { const r = await post("/auto/run", { name: j.name }); toast(r.result || "Tayyor"); orgSheet(); } catch (e) { toast(e.message); ev.target.disabled = false; } } }, "▶ Hozir tekshir"));
+  const sections = d.depts.map((dep) => {
+    const ag = d.agents.filter((a) => a.dept === dep.key), au = d.auto.filter((j) => j.dept === dep.key);
+    if (!ag.length && !au.length) return null;
+    return h("div", { class: "org-dept" },
+      h("div", { class: "org-dhead" }, h("b", {}, (DEPT_IC[dep.key] || "") + " " + dep.title), dep.lead ? h("span", { class: "muted xs" }, "boshliq: " + agentName(dep.lead)) : null),
+      h("div", { class: "org-grid" }, ...ag.map(card), ...au.map(autoCard)));
+  });
+  const lead = h("div", { class: "seg" },
+    h("button", { class: d.dept_leads ? "on" : "", onclick: async () => { try { await post("/dept_leads", { enabled: true }); orgSheet(); } catch (e) { toast(e.message); } } }, "Yoqilgan"),
+    h("button", { class: d.dept_leads ? "" : "on", onclick: async () => { try { await post("/dept_leads", { enabled: false }); orgSheet(); } catch (e) { toast(e.message); } } }, "O'chiq"));
+  openSheet(h("h2", {}, "🏢 Tuzilma"),
+    h("div", { class: "org-root" }, h("span", { class: "org-node" }, "👤 Siz"), h("span", { class: "org-arrow" }, "→"), h("span", { class: "org-node lime" }, "🧭 Rahbar"),
+      h("span", { class: "org-arrow" }, "→"), h("span", { class: "org-node" }, d.depts.length + " bo'lim · " + d.agents.length + " xodim · " + d.auto.length + " avtonom")),
+    h("p", { class: "hint" }, "Xodim ustiga bosing: bo'limi, qaysi AI va model darajasini o'zgartirasiz. Ishlamay turgan xodim pul sarflamaydi."),
+    ...sections,
+    h("div", { class: "label" }, "Bo'lim boshliqlari"), lead,
+    h("p", { class: "hint" }, "Yoqilsa, murakkab vazifada har bo'lim boshlig'i o'z bo'limiga tushgan qadamlarni ekspert darajasida aniqlashtiradi (talablar, standart, tekshiruv). Sifat oshadi, har vazifaga taxminan +15–30% xarajat."));
 }
 function taskSheet(basedOn) {
   basedOn = Number.isInteger(basedOn) ? basedOn : null;
@@ -926,7 +979,7 @@ function sttBlock(st) {
 }
 
 // --- Push-bildirishnomalar ---
-const PUSH_KINDS = [["done", "✅ Vazifa tayyor bo'lganda"], ["failed", "⚠️ Vazifa bajarilmaganda"], ["approval", "🔐 Ruxsat so'ralganda"], ["reminder", "⏰ Eslatma vaqtida"], ["morning", "☀️ Ertalabki xulosa"], ["watch", "🔔 Kuzatuv topganda"]];
+const PUSH_KINDS = [["done", "✅ Vazifa tayyor bo'lganda"], ["failed", "⚠️ Vazifa bajarilmaganda"], ["approval", "🔐 Ruxsat so'ralganda"], ["reminder", "⏰ Eslatma vaqtida"], ["morning", "☀️ Ertalabki xulosa"], ["watch", "🔔 Kuzatuv topganda"], ["auto", "🤖 Avtonom agent ogohlantirsa"]];
 let pushOn = null;  // shu qurilmada obuna bormi (null = hali bilmaymiz)
 const b64u = (s) => Uint8Array.from(atob((s + "=".repeat((4 - s.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 async function pushSub() {

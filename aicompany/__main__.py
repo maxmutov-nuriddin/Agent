@@ -133,6 +133,7 @@ async def amain():
             from .briefing import morning_loop
             morning = asyncio.create_task(morning_loop(app, [panel_sender(app)]))
             watching = asyncio.create_task(app.watch.loop([panel_sender(app)]))
+            autonomous = asyncio.create_task(app.auto.loop([panel_sender(app)]))
             try:
                 await reminder_loop(app, [panel_sender(app), app.push.reminder_sender()])
             finally:
@@ -140,6 +141,7 @@ async def amain():
                 resume.cancel()
                 morning.cancel()
                 watching.cancel()
+                autonomous.cancel()
         else:
             from .bot import run_bot
             from .web import start_web

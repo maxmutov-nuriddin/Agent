@@ -36,6 +36,27 @@ MALFORMED_HINT = ("Your previous tool call was malformed and was discarded. Retr
                   "write_file call, each under ~150 lines (split HTML/CSS/JS into separate files), with strings escaped properly.")
 CORE = ("ceo", "hr", "qa", "generalist")
 
+# Bo'limlar (videodagi kabi tuzilma). Faqat tartib va ko'rinish uchun: xarajatga ta'sir qilmaydi.
+DEPTS = {"boshqaruv": "Boshqaruv", "tech": "Tech", "marketing": "Marketing", "tadqiqot": "Tadqiqot va moliya",
+         "aloqa": "Aloqa va shaxsiy", "sifat": "Sifat va bilim"}
+# bo'lim boshlig'i (5-bosqich: yoqilsa, o'z bo'limi qadamlarini aniqlashtiradi)
+DEPT_LEADS = {"tech": "architect", "marketing": "marketer", "tadqiqot": "researcher", "aloqa": "assistant", "sifat": "qa"}
+# asosiy xodimlar: bo'lim va "nimani almashtiradi"
+SEED_META = {
+    "ceo": ("boshqaruv", "loyiha menejeri: ishni rejalash, taqsimlash va natijani yig'ish"),
+    "hr": ("boshqaruv", "kadrlar bo'limi: yangi mutaxassis rolini loyihalash"),
+    "generalist": ("boshqaruv", "boshqa rolga to'g'ri kelmaydigan ishlar"),
+    "developer": ("tech", "dasturchi: kod yozish, test va ishga tushirish"),
+    "architect": ("tech", "arxitektor: texnologiya tanlash va texnik topshiriq"),
+    "marketer": ("marketing", "marketolog va kopirayter"),
+    "researcher": ("tadqiqot", "tahlilchi: manbali tadqiqot va taqqoslash"),
+    "fact_checker": ("tadqiqot", "faktlar, raqamlar va havolalarni qo'lda tekshirish"),
+    "finance_analyst": ("tadqiqot", "moliyachi: narx, unit-iqtisod, prognoz"),
+    "assistant": ("aloqa", "shaxsiy yordamchi: joylashuv, Telegram yozishmalar"),
+    "qa": ("sifat", "sifat nazoratchisi: har natijani talablar bo'yicha tekshirish"),
+}
+MODEL_CHOICES = ("auto", "gemini", "anthropic", "openai", "groq", "openrouter")
+
 # name: (role, tier, tool groups)
 SEED = {
     "ceo": ("Chief executive with the rigor of a top management consultant: turns the request into an explicit list of "
@@ -53,6 +74,12 @@ SEED = {
     "researcher": ("Senior analyst: researches with web search, opens and cites every source (URL + what it says), "
                    "compares options in tables, separates facts from assumptions and gives a clear recommendation.", "mid", "files,web,memory"),
     "generalist": ("Versatile senior specialist used when no other role fits; same evidence and completeness standards.", "cheap", "files,web,time"),
+    "architect": ("Software/solution architect: chooses the stack and architecture with explicit reasons and trade-offs, "
+                  "designs data models, APIs, security and scaling, and writes clear technical specifications.", "mid", "files,web"),
+    "fact_checker": ("Fact-checker: verifies claims, numbers, laws and links against primary sources with web search, opens every "
+                     "source, and returns a table: claim, verdict (confirmed / wrong / unverified), source URL.", "mid", "files,web"),
+    "finance_analyst": ("Financial analyst: unit economics, pricing, monetization models, budgets and financial forecasts with "
+                        "explicit assumptions, formulas and sensitivity; marks unverified inputs.", "mid", "files,web,memory"),
     "assistant": ("Personal assistant: knows where the owner is, travel times, nearby places, and handles their Telegram "
                   "messages (read, draft replies, send only with approval).", "mid", "maps,telegram,memory,web,time,files"),
 }
@@ -86,6 +113,29 @@ class Team:
         for a in await self.store.list_agents():   # HR yollagan xodimlar ham yangi standartlarni oladi
             if STANDARDS_MARK not in (a["system_prompt"] or ""):
                 await self.store.set_agent_profile(a["name"], a["role"], system_prompt(a["name"], a["role"]), a["tier"])
+
+    async def meta(self, name: str) -> dict:
+        """Agent kartochkasi: bo'lim, nimani almashtiradi, qaysi AI (model). kv'da saqlanadi, .env kerak emas."""
+        dept, replaces = SEED_META.get(name, ("boshqaruv", ""))
+        out = {"dept": dept, "replaces": replaces, "model": "auto"}
+        raw = await self.store.get_kv(f"agent_meta:{name}")
+        if raw:
+            try:
+                saved = json.loads(raw)
+                out.update({k: v for k, v in saved.items() if k in out and v})
+            except ValueError:
+                pass
+        if out["dept"] not in DEPTS:
+            out["dept"] = "boshqaruv"
+        if out["model"] not in MODEL_CHOICES:
+            out["model"] = "auto"
+        return out
+
+    async def set_meta(self, name: str, **fields):
+        cur = await self.meta(name)
+        cur.update({k: v for k, v in fields.items() if k in cur and v is not None})
+        await self.store.set_kv(f"agent_meta:{name}", json.dumps(cur, ensure_ascii=False))
+        return cur
 
     async def roster(self) -> str:
         return "\n".join(f"- {a['name']}: {a['role']}" for a in await self.store.list_agents())
@@ -158,10 +208,12 @@ class Team:
     async def _loop(self, agent, tier, system, content, defs, by_name, env, task_id, exclude) -> str:
         messages = [{"role": "user", "content": content}]
         text, pin, malformed = "", None, 0
+        prefer = (await self.meta(agent["name"]))["model"]
+        prefer = None if prefer == "auto" else prefer
         for turn in range(self.max_tool_turns + 1):
             try:
                 res = await self.router.call(tier or agent["tier"], system, messages, task_id=task_id,
-                                             agent=agent["name"], tools=defs, only=pin, exclude=exclude)
+                                             agent=agent["name"], tools=defs, only=pin, exclude=exclude, prefer=prefer)
             except MalformedCall as e:
                 malformed += 1
                 if malformed > 2:
@@ -227,12 +279,12 @@ class Team:
         name = slug(name)
         if await self.store.get_agent(name):
             return name
-        if len(await self.store.list_agents()) >= self.max_agents:
+        if len(await self.store.list_agents()) >= max(self.max_agents, len(SEED) + 4):   # asosiy xodimlardan tashqari kamida 4 joy
             await self.store.audit("hr", "hire_rejected", f"{name}: jamoa to'lgan")
             return None
         prompt = (f"Design a new team role.\nName: {name}\nWhy needed: {why}\n\n"
                   'Return ONLY JSON: {"role": "one sentence describing expertise and duties", '
-                  '"tier": "cheap|mid", "tools": ["files", "web", "memory", "shell"]}. '
+                  '"tier": "cheap|mid", "tools": ["files", "web", "memory", "shell"], "dept": "' + "|".join(DEPTS) + '"}. '
                   'Use "cheap" unless the work needs deep expertise. Give only the tool groups the role needs '
                   '("shell" only for roles that must run code).')
         raw = await self.run_agent("hr", prompt, task_id=task_id)
@@ -240,11 +292,13 @@ class Team:
             spec = extract_json(raw)
             role, tier = str(spec["role"]), spec.get("tier", "mid")
             tools = [g for g in spec.get("tools", []) if g in GROUPS]
+            dept = spec.get("dept") if spec.get("dept") in DEPTS else "boshqaruv"
         except (ValueError, KeyError, TypeError):
-            role, tier, tools = why, "mid", ["files", "web"]
+            role, tier, tools, dept = why, "mid", ["files", "web"], "boshqaruv"
         if tier not in ("cheap", "mid"):
             tier = "mid"  # yangi agent avtomatik "strong" bo'lib ketmasin: narx nazorati
         await self.store.create_agent(name, role, system_prompt(name, role), tier, created_by, ",".join(tools))
+        await self.set_meta(name, dept=dept, replaces=why[:120])
         await self.store.audit(created_by, "hire", f"{name} ({tier}, tools={tools}): {role}")
         return name
 

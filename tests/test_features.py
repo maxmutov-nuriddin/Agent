@@ -92,7 +92,7 @@ async def test_report_contents_and_no_llm_cost(make_app):
     await app.orch.run_task("x", 1)
     calls = len(provs["anthropic"].calls)
     text = await build_report(app, datetime.now(timezone.utc) - timedelta(days=1), "Test")
-    assert "done: 1" in text and "anthropic" in text and "Jamoa: 8" in text
+    assert "done: 1" in text and "anthropic" in text and "Jamoa: 11" in text
     assert len(provs["anthropic"].calls) == calls
 
 

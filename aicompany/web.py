@@ -201,7 +201,8 @@ def make_web_app(app: App) -> web.Application:
         out = []
         for a in await app.store.list_agents():
             busy = app.team.busy.get(a["name"])
-            out.append({"name": a["name"], "role": a["role"], "tier": a["tier"],
+            meta = await app.team.meta(a["name"])
+            out.append({"name": a["name"], "role": a["role"], "tier": a["tier"], **meta,
                         "tools": [t for t in a["tools"].split(",") if t], "created_by": a["created_by"],
                         "core": a["name"] in CORE, "busy": bool(busy), "task_id": busy["task_id"] if busy else None,
                         "cost": round(costs.get(a["name"], 0.0), 4), "steps": steps.get(a["name"], 0)})
@@ -240,6 +241,53 @@ def make_web_app(app: App) -> web.Application:
 
     async def h_team(request):
         return json_ok(await team_data())
+
+    async def h_org(request):
+        """Tuzilma: bo'limlar, xodimlar kartochkalari, avtonom agentlar va sozlamalar (videodagi kabi daraxt uchun)."""
+        from .team import DEPT_LEADS, DEPTS, MODEL_CHOICES
+        return json_ok({"depts": [{"key": k, "title": v, "lead": DEPT_LEADS.get(k)} for k, v in DEPTS.items()],
+                        "agents": await team_data(), "auto": await app.auto.list() if app.auto else [],
+                        "dept_leads": await app.store.get_kv("dept_leads") == "1",
+                        "models": [m for m in MODEL_CHOICES if m == "auto" or m in app.router.providers]})
+
+    async def h_agent_meta(request):
+        from .team import DEPTS, MODEL_CHOICES
+        d = await body(request)
+        name = str(d.get("name", ""))
+        a = await app.store.get_agent(name)
+        if not a:
+            raise web.HTTPNotFound(reason="xodim topilmadi")
+        if "dept" in d and d["dept"] not in DEPTS:
+            raise web.HTTPBadRequest(reason="noma'lum bo'lim")
+        if "model" in d and (d["model"] not in MODEL_CHOICES or (d["model"] != "auto" and d["model"] not in app.router.providers)):
+            raise web.HTTPBadRequest(reason="bu AI ulanmagan (kalit yo'q)")
+        if "tier" in d:
+            if d["tier"] not in ("cheap", "mid", "strong"):
+                raise web.HTTPBadRequest(reason="daraja: cheap, mid yoki strong")
+            await app.store.set_agent_profile(name, a["role"], a["system_prompt"], d["tier"])
+        meta = await app.team.set_meta(name, dept=d.get("dept"), model=d.get("model"))
+        await app.store.audit("owner", "agent_meta", f"{name}: {json.dumps(d, ensure_ascii=False)[:200]}")
+        return json_ok(meta)
+
+    async def h_auto(request):
+        d = await body(request)
+        try:
+            st = await app.auto.set_mode(str(d.get("name", "")), str(d.get("mode", "")))
+        except ValueError as e:
+            raise web.HTTPBadRequest(reason=str(e))
+        return json_ok({"mode": st["mode"]})
+
+    async def h_auto_run(request):
+        from .autonomy import JOBS
+        name = str((await body(request)).get("name", ""))
+        if name not in JOBS:
+            raise web.HTTPBadRequest(reason="noma'lum agent")
+        return json_ok({"result": await app.auto.run(name, (), force=True)})
+
+    async def h_dept_leads(request):
+        on = bool((await body(request)).get("enabled"))
+        await app.store.set_kv("dept_leads", "1" if on else "0")
+        return json_ok({"enabled": on})
 
     async def h_hire(request):
         d = await body(request)
@@ -1182,7 +1230,9 @@ def make_web_app(app: App) -> web.Application:
         a.router.add_get(path, static)
     a.add_routes([
         web.get("/api/state", h_state), web.get("/api/selfcheck", h_selfcheck), web.get("/api/team", h_team), web.get("/api/overview", h_overview),
-        web.post("/api/team/hire", h_hire), web.post("/api/team/fire", h_fire),
+        web.post("/api/team/hire", h_hire), web.post("/api/team/fire", h_fire), web.get("/api/org", h_org),
+        web.post("/api/team/meta", h_agent_meta), web.post("/api/auto", h_auto), web.post("/api/auto/run", h_auto_run),
+        web.post("/api/dept_leads", h_dept_leads),
         web.get("/api/tasks", h_tasks), web.get(r"/api/tasks/{id:\d+}", h_task),
         web.get(r"/api/tasks/{id:\d+}/files/{path:.+}", h_file),
         web.get("/api/approvals", h_approvals), web.post(r"/api/approvals/{id:\d+}", h_decide),

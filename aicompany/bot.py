@@ -411,6 +411,7 @@ async def run_bot(app: App, extra_senders=()):
     from .briefing import morning_loop
     morning = asyncio.create_task(morning_loop(app, [send_report, *extra_senders]))  # «O'chiq» rejimda botga yuborilmaydi
     watching = asyncio.create_task(app.watch.loop([send_report, *extra_senders])) if getattr(app, "watch", None) else None
+    autonomous = asyncio.create_task(app.auto.loop([send_report, *extra_senders])) if getattr(app, "auto", None) else None
     remind = asyncio.create_task(reminder_loop(app, [send_owner, *extra_senders, *([app.push.reminder_sender()] if getattr(app, 'push', None) else [])]))
     try:
         await dp.start_polling(bot)
@@ -419,5 +420,7 @@ async def run_bot(app: App, extra_senders=()):
         morning.cancel()
         if watching:
             watching.cancel()
+        if autonomous:
+            autonomous.cancel()
         remind.cancel()
         resume.cancel()
