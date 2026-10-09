@@ -145,3 +145,7 @@ O'rnatish (bir marta, root): `bash /opt/aijamoa/src/deploy/install-backup.sh` �
 - Ro'yxat: `ls -lh /opt/aijamoa/backups` · Qo'lda nusxa: `systemctl start aijamoa-backup` · Holat: `systemctl list-timers aijamoa-backup.timer`
 - Tiklash (Postgres, EHTIYOT: hozirgi ma'lumot ustiga yoziladi): `systemctl stop aijamoa`, keyin
   `gunzip -c /opt/aijamoa/backups/aijamoa-SANA.sql.gz | psql "$DATABASE_URL"` (bo'sh bazaga), so'ng `systemctl start aijamoa`.
+
+## Ovozni tanish zanjiri (ixtiyoriy kalitlar)
+Avto rejim: Google Cloud STT → Microsoft Azure Speech → Whisper (serverda, bepul) → Gemini. Bepul limit tugashiga 1 daqiqa qolsa keyingisiga o'tadi; natija ishonchsiz bo'lsa ham keyingisiga, oxirida Gemini ma'noni tushunadi. Sozlamalar → "Ovozni tanish" da rejim tanlanadi.
+`.env` ga (bo'lganlarini): `GOOGLE_STT_KEY=` (Google Cloud → Speech-to-Text API kaliti), `AZURE_SPEECH_KEY=` va `AZURE_SPEECH_REGION=` (masalan `westeurope`), `WHISPER_MODEL=small` (yoki o'zbekcha CTranslate2 modeli yo'li; `off` — o'chirish). Bepul limitlar: `STT_GOOGLE_FREE_MIN=60`, `STT_AZURE_FREE_MIN=300`.

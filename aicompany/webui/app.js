@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-t";
+const PANEL_V = "2026.10.09-u";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -907,6 +907,21 @@ function morningBlock(state) {
     h("div", { class: "acts" }, test)];
 }
 
+// --- Ovozni tanish zanjiri ---
+function sttBlock(st) {
+  if (!st) return [];
+  const opts = [["auto", "Avto"], ["google", "Google"], ["azure", "Azure"], ["whisper", "Whisper"], ["gemini", "Gemini"]];
+  const save = async (m) => { try { await post("/stt", { mode: m }); toast("Ovozni tanish: " + opts.find((o) => o[0] === m)[1]); refresh(true); } catch (e) { toast(e.message); } };
+  const rows = Object.entries(st.services).map(([k, v]) => h("div", { class: "kv" }, h("span", {}, (v.ready ? "✅ " : "⚪️ ") + v.name),
+    h("span", { class: "muted" }, !v.ready ? (k === "google" ? "GOOGLE_STT_KEY yo'q" : k === "azure" ? "AZURE_SPEECH_KEY/REGION yo'q" : k === "whisper" ? "o'rnatilmagan" : "kalit yo'q")
+      : v.free_min ? `${v.used_min} / ${v.free_min} daq (bu oy, bepul)` : v.used_min ? `${v.used_min} daq (bu oy)` : "tayyor")));
+  return [h("div", { class: "seg sm plans-filter" }, opts.map(([k, l]) => h("button", { class: st.mode === k ? "on" : "", onclick: () => save(k) }, l))),
+    h("div", { class: "card" }, ...rows),
+    h("p", { class: "hint" }, st.mode === "auto"
+      ? "Avto: avval Google, bepul limitiga 1 daqiqa qolsa Azure, keyin serverdagi Whisper. Natijaning ishonch darajasi past bo'lsa (gap tushunilmagan bo'lishi mumkin), keyingisi, oxirida Gemini ma'noni tushunib yozadi."
+      : "Tanlangan xizmat birinchi ishlatiladi; u ishlamasa yoki limit tugasa, qolganlari avto tartibda.")];
+}
+
 // --- Push-bildirishnomalar ---
 const PUSH_KINDS = [["done", "✅ Vazifa tayyor bo'lganda"], ["failed", "⚠️ Vazifa bajarilmaganda"], ["approval", "🔐 Ruxsat so'ralganda"], ["reminder", "⏰ Eslatma vaqtida"], ["morning", "☀️ Ertalabki xulosa"], ["watch", "🔔 Kuzatuv topganda"]];
 let pushOn = null;  // shu qurilmada obuna bormi (null = hali bilmaymiz)
@@ -1220,6 +1235,7 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("p", { class: "hint" }, state.eco !== false
       ? "Reja va yakuniy qadoqlash arzon modelda, eng qimmat daraja ishlatilmaydi, bitta qadamli ishda qayta yozish yo'q. Odatda ~2 barobar arzon."
       : "Sifat rejimi: rahbar o'rta/kuchli modeldan foydalanadi, QA e'tirozida eng kuchli model qayta yozadi. Murakkab ishlar uchun."),
+    h("div", { class: "label" }, "Ovozni tanish (ovoz → matn)"), ...sttBlock(integ.stt),
     h("div", { class: "label" }, "Bildirishnomalar (telefonga)"), ...pushBlock(),
     h("div", { class: "label" }, "Ertalabki xulosa"), ...morningBlock(state),
     h("div", { class: "label" }, "Kuzatuvlar"),

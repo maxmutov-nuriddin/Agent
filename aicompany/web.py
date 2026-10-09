@@ -464,6 +464,7 @@ def make_web_app(app: App) -> web.Application:
                                  "private_providers": list(s.private_providers)},
             "maps": "google" if s.google_maps_key else "osm",
             "voice": any(p.supports_audio for p in app.router.providers.values()),
+            "stt": await stt_status(),
             "search": "brave" if s.brave_key else "duckduckgo",
             "providers": [{"name": n, "enabled": n in app.router.providers} for n in s.providers],
             "primary": await app.router.primary(),
@@ -956,6 +957,19 @@ def make_web_app(app: App) -> web.Application:
         await app.store.audit("owner", "watch_smart", "yoqildi" if on else "o'chirildi")
         return json_ok({"watch_smart": on})
 
+    async def stt_status():
+        from .stt import SpeechChain
+        return await SpeechChain(app.router).status()
+
+    async def h_stt(request):
+        from .stt import ORDER
+        mode = str((await body(request)).get("mode", ""))
+        if mode not in ("auto", *ORDER):
+            raise web.HTTPBadRequest(reason="rejim: auto, google, azure, whisper yoki gemini")
+        await app.store.set_kv("stt_mode", mode)
+        await app.store.audit("owner", "stt_mode", mode)
+        return json_ok(await stt_status())
+
     async def h_morning(request):
         d = await body(request)
         if "on" in d:
@@ -1057,6 +1071,9 @@ def make_web_app(app: App) -> web.Application:
             add("Telegram akkaunt", bool(lst and lst.active()), (tg.me or "ulangan") + (" · tinglayapti" if lst and lst.active() else " · tinglash ishlamayapti"))
         else:
             add("Telegram akkaunt", None, "ulanmagan (ixtiyoriy)")
+        st_stt = await stt_status()
+        ready = [v["name"] for v in st_stt["services"].values() if v["ready"]]
+        add("Ovozni tanish", bool(ready), ("avto: " if st_stt["mode"] == "auto" else "tanlangan: " + st_stt["mode"] + " · ") + (", ".join(ready) or "hech biri ulanmagan"))
         if app.calls:
             c = await app.calls.status()
             add("Ovozli qo'ng'iroq", (c.get("ready") or None) if c.get("enabled") else None,
@@ -1112,7 +1129,7 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/tasks", h_task_submit),
         web.post(r"/api/tasks/{id:\d+}/stop", h_task_stop), web.post(r"/api/tasks/{id:\d+}/archive", h_task_archive),
         web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
-        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/morning", h_morning), web.get("/api/watches", h_watches), web.post("/api/watches", h_watch_add), web.post(r"/api/watches/{id:\d+}", h_watch_update), web.delete(r"/api/watches/{id:\d+}", h_watch_delete), web.post(r"/api/watches/{id:\d+}/check", h_watch_check), web.post("/api/watch_smart", h_watch_smart), web.post("/api/watch_kind", h_watch_kind), web.post("/api/morning/test", h_morning_test), web.post("/api/resume", h_resume),
+        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/morning", h_morning), web.post("/api/stt", h_stt), web.get("/api/watches", h_watches), web.post("/api/watches", h_watch_add), web.post(r"/api/watches/{id:\d+}", h_watch_update), web.delete(r"/api/watches/{id:\d+}", h_watch_delete), web.post(r"/api/watches/{id:\d+}/check", h_watch_check), web.post("/api/watch_smart", h_watch_smart), web.post("/api/watch_kind", h_watch_kind), web.post("/api/morning/test", h_morning_test), web.post("/api/resume", h_resume),
         web.post("/api/provider", h_provider), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
