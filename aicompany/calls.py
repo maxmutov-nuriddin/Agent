@@ -93,7 +93,7 @@ def spoken_text(text: str, limit: int = 600) -> str:
     return (cut[:end + 1] if end > limit // 2 else cut.rsplit(" ", 1)[0]) + " Batafsil natija chatda."
 
 
-def split_speech(text: str, max_chunks: int = 3, min_len: int = 45) -> list[str]:
+def split_speech(text: str, max_chunks: int = 3, min_len: int = 30) -> list[str]:
     """Uzun javobni gaplar bo'yicha 2-3 bo'lakka ajratadi: birinchisi tez tayyor bo'lib aytila boshlaydi, qolganlari shu paytda yaratiladi."""
     parts = re.split(r"(?<=[.!?\u2026])\s+", (text or "").strip())
     chunks, cur = [], ""
