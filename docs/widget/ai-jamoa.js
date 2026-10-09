@@ -5,6 +5,7 @@
 // Ish ketayotganda: kim nima qilyapti, vazifa xarajati va qadamlar. Tinch paytda: oxirgi natijalar, eslatmalar, moliya.
 // DIQQAT: WIDGET_TOKEN faqat umumiy holatni o'qiydi (boshqarib bo'lmaydi), lekin baribir maxfiy saqlang.
 
+const VERSION = "2.1";   // vidjetda «Moliya» yonida ko'rinadi: qaysi skript ishlayotganini bilish uchun
 const BASE_URL = "https://SIZNING-MANZIL";
 const WIDGET_TOKEN = "WIDGET_TOKEN_NI_SHU_YERGA";
 
@@ -164,6 +165,7 @@ function medium(w, d) {
     if (rem) { txt(w, reminderText(rem), 12, WHITE, false); w.addSpacer(3); }
     w.addImage(timeline(day.timeline || [], 300, 7));
     w.addSpacer();
+    txt(w, "v" + VERSION, 8, DIM, false);
     stats(w, [[d.done_today, "bugun tayyor", LIME], [money(m.today), "bugun"], ["~" + money(m.forecast), "oy prognozi", AMBER], [money(d.budget_left), "qoldi"]], 16);
   }
 }
@@ -193,7 +195,7 @@ function large(w, d) {
   }
 
   w.addSpacer();
-  section(w, "Moliya", "");
+  section(w, "Moliya", "v" + VERSION);
   stats(w, [[money(m.today), "bugun", LIME], [money(m.month), "shu oy"], ["~" + money(m.forecast), "oy prognozi", AMBER], [money(d.budget_left), "qoldi"]], 20);
   w.addSpacer(6);
   (m.providers || []).slice(0, 3).forEach((p) => {
