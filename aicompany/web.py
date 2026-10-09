@@ -565,7 +565,7 @@ def make_web_app(app: App) -> web.Application:
         d = await body(request)
         voice = d.get("voice") if d.get("voice") in VOICES else None
         try:
-            pcm = await app.router.speak("Assalomu alaykum. Men sizning yordamchingizman. Bugun qanday yordam bera olaman?", voice=voice)
+            pcm = await app.router.speak("Assalomu alaykum, men sizning menejeringizman. Eshitaman.", voice=voice)
         except (VoiceUnavailable, VoiceError) as e:
             raise web.HTTPBadRequest(reason=str(e))
         return web.Response(body=pcm_to_wav(pcm, OUT_RATE), content_type="audio/wav")

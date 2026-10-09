@@ -304,3 +304,29 @@ async def test_call_owner_resolves_unknown_peer(make_app):
     app.orch.call_error = lambda: calls.last_error
     res = await app.orch.handle("menga qo'ng'iroq qil hozir", 5)
     assert "bitta xabar yozing" in res["reply"]               # foydalanuvchi sababini ko'radi
+
+
+async def test_greeting_is_short_manager_line_and_cached(make_app):
+    from aicompany.calls import GREETING, Call
+    assert "menejeringizman" in GREETING and len(GREETING) < 60
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
+    n = {"speak": 0, "played": 0}
+
+    async def fake_speak(text, **kw):
+        n["speak"] += 1
+        return b"\0\0" * 100
+
+    async def fake_play(call, pcm, pause=0.3):
+        n["played"] += 1
+    app.router.speak = fake_speak
+    app.router.speak_ex = lambda text, **kw: _pair(fake_speak(text))
+    app.calls._play = fake_play
+    call = Call(1)
+    await app.calls.say(call, GREETING)
+    await app.calls.say(call, GREETING)
+    assert n["played"] == 2 and n["speak"] == 1       # ikkinchi marta keshdan: AI sarflanmadi
+    assert "menejer" in app.orch.TALK_STYLE
+
+
+async def _pair(coro):
+    return await coro, "gemini"

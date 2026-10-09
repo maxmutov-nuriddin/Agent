@@ -93,6 +93,8 @@ def spoken_text(text: str, limit: int = 600) -> str:
     return (cut[:end + 1] if end > limit // 2 else cut.rsplit(" ", 1)[0]) + " Batafsil natija chatda."
 
 
+GREETING = "Assalomu alaykum, men menejeringizman. Eshitaman."   # qisqa va aniq; bir marta yaratilib keshlanadi
+STATIC_LINES = (GREETING,)
 FILLERS = ("Hmm...", "Xo'sh...", "Mm, ha...", "Bir soniya...")
 LONG_FILLERS = ("Bir daqiqa, qarab chiqyapman...", "Hozir aniqlayapman...")
 LONG_WAIT = 5   # soniya: javob shundan uzoq kechiksa, yana bir ibora aytiladi
@@ -221,8 +223,9 @@ class CallService:
         text = (text or "").strip()
         if not text or call.closed:
             return
+        pcm = await self.filler_pcm(text, create=True) if text in STATIC_LINES else None   # doimiy gaplar keshdan: AI sarflanmaydi
         try:
-            pcm = await self.app.router.speak(text)
+            pcm = pcm or await self.app.router.speak(text)
         except Exception as e:  # noqa: BLE001 — ikkala ovoz xizmati ham ishlamadi: qo'ng'iroq uzilmasin, suhbat xotirasi saqlanadi
             call.say_fails += 1
             self.last_error = f"ovoz yaratib bo'lmadi: {type(e).__name__} {e}"[:200]
@@ -283,7 +286,7 @@ class CallService:
 
     async def warm_fillers(self):
         """Tanlangan ovozda o'ylash tovushlarini oldindan tayyorlab qo'yadi (har ovoz uchun bir marta)."""
-        for t in (*FILLERS, *LONG_FILLERS):
+        for t in (*STATIC_LINES, *FILLERS, *LONG_FILLERS):
             await self.filler_pcm(t, create=True)
 
     async def _filler(self, call: Call, pool=None):
@@ -305,7 +308,7 @@ class CallService:
             return
         try:
             call = await self._open(chat_id, None)
-            await self.say(call, "Salom, eshitaman.")
+            await self.say(call, GREETING)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
@@ -526,4 +529,4 @@ class CallService:
         self._last_auto = time.monotonic()
         body = spoken_text(res.get("result") or res.get("error") or "", 500)
         head = "Vazifa tayyor." if res.get("status") == "done" else "Vazifa bajarilmadi."
-        await self.call_owner(f"Assalomu alaykum. {head} Raqami {res.get('task_id')}. {body}")
+        await self.call_owner(f"Assalomu alaykum, men menejeringizman. {head} Raqami {res.get('task_id')}. {body}")

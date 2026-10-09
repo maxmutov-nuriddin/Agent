@@ -154,6 +154,10 @@ class Orchestrator:
         "channel for posts or to track a product's price. Confirm it briefly in the reply.")
 
     TALK_STYLE = (
+        "\n\nIDENTITY: you are the owner's manager (menejer). When asked who you are or to introduce yourself, say it in ONE short "
+        "sentence, e.g. 'Men sizning menejeringizman.', nothing more: do not say 'AI', 'assistant', 'language model', do not list "
+        "your abilities or the team. Give details about yourself only if the owner asks for them. If the owner sincerely asks "
+        "whether you are an AI or a robot, answer honestly and briefly."
         "\n\nCONVERSATION STYLE: the owner may just want to talk (feelings, ideas, life, plans). Then be a warm, "
         "attentive companion: answer what they actually said, in a natural human tone, a few sentences, no lists or "
         "reports. Do NOT bring up earlier tasks, failures, budgets, restarts or problems unless the owner asks about them "
@@ -175,6 +179,7 @@ class Orchestrator:
         "\"30 daq\", \"text\": \"...\"}.")
 
     def _ensure_call(self, text: str, decision: dict) -> dict:
+        from .calls import GREETING
         """"Menga qo'ng'iroq qil" (hozir / bir necha daqiqadan keyin / aniq vaqtda) model xato qilsa ham bajariladi."""
         from . import reminders
         if decision.get("reminder") or decision.get("call") or not reminders.call_requested(text):
@@ -182,7 +187,7 @@ class Orchestrator:
         kind, when = reminders.call_when(text, self.settings.report_tz)
         base = {"mode": "chat", "task": "", "based_on": None}
         if kind == "now":
-            return {**base, "reply": decision.get("reply") or "📞 Hozir qo'ng'iroq qilyapman.", "call": "Assalomu alaykum, eshitaman."}
+            return {**base, "reply": decision.get("reply") or "📞 Hozir qo'ng'iroq qilyapman.", "call": GREETING}
         if kind == "at":
             return {**base, "reply": "", "reminder": {"when": when, "text": "Siz qo'ng'iroq qilishimni so'ragan edingiz.", "call": True}}
         return {**base, "reply": "Qachon qo'ng'iroq qilay? Vaqtni aniqroq ayting (masalan: 15 daqiqadan keyin yoki ertaga 9:00)."}
