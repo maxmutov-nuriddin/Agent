@@ -549,6 +549,9 @@ def make_web_app(app: App) -> web.Application:
         d = await body(request)
         if d.get("mode") not in app.router.TTS_MODES:
             raise web.HTTPBadRequest(reason="noma'lum rejim")
+        eng = (await app.router.tts_status())["engines"]
+        if not (any(e["ready"] for e in eng.values()) if d["mode"] == "auto" else eng[d["mode"]]["ready"]):
+            raise web.HTTPBadRequest(reason="bu ovoz manbai mavjud emas (kalit yo'q yoki o'rnatilmagan)")
         await app.store.set_kv("tts_mode", d["mode"])
         app.router._tts_down.clear()
         if app.calls and app.calls._tgc is not None:
@@ -991,7 +994,9 @@ def make_web_app(app: App) -> web.Application:
         from .stt import ORDER
         mode = str((await body(request)).get("mode", ""))
         if mode not in ("auto", *ORDER):
-            raise web.HTTPBadRequest(reason="rejim: auto, google, azure, whisper yoki gemini")
+            raise web.HTTPBadRequest(reason="rejim: auto, google, azure, groq, whisper yoki gemini")
+        if mode != "auto" and not ((await stt_status())["services"].get(mode) or {}).get("ready"):
+            raise web.HTTPBadRequest(reason="bu xizmat tayyor emas (kalit yo'q yoki o'chiq)")
         await app.store.set_kv("stt_mode", mode)
         await app.store.audit("owner", "stt_mode", mode)
         return json_ok(await stt_status())

@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-z";
+const PANEL_V = "2026.10.09-za";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -915,7 +915,10 @@ function sttBlock(st) {
   const rows = Object.entries(st.services).map(([k, v]) => h("div", { class: "kv" }, h("span", {}, (v.ready ? "✅ " : "⚪️ ") + v.name),
     h("span", { class: "muted" }, !v.ready ? (k === "google" ? "GOOGLE_STT_KEY yo'q" : k === "azure" ? "AZURE_SPEECH_KEY/REGION yo'q" : k === "groq" ? "GROQ_API_KEY yo'q yoki Sozlamalarda Groq o'chiq" : k === "whisper" ? "o'rnatilmagan" : "kalit yo'q")
       : v.free_min ? `${v.used_min} / ${v.free_min} daq (bu oy, bepul)` : v.used_min ? `${v.used_min} daq (bu oy)` : "tayyor")));
-  return [h("div", { class: "seg sm plans-filter" }, opts.map(([k, l]) => h("button", { class: st.mode === k ? "on" : "", onclick: () => save(k) }, l))),
+  const why = (k) => k === "google" ? "GOOGLE_STT_KEY yo'q" : k === "azure" ? "AZURE_SPEECH_KEY/REGION yo'q" : k === "groq" ? "GROQ_API_KEY yo'q yoki Sozlamalarda Groq o'chiq" : k === "whisper" ? "serverda o'rnatilmagan" : "kalit yo'q";
+  const usable = (k) => k === "auto" || (st.services[k] || {}).ready;
+  return [h("div", { class: "seg sm plans-filter" }, opts.map(([k, l]) => h("button", { class: (st.mode === k ? "on " : "") + (usable(k) ? "" : "off"),
+      onclick: () => (usable(k) ? save(k) : toast(l + ": " + why(k))) }, l))),
     h("div", { class: "card" }, ...rows),
     h("p", { class: "hint" }, st.mode === "auto"
       ? "Avto: avval Google, bepul limitiga 1 daqiqa qolsa Azure, keyin serverdagi Whisper. Natijaning ishonch darajasi past bo'lsa (gap tushunilmagan bo'lishi mumkin), keyingisi, oxirida Gemini ma'noni tushunib yozadi."
@@ -984,7 +987,9 @@ function voiceSelect(cur) {
 const TTS_MODES = [["auto", "Avto: Gemini, xato bo'lsa Edge"], ["edge", "Edge (bepul, tez), xato bo'lsa Gemini"], ["gemini", "Faqat Gemini"]];
 function ttsModeSelect(T) {
   T = T || { mode: "auto", engines: {} };
-  const sel = h("select", {}, TTS_MODES.map(([k, l]) => h("option", { value: k, selected: k === T.mode ? "selected" : null }, l)));
+  const E0 = T.engines || {};
+  const okMode = (k) => k === "auto" ? (E0.gemini || {}).ready || (E0.edge || {}).ready : (E0[k] || {}).ready;
+  const sel = h("select", {}, TTS_MODES.map(([k, l]) => h("option", { value: k, selected: k === T.mode ? "selected" : null, disabled: okMode(k) ? null : "disabled" }, l + (okMode(k) ? "" : " (mavjud emas)"))));
   sel.addEventListener("change", async () => { try { await post("/tts/mode", { mode: sel.value }); toast("Saqlandi"); setTimeout(tgSheet, 600); } catch (e) { toast(e.message); } });
   const E = T.engines || {}, name = { gemini: "Gemini", edge: "Edge" };
   const st = ["gemini", "edge"].map((k) => name[k] + ": " + (!(E[k] || {}).ready ? "yo'q" : E[k].cooldown_s ? "dam olyapti (" + E[k].cooldown_s + " s)" : "ishlayapti")).join(" · ");
@@ -1186,7 +1191,7 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
   const freeRows = FREE_AI.map(([k, label, what]) => {
     const F = (integ.free_ai || {})[k] || {};
     return [h("div", { class: "label" }, "Bepul AI: " + label),
-      h("div", { class: "seg" }, h("button", { class: F.enabled ? "on" : "", onclick: () => setFree(k, true) }, "Yoqilgan"),
+      h("div", { class: "seg" }, h("button", { class: (F.enabled ? "on " : "") + (F.ready ? "" : "off"), onclick: () => (F.ready ? setFree(k, true) : toast(label + ": " + k.toUpperCase() + "_API_KEY .env da yo'q")) }, "Yoqilgan"),
         h("button", { class: F.enabled ? "" : "on", onclick: () => setFree(k, false) }, "O'chiq")),
       h("p", { class: "hint" }, !F.ready ? "Kalit yo'q: .env ga " + k.toUpperCase() + "_API_KEY qo'ying. "
         : (F.enabled ? (F.cooldown_s ? "⏸ Limit/xato: " + F.cooldown_s + " s dam oladi, hozir keyingisi ishlaydi. " : "✅ Ishlayapti. ") : "O'chiq. ") + "Model: " + F.model + " (" + what + ").")];

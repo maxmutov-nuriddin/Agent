@@ -138,7 +138,9 @@ async def test_voice_choice_and_jarvis_style(make_app):
     assert voice == "Alnilam" and sent["contents"][0]["parts"][0]["text"].endswith(": Salom") and len(pcm) == 4800
 
 
-async def test_voice_api(web):
+async def test_voice_api(web, monkeypatch):
+    from aicompany import tts_edge
+    monkeypatch.setattr(tts_edge, "available", lambda: True)
     from .test_web import post
     c, app = web
     assert (await post(c, "/api/tts/voice", {"voice": "nope"}))[0] == 400
@@ -146,7 +148,9 @@ async def test_voice_api(web):
     assert await app.store.get_kv("tts_voice") == "algenib"
     assert (await post(c, "/api/tts/mode", {"mode": "x"}))[0] == 400
     assert (await post(c, "/api/tts/mode", {"mode": "edge"}))[1]["order"] == ["edge", "gemini"]
-    assert (await post(c, "/api/tts/mode", {"mode": "gemini"}))[0] == 200
+    assert (await post(c, "/api/tts/mode", {"mode": "gemini"}))[0] == 400     # Gemini kaliti yo'q: tanlab bo'lmaydi
+    monkeypatch.setattr(tts_edge, "available", lambda: False)
+    assert (await post(c, "/api/tts/mode", {"mode": "edge"}))[0] == 400       # Edge o'rnatilmagan: tanlab bo'lmaydi
     assert (await post(c, "/api/tts/preview", {"voice": "jarvis"}))[0] == 400     # Gemini kaliti yo'q: tushunarli xato
 
 
@@ -260,3 +264,10 @@ async def test_openrouter_provider_request():
     res = await prov.complete(ModelCfg("m:free", 0, 0, 0), "sys", [{"role": "user", "content": "x"}], 100)
     assert res.text == "salom" and res.cost_usd == 0 and sent["url"].startswith("https://openrouter.ai/api/v1") and sent["body"]["max_tokens"] == 100
     assert prov._headers()["Authorization"] == "Bearer k"
+
+
+async def test_stt_mode_requires_ready_service(web):
+    from .test_web import post
+    c, app = web
+    assert (await post(c, "/api/stt", {"mode": "azure"}))[0] == 400       # Azure kaliti yo'q
+    assert (await post(c, "/api/stt", {"mode": "auto"}))[0] == 200
