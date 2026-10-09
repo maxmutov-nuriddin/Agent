@@ -180,6 +180,7 @@ def make_web_app(app: App) -> web.Application:
                      "devices": len(await app.push.subs()) if app.push else 0},
             "bot_push": (await app.store.get_kv("bot_push")) or "all",
             "morning": await morning_settings(app.store),
+            "github": bool(await app.store.get_kv("github_token_sealed")),
             "watch_smart": (await app.store.get_kv("watch_smart")) == "1",
             "watch_on": {k: (await app.store.get_kv(f"watch_on:{k}")) != "0" for k in ("tg", "price")},
             "today": round(await today_spend(), 4),
@@ -616,6 +617,16 @@ def make_web_app(app: App) -> web.Application:
             raise web.HTTPBadRequest(reason="0 dan 6 gacha son")
         await app.store.set_kv("qa_rounds", str(n))
         return json_ok({"rounds": n})
+
+    async def h_github(request):
+        """GitHub tokeni (ixtiyoriy): bazada shifrlangan holda saqlanadi, qaytarilmaydi. Bo'sh = o'chirish."""
+        from . import github_api
+        token = str((await body(request)).get("token") or "").strip()
+        if token and not re.fullmatch(r"[A-Za-z0-9_\-]{20,255}", token):
+            raise web.HTTPBadRequest(reason="token formati noto'g'ri")
+        await github_api.set_token(app.store, app.settings, token or None)
+        await app.store.audit("owner", "github_token", "set" if token else "removed")
+        return json_ok({"token": bool(token)})
 
     async def h_voice_reply(request):
         m = str((await body(request)).get("mode", ""))
@@ -1384,7 +1395,7 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/widget-script", h_widget_script), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
         web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend),
-        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/say", h_tts_say), web.post("/api/voice_reply", h_voice_reply), web.post("/api/qa_rounds", h_qa_rounds), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
+        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/say", h_tts_say), web.post("/api/voice_reply", h_voice_reply), web.post("/api/qa_rounds", h_qa_rounds), web.post("/api/github", h_github), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),

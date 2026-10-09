@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-zh";
+const PANEL_V = "2026.10.09-zi";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -985,6 +985,14 @@ function newsSitesInput(sites, save) {
   return [h("label", {}, "Saytlar (vergul bilan)"), inp, h("p", { class: "hint" }, "RSS manzilini tizim sayt sahifasidan o'zi topadi. Agentlar ham «news» asbobi orqali o'qiydi."), h("div", { class: "acts" }, chk), out];
 }
 
+function githubBlock(state) {
+  const inp = h("input", { type: "password", placeholder: state.github ? "Token saqlangan (almashtirish uchun yangisini kiriting)" : "ghp_… yoki github_pat_… (ixtiyoriy)", autocomplete: "off" });
+  const save = async (t) => { try { await post("/github", { token: t }); inp.value = ""; toast(t ? "Token saqlandi" : "Token o'chirildi"); refresh(true); } catch (e) { toast(e.message); } };
+  return [h("p", { class: "hint" }, "Kalitsiz ham ishlaydi: ochiq repolar, soatiga 60 ta so'rov. Token kiritilsa limit 5000/soat bo'ladi va token egasining yopiq repolari ham ko'rinadi (faqat o'qish ruxsati bering)."),
+    inp, h("div", { class: "acts" }, h("button", { class: "btn", onclick: () => inp.value.trim() && save(inp.value.trim()) }, "Saqlash"),
+      state.github ? h("button", { class: "btn ghost", onclick: () => save("") }, "O'chirish") : null)];
+}
+
 // --- Ovozni tanish zanjiri ---
 function sttBlock(st) {
   if (!st) return [];
@@ -1360,6 +1368,7 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("div", { class: "label" }, "Ish paytida ekran o'chmasin (shu qurilma)"), awakeSwitch(),
     h("p", { class: "hint" }, "Vazifa ishlayotganda va panel ochiq turganda ekran o'chib qolmaydi, tugagach odatdagidek o'chadi. Qulf ekranida jarayonni ko'rish uchun: Bildirishnomalar → «⚙️ Vazifa jarayoni» ni yoqing va Scriptable vidjetini qulf ekraniga qo'shing."),
     h("div", { class: "label" }, "Ertalabki xulosa"), ...morningBlock(state),
+    h("div", { class: "label" }, "🐙 GitHub"), ...githubBlock(state),
     h("div", { class: "label" }, "Kuzatuvlar"),
     ...[["tg", "📡 Telegram kanal kuzatuvi"], ["price", "🏷 Narx kuzatuvi"]].map(([k, l]) => {
       const onK = !state.watch_on || state.watch_on[k] !== false;
