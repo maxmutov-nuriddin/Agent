@@ -126,9 +126,18 @@ async def reminder_loop(app, senders, interval: float = 20):
 
 
 # ---------- "menga qo'ng'iroq qil": modelga ishonmay, qoida bilan aniqlash ----------
-_PHONE = re.compile(r"\btel\b|telefon|qo'?ng'?iroq|qongiroq|zvon|звон|call me", re.I)
-_ASK = re.compile(r"qil\b|qilgin|qiling|qilib|qilvor|bering|\bber\b|\bet\b|zvon|звони|позвони|call me|набери", re.I)
-_NOT_REQUEST = re.compile(r"\?|olasan|oladimi|mumkinmi|bormi|qila ol|qilolasan|qiladimi|nega|nima uchun|qanday|nimaga", re.I)
+_PHONE = re.compile(
+    r"\btel\b|\btel\.|\btlf\b|\btelf\w*|telefon\w*|(?:q|k)[o']{0,2}ng'?ir[oa]?[qk']?\w*|zvon\w*|dozvon\w*|"
+    r"звон\w*|позвон\w*|созвон\w*|\bтел\b|телефон\w*|набер\w*|[қк][ўу]?[нғ]+[ғг]?[иi]р[оа]қ\w*|call\s*me|ring\s*me|\bdial\b|"
+    r"bog'?lan\w*|aloqaga\s*chiq\w*|\bchaqir\w*", re.I)
+# "qil" ning turli ko'rinishlari ("ql", "qlb", "qilb", "qiling", ...) va o'xshash fe'llar ("ur", "chaqir", "bog'lan", "et")
+_ASK = re.compile(
+    r"\bq(?:i)?l(?:i)?(?:b|ib|ing|gin|sang|vor|ay)?\b|\b[қк]ил(?:иб|инг|гин)?\b|\bқл\b|\bur(?:ib|ing|gin)?\b|\bet(?:ing|gin)?\b|"
+    r"chaqir\w*|bog'?lan\w*|aloqaga\s*chiq\w*|\bulan\b|zvon\w*|звони\w*|позвони\w*|набери\w*|call\s*me|ring\s*me|\bdial\b|"
+    r"(?:q|k)[o']{0,2}ng'?ir\w*\s+ber\w*|zvon\w*\s+ber\w*", re.I)
+_NOT_REQUEST = re.compile(
+    r"\?|olasan|oladimi|mumkinmi|bormi|qila ol|qilolasan|qiladimi|nega|nima uchun|qanday|nimaga|raqam|nomer|номер|batareya|zaryad|"
+    r"narxi|sotib|modeli|sozla|ishlamay|ishlamaydi|buzil|qilgan|qilgandi|qildim|qildi\b|qilyapman|qilyapsan|qilishni|qilmoq|qilish\b", re.I)
 _NOW = re.compile(r"\b(hozir|hali|darrov|darhol|tezda|zudlik|сейчас|now)\b", re.I)
 _WORDNUM = {"bir": 1, "ikki": 2, "uch": 3, "to'rt": 4, "besh": 5, "olti": 6, "yetti": 7, "sakkiz": 8, "to'qqiz": 9, "o'n": 10,
             "yigirma": 20, "o'ttiz": 30, "yarim": 0.5}
@@ -137,9 +146,17 @@ _TIMEISH = re.compile(r"ertaga|indinga|bugun|kechqurun|kechki|kechasi|ertalab|pe
                       + r"|dushanba|seshanba|chorshanba|payshanba|juma|shanba|yakshanba|haftadan|oydan keyin|keyin", re.I)
 
 
+def _norm(text: str) -> str:
+    """Kichik harf va barcha turdagi tutuq belgilar (o', o\u02bb, o\u2018, o\u2019, o`) bitta ko'rinishga."""
+    t = (text or "").lower()
+    for ch in ("\u2019", "\u2018", "\u02bb", "\u02bc", "`", "\u00b4"):
+        t = t.replace(ch, "'")
+    return t
+
+
 def call_requested(text: str) -> bool:
     """Egasi o'ziga qo'ng'iroq qilishni so'rayaptimi (savol/izoh emas)?"""
-    t = (text or "").lower().replace("\u2019", "'").replace("\u02bb", "'")
+    t = _norm(text)
     return bool(_PHONE.search(t) and _ASK.search(t) and not _NOT_REQUEST.search(t))
 
 
@@ -147,7 +164,7 @@ def call_when(text: str, tz: str, now: datetime | None = None) -> tuple[str, str
     """('now', '') hozir | ('at', when) aniq vaqt (parse_when formatida) | ('ask', '') vaqt tushunarsiz: so'rash kerak."""
     zone = ZoneInfo(tz)
     now_local = (now or datetime.now(timezone.utc)).astimezone(zone)
-    t = (text or "").lower().replace("\u2019", "'").replace("\u02bb", "'")
+    t = _norm(text)
     num = r"(\d+(?:[.,]\d+)?|" + "|".join(map(re.escape, _WORDNUM)) + r")"
 
     def val(x):

@@ -10,6 +10,7 @@ from typing import Awaitable, Callable
 from .approvals import Approver, DenyApprover
 from .config import TIERS
 from .db import Store, now
+from .reminders import call_requested
 from .router import BudgetExhausted, TaskBudgetExceeded
 from .team import Team
 from .tools import ToolEnv
@@ -40,7 +41,6 @@ async def _safe_done(cb, res):
 PREFS_MAX = 15     # shundan ko'p doimiy qoida bo'lsa, takrorlari birlashtiriladi
 PREFS_SHOWN = 20   # suhbat va rejaga hammasi sig'adi (birlashtirish 15 dan oshirmaydi)
 STEP_CTX = 3000    # keyingi qadamga beriladigan oldingi natija hajmi; to'liqi .steps/ faylida
-PHONE_WORDS = re.compile(r"\btel\b|telefon|qo'?ng'?iroq|qongiroq|звон|позвон|call me", re.I)
 TASK_WORDS = re.compile(r"vazifa|natija|hisobot|task|#\d|задач|результат|отчет|отчёт|nima bo'?ldi|qani|tugadimi|xato|muammo|davom|buni|uni |shuni|o'zgartir|qisqartir|kengaytir|tuzat|qo'sh|yaxshila|qayta|yana|fayl|prompt|исправ|измени|сократи", re.I)
 
 
@@ -332,7 +332,7 @@ class Orchestrator:
             rem = d.get("reminder")
             if isinstance(rem, dict) and rem.get("when") and rem.get("text"):
                 # vaqtli so'rov: qo'ng'iroq HOZIR emas, eslatma vaqtida (model ikkalasini qaytarsa ham)
-                wants_call = bool(rem.get("call")) or bool(say) or bool(PHONE_WORDS.search(text))
+                wants_call = bool(rem.get("call")) or bool(say) or call_requested(text)
                 return {"mode": "chat", "reply": reply, "task": "", "reminder": {"when": str(rem["when"]), "text": str(rem["text"]), "call": wants_call}}
             if say and say.lower() not in ("true", "1"):
                 return {"mode": "chat", "reply": reply, "task": "", "call": say}
