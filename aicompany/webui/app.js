@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-zl";
+const PANEL_V = "2026.10.09-zm";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -152,7 +152,7 @@ async function api(path, opts = {}) {
   if (!r.ok) throw new Error(data.error || "Xatolik " + r.status);
   return data;
 }
-const post = (p, body) => api(p, { method: "POST", body: JSON.stringify(body || {}) });
+const post = (p, body, opts) => api(p, { method: "POST", body: JSON.stringify(body || {}), ...(opts || {}) });
 function ago(iso) {
   if (!iso) return "";
   const s = (Date.now() - new Date(iso)) / 1000;
@@ -1000,10 +1000,13 @@ async function skillsSheet() {
     if (!url.value.trim()) return;
     imp.disabled = true; imp.textContent = "Yuklanmoqda…";
     try {
-      const r = await post("/skills/import", { url: url.value.trim() });
-      toast(r.added.length ? r.added.length + " ta skill yuklandi — ko'rib tasdiqlang" : "Yangi skill yo'q" + (r.skipped.length ? ": " + r.skipped[0] : ""));
+      const r = await post("/skills/import", { url: url.value.trim(), adapt: adapt.checked, activate: auto.checked }, { timeout: 180000 });
+      const got = r.installed || r.added.map((slug) => ({ slug, active: false }));
+      toast(got.length ? got.length + " ta skill yuklandi" + (got.some((g) => !g.active) ? " — ko'rib tasdiqlang" : "") : "Yangi skill yo'q" + (r.skipped.length ? ": " + r.skipped[0] : ""));
       reload();
     } catch (e) { toast(e.message); imp.disabled = false; imp.textContent = "Yuklash"; } } }, "Yuklash");
+  const adapt = h("input", { type: "checkbox" }); adapt.checked = true;
+  const auto = h("input", { type: "checkbox" }); auto.checked = true;
   const pend = list.skills.filter((k) => k.status === "pending");
   const LM = [["auto", "Avto"], ["propose", "Taklif"], ["off", "O'chiq"]];
   const learn = h("div", { class: "seg sm" }, LM.map(([m, l]) => h("button", { class: list.learn === m ? "on" : "", onclick: async () => {
@@ -1014,8 +1017,11 @@ async function skillsSheet() {
     h("p", { class: "hint" }, "Avto: vazifadan keyin yoki ish paytida foydali tartibni o'zi saqlaydi va yoqadi (kuniga 3 tagacha). Taklif: saqlaydi, lekin siz tasdiqlamaguncha ishlatmaydi. Shubhali matnli yoki shaxsiy ma'lumotli skill hech qachon avtomatik yoqilmaydi."),
     ...list.skills.map(row),
     h("div", { class: "acts" }, h("button", { class: "btn ghost", onclick: () => skillEdit(null, org.agents) }, "+ Yangi skill")),
-    h("div", { class: "label" }, "GitHub'dan yuklash"), url, h("div", { class: "acts" }, imp),
-    h("p", { class: "hint" }, "Repo, papka yoki bitta SKILL.md havolasi. Faqat SKILL.md matni olinadi (skript va qo'shimcha fayllar olinmaydi). Yuklangan skill avval «kutilmoqda» holatida turadi. Begona skillni o'qimay tasdiqlamang."));
+    h("div", { class: "label" }, "GitHub'dan yuklash"), url,
+    h("div", { class: "chips" }, h("label", { class: "chip" }, adapt, " AI bilan o'zimizga moslash (taxminan $0.02–0.05 / skill)"),
+      h("label", { class: "chip" }, auto, " Xavfsiz bo'lsa darhol yoqish")),
+    h("div", { class: "acts" }, imp),
+    h("p", { class: "hint" }, "Repo, papka yoki bitta SKILL.md havolasi. Faqat SKILL.md matni olinadi (skript olinmaydi). Moslash o'chirilsa yoki matnda shubhali belgi bo'lsa, skill «kutilmoqda» holatida turadi. Chatda ham yozishingiz mumkin: «github.com/... dagi skillni yukla va moslab joyla»."));
 }
 async function skillEdit(slug, agents) {
   let k = { name: "", description: "", body: "", agents: [], enabled: true, status: "active", warnings: [], source: "manual" };

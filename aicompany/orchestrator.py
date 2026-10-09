@@ -204,6 +204,11 @@ class Orchestrator:
         await self.store.add_chat(chat_id, "owner", text)
         self._bg(self._maybe_summarize(chat_id))   # fonda: javobni kechiktirmaydi
         decision = {"mode": "task", "task": text, "reply": ""}
+        if not attachments and not spoken:
+            from . import skills
+            url = skills.install_request(text)
+            if url:   # «github.com/... dagi skillni yukla va moslab joyla»: egasi buyrug'i, avtomatik bajariladi
+                return await self._install_skill(url, chat_id, notify)
         if not attachments:  # fayl yuborilgan bo'lsa, bu aniq vazifa
             decision = await self._front_desk(text, chat_id, allow_tasks, spoken, voice)
             if not spoken:
@@ -240,6 +245,28 @@ class Orchestrator:
             await self.store.add_chat(chat_id, "ceo", decision["reply"])
             await notify(decision["reply"])
         return await self._run_and_log(decision["task"], chat_id, notify, attachments, decision.get("based_on"))
+
+    async def _install_skill(self, url: str, chat_id: int, notify: Notify) -> dict:
+        from . import skills
+        from .tools import ToolError
+        from types import SimpleNamespace
+        await notify("⏳ Skillni GitHub'dan yuklab, tizimimizga moslab joylayapman (bir necha daqiqa ketishi mumkin)…")
+        env = SimpleNamespace(store=self.store, settings=self.settings, http=None)
+        try:
+            r = await skills.install(env, self.team.router, url)
+            lines = [f"{'✅ yoqildi' if i['active'] else '⏸ tasdiqlashingizni kutmoqda'}: «{i['slug']}»" +
+                     (f" (shubha: {', '.join(i['warnings'])})" if i["warnings"] else "") for i in r["installed"]]
+            reply = ("🧩 Skill o'rnatildi (litsenziya: " + r["license"] + "):\n" + "\n".join(lines) if lines else "Skill o'rnatilmadi.") + \
+                    ("\n" + "\n".join("• " + x for x in r["skipped"]) if r["skipped"] else "")
+            if any(not i["active"] for i in r["installed"]):
+                reply += "\nKutilayotganlarni Sozlamalar → Skillar bo'limida o'qib tasdiqlang."
+        except ToolError as e:
+            reply = f"Skillni o'rnata olmadim: {e}"
+        except Exception as e:  # noqa: BLE001 — AI yoki tarmoq xatosi: egasiga tushunarli xabar
+            reply = f"Skillni o'rnatishda xato: {str(e)[:200]}"
+        await self.store.add_chat(chat_id, "ceo", reply)
+        await notify(reply)
+        return {"kind": "chat", "reply": reply, "proposed_task": None}
 
     async def submit_task(self, text: str, chat_id: int = 0, notify: Notify = _noop,
                           attachments: list[Path] | None = None, based_on: int | None = None) -> dict:

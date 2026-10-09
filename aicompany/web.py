@@ -686,9 +686,13 @@ def make_web_app(app: App) -> web.Application:
     async def h_skill_import(request):
         from . import skills
         from .tools import ToolError
-        url = str((await body(request)).get("url") or "").strip()[:300]
+        d = await body(request)
+        url = str(d.get("url") or "").strip()[:300]
         try:
-            res = await skills.import_github(skills.import_env(app), url)
+            if d.get("adapt"):
+                res = await skills.install(skills.import_env(app), app.team.router, url, adapt=True, activate=bool(d.get("activate", True)))
+            else:
+                res = await skills.import_github(skills.import_env(app), url)
         except ToolError as e:
             raise web.HTTPBadRequest(reason=str(e)[:200])
         await app.store.audit("owner", "skill_import", url[:150])
