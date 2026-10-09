@@ -140,7 +140,7 @@ class CallService:
 
     async def status(self) -> dict:
         return {"available": self.available(), "enabled": await self.enabled(), "notify": await self.notify_on(),
-                "voice": (await self.app.store.get_kv("tts_voice")) or "jarvis",
+                "voice": (await self.app.store.get_kv("tts_voice")) or "jarvis", "tts": await self.app.router.tts_status(),
                 "ready": self._tgc is not None, "in_call": self.call is not None, "error": self.last_error}
 
     def _spawn(self, coro):
@@ -254,17 +254,20 @@ class CallService:
 
     async def filler_pcm(self, text: str, create: bool = False) -> bytes | None:
         import hashlib
-        key = hashlib.sha1(f"{await self._voice_key()}|{text}".encode()).hexdigest()[:16]
+        router = self.app.router
+        order = await router.tts_order()
+        key = hashlib.sha1(f"{await self._voice_key()}|{order[0]}|{text}".encode()).hexdigest()[:16]
         f = self._cache_dir() / f"{key}.pcm"
         if f.exists():
             return f.read_bytes()
         if not create:
             return None
         try:
-            pcm = await self.app.router.speak(text)
+            pcm, engine = await router.speak_ex(text)
         except Exception:  # noqa: BLE001 — o'ylash tovushisiz ham qo'ng'iroq ishlaydi
             return None
-        f.write_bytes(pcm)
+        if engine == order[0]:   # zaxira xizmat aytgan bo'lsa saqlamaymiz: keyin asosiy ovozda qayta yaratiladi
+            f.write_bytes(pcm)
         return pcm
 
     async def warm_fillers(self):

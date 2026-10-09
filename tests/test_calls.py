@@ -76,12 +76,48 @@ async def test_incoming_call_from_stranger_is_ignored(make_app):
     assert opened == []
 
 
-async def test_speak_requires_gemini(make_app):
+async def test_speak_requires_gemini(make_app, monkeypatch):
     import pytest
     from aicompany.providers import VoiceUnavailable
     app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
+    import aicompany.tts_edge as te
+    monkeypatch.setattr(te, "available", lambda: False)      # Edge ham yo'q: tushunarli xato
     with pytest.raises(VoiceUnavailable):
         await app.router.speak("salom")
+
+
+async def test_tts_fallback_and_cooldown(make_app, monkeypatch):
+    from aicompany import tts_edge
+    from aicompany.providers import VoiceError
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
+    r = app.router
+    calls = {"edge": 0}
+
+    async def fake_edge(text, voice=None):
+        calls["edge"] += 1
+        return b"\x01\x00" * 100
+    monkeypatch.setattr(tts_edge, "available", lambda: True)
+    monkeypatch.setattr(tts_edge, "synth", fake_edge)
+    # Gemini kaliti yo'q: auto rejimda Edge aytadi
+    pcm, eng = await r.speak_ex("salom")
+    assert eng == "edge" and pcm and r.tts_last == "edge"
+    # faqat Gemini rejimi: Edge ishlatilmaydi
+    await app.store.set_kv("tts_mode", "gemini")
+    import pytest
+    with pytest.raises(VoiceError):
+        await r.speak_ex("salom")
+    # Edge-birinchi rejim; Edge xato bersa, ikkinchi gapda uni o'tkazib yuboradi (cooldown)
+    await app.store.set_kv("tts_mode", "edge")
+
+    async def boom(text, voice=None):
+        calls["edge"] += 1
+        raise tts_edge.EdgeError("403")
+    monkeypatch.setattr(tts_edge, "synth", boom)
+    n = calls["edge"]
+    with pytest.raises(VoiceError):
+        await r.speak_ex("salom")
+    assert calls["edge"] == n + 1 and (await r.tts_status())["engines"]["edge"]["cooldown_s"] > 0
+    assert tts_edge.voice_for("kore") == tts_edge.FEMALE and tts_edge.voice_for("jarvis") == tts_edge.MALE
 
 
 async def test_voice_choice_and_jarvis_style(make_app):
@@ -108,6 +144,9 @@ async def test_voice_api(web):
     assert (await post(c, "/api/tts/voice", {"voice": "nope"}))[0] == 400
     assert (await post(c, "/api/tts/voice", {"voice": "algenib"}))[1] == {"voice": "algenib"}
     assert await app.store.get_kv("tts_voice") == "algenib"
+    assert (await post(c, "/api/tts/mode", {"mode": "x"}))[0] == 400
+    assert (await post(c, "/api/tts/mode", {"mode": "edge"}))[1]["order"] == ["edge", "gemini"]
+    assert (await post(c, "/api/tts/mode", {"mode": "gemini"}))[0] == 200
     assert (await post(c, "/api/tts/preview", {"voice": "jarvis"}))[0] == 400     # Gemini kaliti yo'q: tushunarli xato
 
 

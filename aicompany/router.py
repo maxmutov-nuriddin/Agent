@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import time
 
 from .config import TIERS, Settings
 from .db import Store, cache_key
@@ -34,6 +35,8 @@ class Router:
         self.on_warning = None  # async callable(str)
         self._bad_models: set[tuple[str, str]] = set()  # (provayder, model) shu jarayonda topilmagan
         self._model_lists: dict[str, list[str]] = {}
+        self._tts_down: dict[str, float] = {}   # ovoz xizmati -> shu vaqtgacha (monotonic) dam oladi
+        self.tts_last = ""                      # oxirgi muvaffaqiyatli ovoz xizmati
 
     def _estimate(self, cfg, system, messages, max_tokens) -> float:
         in_tok = (len(system) + sum(len(str(m["content"])) for m in messages)) // 3
@@ -215,28 +218,85 @@ class Router:
             return vecs
         return None
 
+    TTS_MODES = ("auto", "gemini", "edge")
+    TTS_COOLDOWN = {"gemini": 120, "edge": 300}
+
+    async def tts_mode(self) -> str:
+        m = await self.store.get_kv("tts_mode")
+        return m if m in self.TTS_MODES else "auto"
+
+    async def tts_order(self) -> list[str]:
+        """auto: Gemini, xato bo'lsa Edge. edge: Edge (bepul, tez), xato bo'lsa Gemini. gemini: faqat Gemini."""
+        return {"auto": ["gemini", "edge"], "gemini": ["gemini"], "edge": ["edge", "gemini"]}[await self.tts_mode()]
+
+    def _tts_ready(self, engine: str) -> bool:
+        if engine == "gemini":
+            return any(n in self.providers and hasattr(self.providers[n], "speak") for n in self.s.providers)
+        from . import tts_edge
+        return tts_edge.available()
+
+    async def tts_status(self) -> dict:
+        now = time.monotonic()
+        eng = {}
+        for e in ("gemini", "edge"):
+            wait = max(0, int(self._tts_down.get(e, 0) - now))
+            eng[e] = {"ready": self._tts_ready(e), "cooldown_s": wait}
+        return {"mode": await self.tts_mode(), "order": await self.tts_order(), "last": self.tts_last, "engines": eng}
+
+    async def tts_available(self) -> bool:
+        return any(self._tts_ready(e) for e in await self.tts_order())
+
     async def speak(self, text: str, *, task_id=None, voice: str | None = None) -> bytes:
-        """Matnni ovozga aylantiradi (PCM 24 kHz mono). Faqat Gemini."""
+        return (await self.speak_ex(text, task_id=task_id, voice=voice))[0]
+
+    async def speak_ex(self, text: str, *, task_id=None, voice: str | None = None) -> tuple[bytes, str]:
+        """Matnni ovozga aylantiradi (PCM 24 kHz mono) va qaysi xizmat aytganini qaytaradi.
+        Xizmat xato bersa, keyingisiga o'tadi va uni qisqa muddat (2-5 daqiqa) chetda ushlaydi: har gapda bekor urinmaydi."""
+        order = [e for e in await self.tts_order() if self._tts_ready(e)]
+        if not order:
+            raise VoiceUnavailable("Ovoz bilan javob berish uchun GEMINI_API_KEY kerak (yoki edge-tts o'rnatilgan bo'lsin)")
+        now = time.monotonic()
+        order = [e for e in order if self._tts_down.get(e, 0) <= now] + [e for e in order if self._tts_down.get(e, 0) > now]
+        voice = voice or await self.store.get_kv("tts_voice")
+        errors = []
+        for e in order:
+            try:
+                pcm = await (self._speak_gemini(text, task_id, voice) if e == "gemini" else self._speak_edge(text, voice))
+            except (VoiceError, ProviderError) as ex:
+                errors.append(f"{e}: {ex}")
+                self._tts_down[e] = time.monotonic() + self.TTS_COOLDOWN[e]
+                await self.store.audit("router", "tts_error", errors[-1][:500])
+                continue
+            self._tts_down.pop(e, None)
+            self.tts_last = e
+            return pcm, e
+        raise VoiceError("Ovoz yaratib bo'lmadi (" + "; ".join(errors)[:300] + ")")
+
+    async def _speak_edge(self, text: str, voice: str | None) -> bytes:
+        from . import tts_edge
+        try:
+            return await tts_edge.synth(text[:1500], voice)
+        except tts_edge.EdgeError as e:
+            raise VoiceError(str(e)) from e
+
+    async def _speak_gemini(self, text: str, task_id, voice: str | None) -> bytes:
+        from .voices import resolve, shift_pitch
         cands = [p for n, p in self.s.providers.items() if n in self.providers and hasattr(self.providers[n], "speak")]
-        if not cands:
-            raise VoiceUnavailable("Ovoz bilan javob berish uchun GEMINI_API_KEY kerak")
         last = ""
         for pc in cands:
             if await self.store.spent(pc.name) + 0.002 > pc.budget_usd:
                 last = f"{pc.name}: limit"
                 continue
             try:
-                from .voices import resolve, shift_pitch
-                name, style, pitch = resolve(voice or await self.store.get_kv("tts_voice"))
+                name, style, pitch = resolve(voice)
                 pcm, cost = await self.providers[pc.name].speak(pc.models["cheap"], text[:1500], name, style)
                 pcm = await shift_pitch(pcm, pitch)   # yetukroq, chuqurroq ohang
             except ProviderError as e:
                 last = str(e)
-                await self.store.audit("router", "tts_error", last[:500])
                 continue
             await self.store.add_usage(pc.name, "tts", task_id, "voice", 0, 0, 0, cost)
             return pcm
-        raise VoiceError(f"Ovoz yaratib bo'lmadi ({last})")
+        raise VoiceError(last or "Gemini kaliti yo'q")
 
     async def _maybe_warn(self, pc, spent):
         if not self.on_warning or spent < pc.budget_usd * self.s.warn_ratio:

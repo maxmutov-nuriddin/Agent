@@ -1,5 +1,5 @@
 // Faqat statik qobiqni keshlaydi. /api hech qachon keshlanmaydi (maxfiy ma'lumot).
-const CACHE = "aijamoa-v49";
+const CACHE = "aijamoa-v50";
 const SHELL = ["/", "/app.js", "/style.css", "/manifest.webmanifest", "/icon-192.png", "/apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {

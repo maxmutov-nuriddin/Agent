@@ -531,6 +531,16 @@ def make_web_app(app: App) -> web.Application:
             app.calls._spawn(app.calls.warm_fillers())   # yangi ovozda "hmm"larni oldindan tayyorlash (bir marta)
         return json_ok({"voice": d["voice"]})
 
+    async def h_tts_mode(request):
+        d = await body(request)
+        if d.get("mode") not in app.router.TTS_MODES:
+            raise web.HTTPBadRequest(reason="noma'lum rejim")
+        await app.store.set_kv("tts_mode", d["mode"])
+        app.router._tts_down.clear()
+        if app.calls and app.calls._tgc is not None:
+            app.calls._spawn(app.calls.warm_fillers())
+        return json_ok(await app.router.tts_status())
+
     async def h_tts_preview(request):
         """Tanlangan ovozni eshitib ko'rish: WAV qaytaradi (Gemini TTS, bir necha sent ulushi)."""
         from .calls import OUT_RATE, pcm_to_wav
@@ -1137,7 +1147,7 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
         web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend),
-        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
+        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),

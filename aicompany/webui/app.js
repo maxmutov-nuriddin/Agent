@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-w";
+const PANEL_V = "2026.10.09-x";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -981,6 +981,15 @@ function voiceSelect(cur) {
   };
   return h("div", { class: "acts" }, sel, play);
 }
+const TTS_MODES = [["auto", "Avto: Gemini, xato bo'lsa Edge"], ["edge", "Edge (bepul, tez), xato bo'lsa Gemini"], ["gemini", "Faqat Gemini"]];
+function ttsModeSelect(T) {
+  T = T || { mode: "auto", engines: {} };
+  const sel = h("select", {}, TTS_MODES.map(([k, l]) => h("option", { value: k, selected: k === T.mode ? "selected" : null }, l)));
+  sel.addEventListener("change", async () => { try { await post("/tts/mode", { mode: sel.value }); toast("Saqlandi"); setTimeout(tgSheet, 600); } catch (e) { toast(e.message); } });
+  const E = T.engines || {}, name = { gemini: "Gemini", edge: "Edge" };
+  const st = ["gemini", "edge"].map((k) => name[k] + ": " + (!(E[k] || {}).ready ? "yo'q" : E[k].cooldown_s ? "dam olyapti (" + E[k].cooldown_s + " s)" : "ishlayapti")).join(" · ");
+  return h("div", {}, sel, h("p", { class: "hint" }, st + (T.last ? " · oxirgi: " + name[T.last] : "") + ". Xizmat xato bersa, tizim keyingisiga o'tadi va uni bir necha daqiqa chetda ushlaydi."));
+}
 function callBlock(t) {
   const C = (t && t.calls) || { available: false };
   const save = async (d) => { try { await post("/tg/calls", d); toast("Saqlandi"); setTimeout(tgSheet, 800); } catch (e) { toast(e.message); } };
@@ -993,6 +1002,7 @@ function callBlock(t) {
   return [h("div", { class: "label" }, "Ovozli qo'ng'iroq"), sw(C.enabled, "enabled"),
     h("p", { class: "hint" }, C.error ? "⚠️ " + C.error : !C.enabled ? "O'chiq." : C.ready ? "✅ Tayyor: agent akkauntiga qo'ng'iroq qilsangiz ko'taradi, hisobot va savollarga ovoz bilan javob beradi." : "Ishga tushmoqda…"),
     h("label", {}, "Ovoz"), voiceSelect(C.voice || "jarvis"),
+    h("label", {}, "Ovoz manbai"), ttsModeSelect(C.tts),
     h("label", {}, "Vazifa tugaganda menga qo'ng'iroq qilib natijani aytsin"), sw(C.notify, "notify"),
     h("div", { class: "acts" }, test)];
 }
