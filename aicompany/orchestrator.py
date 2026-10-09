@@ -173,6 +173,19 @@ class Orchestrator:
         "to be reminded at a time, add \"reminder\": {\"when\": \"YYYY-MM-DD HH:MM\" (local time, see '# Now') or a delay like "
         "\"30 daq\", \"text\": \"...\"}.")
 
+    def _ensure_call(self, text: str, decision: dict) -> dict:
+        """"Menga qo'ng'iroq qil" (hozir / bir necha daqiqadan keyin / aniq vaqtda) model xato qilsa ham bajariladi."""
+        from . import reminders
+        if decision.get("reminder") or decision.get("call") or not reminders.call_requested(text):
+            return decision
+        kind, when = reminders.call_when(text, self.settings.report_tz)
+        base = {"mode": "chat", "task": "", "based_on": None}
+        if kind == "now":
+            return {**base, "reply": decision.get("reply") or "📞 Hozir qo'ng'iroq qilyapman.", "call": "Assalomu alaykum, eshitaman."}
+        if kind == "at":
+            return {**base, "reply": "", "reminder": {"when": when, "text": "Siz qo'ng'iroq qilishimni so'ragan edingiz.", "call": True}}
+        return {**base, "reply": "Qachon qo'ng'iroq qilay? Vaqtni aniqroq ayting (masalan: 15 daqiqadan keyin yoki ertaga 9:00)."}
+
     async def handle(self, text: str, chat_id: int = 0, notify: Notify = _noop,
                      attachments: list[Path] | None = None, allow_tasks: bool = True, spoken: bool = False) -> dict:
         """Oddiy xabarni qabul qiladi. allow_tasks=True: suhbat yoki vazifa ekanini o'zi aniqlaydi (Telegram).
@@ -182,6 +195,8 @@ class Orchestrator:
         decision = {"mode": "task", "task": text, "reply": ""}
         if not attachments:  # fayl yuborilgan bo'lsa, bu aniq vazifa
             decision = await self._front_desk(text, chat_id, allow_tasks, spoken)
+            if not spoken:
+                decision = self._ensure_call(text, decision)
         if decision.get("reminder"):
             from . import reminders
             try:

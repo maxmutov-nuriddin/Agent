@@ -123,3 +123,73 @@ async def reminder_loop(app, senders, interval: float = 20):
         except Exception:  # noqa: BLE001 — sikl to'xtamasligi kerak
             log.exception("eslatma sikli xatosi")
         await asyncio.sleep(interval)
+
+
+# ---------- "menga qo'ng'iroq qil": modelga ishonmay, qoida bilan aniqlash ----------
+_PHONE = re.compile(r"\btel\b|telefon|qo'?ng'?iroq|qongiroq|zvon|звон|call me", re.I)
+_ASK = re.compile(r"qil\b|qilgin|qiling|qilib|qilvor|bering|\bber\b|\bet\b|zvon|звони|позвони|call me|набери", re.I)
+_NOT_REQUEST = re.compile(r"\?|olasan|oladimi|mumkinmi|bormi|qila ol|qilolasan|qiladimi|nega|nima uchun|qanday|nimaga", re.I)
+_NOW = re.compile(r"\b(hozir|hali|darrov|darhol|tezda|zudlik|сейчас|now)\b", re.I)
+_WORDNUM = {"bir": 1, "ikki": 2, "uch": 3, "to'rt": 4, "besh": 5, "olti": 6, "yetti": 7, "sakkiz": 8, "to'qqiz": 9, "o'n": 10,
+            "yigirma": 20, "o'ttiz": 30, "yarim": 0.5}
+_MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"]
+_TIMEISH = re.compile(r"ertaga|indinga|bugun|kechqurun|kechki|kechasi|ertalab|peshin|tushdan|\bsoat\b|\d[:.]\d\d|" + "|".join(_MONTHS)
+                      + r"|dushanba|seshanba|chorshanba|payshanba|juma|shanba|yakshanba|haftadan|oydan keyin|keyin", re.I)
+
+
+def call_requested(text: str) -> bool:
+    """Egasi o'ziga qo'ng'iroq qilishni so'rayaptimi (savol/izoh emas)?"""
+    t = (text or "").lower().replace("\u2019", "'").replace("\u02bb", "'")
+    return bool(_PHONE.search(t) and _ASK.search(t) and not _NOT_REQUEST.search(t))
+
+
+def call_when(text: str, tz: str, now: datetime | None = None) -> tuple[str, str]:
+    """('now', '') hozir | ('at', when) aniq vaqt (parse_when formatida) | ('ask', '') vaqt tushunarsiz: so'rash kerak."""
+    zone = ZoneInfo(tz)
+    now_local = (now or datetime.now(timezone.utc)).astimezone(zone)
+    t = (text or "").lower().replace("\u2019", "'").replace("\u02bb", "'")
+    num = r"(\d+(?:[.,]\d+)?|" + "|".join(map(re.escape, _WORDNUM)) + r")"
+
+    def val(x):
+        return float(x.replace(",", ".")) if x[0].isdigit() else _WORDNUM[x]
+    m = re.search(num + r"\s*(?:ta\s+)?(daqiqa|daq|minut|min|sekund|sek)\w*", t)
+    if m:
+        secs = val(m[1]) * (1 if m[2].startswith("sek") else 60)
+        return "at", f"{int(secs)} s"
+    m = re.search(num + r"\s*soat\w*\s+(?:dan\s+)?keyin", t) or re.search(r"(yarim|bir)\s+soat\w*", t)
+    if m:
+        return "at", f"{int(val(m[1]) * 60)} daq"
+    if _NOW.search(t) and not re.search(r"soat\s*\d|\d[:.]\d\d", t):
+        return "now", ""
+    day = now_local.date()
+    shifted = False
+    if re.search(r"indinga|ertadan keyin|porertaga", t):
+        day, shifted = day + timedelta(days=2), True
+    elif re.search(r"ertaga", t):
+        day, shifted = day + timedelta(days=1), True
+    elif re.search(r"bugun", t):
+        shifted = True
+    m = re.search(r"\b(\d{1,2})[- ]?(" + "|".join(_MONTHS) + r")", t)
+    if m:
+        mon = _MONTHS.index(m[2]) + 1
+        try:
+            day = day.replace(month=mon, day=int(m[1]))
+            if day < now_local.date():
+                day = day.replace(year=day.year + 1)
+            shifted = True
+        except ValueError:
+            return "ask", ""
+    tm = re.search(r"soat\s*(\d{1,2})(?:[:.](\d\d))?|\b(\d{1,2})[:.](\d\d)\b|\b(\d{1,2})\s*(?:da|ga|dan)\b", t)
+    if tm:
+        hr = int(tm[1] or tm[3] or tm[5])
+        mi = int(tm[2] or tm[4] or 0)
+        if hr < 12 and re.search(r"kechqurun|kechki|kechasi|tushdan keyin|peshindan keyin|\bkech\b", t):
+            hr += 12
+        if hr > 23 or mi > 59:
+            return "ask", ""
+        if shifted:
+            return "at", f"{day.year}-{day.month:02d}-{day.day:02d} {hr:02d}:{mi:02d}"
+        return "at", f"{hr:02d}:{mi:02d}"
+    if m:   # sana bor, soat yo'q: ertalab 9:00
+        return "at", f"{day.year}-{day.month:02d}-{day.day:02d} 09:00"
+    return ("ask", "") if _TIMEISH.search(t) else ("now", "")

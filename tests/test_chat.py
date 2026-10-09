@@ -355,3 +355,55 @@ async def test_timed_phone_request_never_calls_now_and_reports_failure(make_app)
         sent.append(t)
     ok = await phone_reminder(app, "Uyg'onish", [send], retry_after=0)
     assert not ok and len(calls) == 2 and "qila olmadim" in sent[0] and "javob yo'q" in sent[0]   # 2 urinish, keyin sabab
+
+
+def test_call_intent_and_time_parsing():
+    from datetime import datetime, timezone
+    from aicompany.reminders import call_requested, call_when
+    now = datetime(2026, 10, 9, 10, 0, tzinfo=timezone.utc)      # Toshkent 15:00
+    tz = "Asia/Tashkent"
+    for t in ("menga qo'ng'iroq qil", "manga qongiroq qil hozir", "tel qil", "мне позвони", "call me"):
+        assert call_requested(t), t
+    for t in ("qo'ng'iroq qila olasanmi?", "qo'ng'iroq qanday ishlaydi", "bugun ob-havo qanday", "vazifa tayyor bo'lsin"):
+        assert not call_requested(t), t
+    assert call_when("menga qo'ng'iroq qil", tz, now) == ("now", "")
+    assert call_when("hozir qo'ng'iroq qil", tz, now) == ("now", "")
+    assert call_when("5 daqiqadan keyin menga qo'ng'iroq qil", tz, now) == ("at", "300 s")
+    assert call_when("o'n daqiqadan keyin tel qil", tz, now) == ("at", "600 s")
+    assert call_when("1 soatdan keyin qo'ng'iroq qil", tz, now) == ("at", "60 daq")
+    assert call_when("yarim soatdan keyin qo'ng'iroq qil", tz, now) == ("at", "30 daq")
+    assert call_when("soat 18:30 da qo'ng'iroq qil", tz, now) == ("at", "18:30")
+    assert call_when("soat 9 da qo'ng'iroq qil", tz, now) == ("at", "09:00")
+    assert call_when("ertaga soat 7 da tel qil", tz, now) == ("at", "2026-10-10 07:00")
+    assert call_when("ertaga kechqurun 8 da qo'ng'iroq qil", tz, now) == ("at", "2026-10-10 20:00")
+    assert call_when("12-oktabr soat 14:00 da qo'ng'iroq qil", tz, now) == ("at", "2026-10-12 14:00")
+    assert call_when("20-oktabr qo'ng'iroq qil", tz, now) == ("at", "2026-10-20 09:00")
+    assert call_when("dushanba kuni qo'ng'iroq qil", tz, now)[0] == "ask"      # tushunarsiz vaqt: so'raydi, hozir qo'ng'iroq qilmaydi
+
+
+async def test_call_me_works_even_if_model_misses_it(make_app):
+    """Model oddiy javob qaytarsa ham: hozir -> darrov qo'ng'iroq, vaqt bilan -> eslatma (qo'ng'iroq bilan), tushunarsiz -> so'raydi."""
+    calls = []
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "front desk" in system or "in a CHAT" in system:
+            return json.dumps({"mode": "chat", "reply": "Albatta!", "task": ""})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID="1")
+
+    async def fake_call(text, **kw):
+        calls.append(text)
+        return True
+    app.orch.call_owner = fake_call
+    app.orch.call_ready = lambda: True
+    res = await app.orch.handle("manga qongiroq qil hozir", 5)
+    assert len(calls) == 1 and res["kind"] == "chat"
+    res = await app.orch.handle("10 daqiqadan keyin menga qo'ng'iroq qil", 5)
+    assert len(calls) == 1 and "Eslatma qo'yildi" in res["reply"]       # hozir emas, vaqti kelganda
+    rid = (await app.store.list_reminders())[0]["id"]
+    assert await app.store.get_kv(f"rcall:{rid}") == "1"
+    res = await app.orch.handle("dushanba kuni menga qo'ng'iroq qil", 5)
+    assert len(calls) == 1 and "Qachon" in res["reply"]
+    res = await app.orch.handle("qo'ng'iroq qila olasanmi?", 5)
+    assert len(calls) == 1                                               # savol: qo'ng'iroq qilinmaydi
