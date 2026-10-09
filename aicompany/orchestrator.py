@@ -671,17 +671,59 @@ class Orchestrator:
             deliverable = await self._synthesize(task_id, request, outputs, None, "mid", env, criteria=criteria)
         if simple and not self._files(env.workspace):  # oddiy, faylsiz ish: QA va qadoqlash so'rovlari kerak emas
             return self._package_simple(request, deliverable, env)
-        for attempt in range(self.max_revisions + 1):
-            await self._check_pause()
-            verdict = await self._review(task_id, request, deliverable, env, criteria)
-            if verdict.get("verdict") == "pass" or attempt == self.max_revisions:
-                if verdict.get("verdict") != "pass":
-                    deliverable += "\n\n⚠️ QA hali ham e'tiroz bildirgan:\n- " + "\n- ".join(verdict.get("issues", []))
-                break
-            await notify(f"🔎 QA {len(verdict.get('issues', []))} ta muammo topdi, tuzatilyapti...")
-            deliverable = await self._synthesize(task_id, request, outputs, verdict.get("issues", []), "mid" if eco else "strong", env,
-                                                 previous=deliverable, criteria=criteria)
+        deliverable = await self._qa_loop(task_id, request, deliverable, outputs, steps, env, criteria, eco, notify)
         return await self._package(task_id, request, deliverable, env, eco)
+
+    QA_MAX = 6
+
+    async def _qa_rounds(self) -> int:
+        """Nechta tuzatish aylanishi: panel sozlamasi (kv qa_rounds), bo'lmasa MAX_REVISIONS (kamida 3)."""
+        raw = await self.store.get_kv("qa_rounds")
+        try:
+            n = int(raw) if raw else max(self.max_revisions, 3)
+        except ValueError:
+            n = max(self.max_revisions, 3)
+        return max(0, min(n, self.QA_MAX))
+
+    @staticmethod
+    def _fixer(steps) -> str:
+        """Fayllardagi e'tirozlarni kim tuzatadi: ishni qilgan mutaxassis (dasturchi bo'lsa u), bo'lmasa generalist."""
+        agents = [s["agent"] for s in steps if s.get("agent") not in ("ceo", "hr", "qa")]
+        if "developer" in agents:
+            return "developer"
+        return agents[-1] if agents else "generalist"
+
+    async def _qa_loop(self, task_id, request, deliverable, outputs, steps, env, criteria, eco, notify) -> str:
+        """QA e'tirozi qolmaguncha tuzatadi: fayllarni ishni qilgan agent tuzatadi, javobni rahbar qayta yig'adi,
+        QA esa avvalgi e'tirozlar haqiqatan tuzatilganini tekshiradi. To'xtaydi: QA o'tkazsa, limit tugasa yoki
+        bir xil e'tirozlar takrorlansa (tuzatib bo'lmayapti: pul behuda ketmasin)."""
+        rounds = await self._qa_rounds()
+        prev_issues: list[str] = []
+        seen: list[list[str]] = []
+        for attempt in range(rounds + 1):
+            await self._check_pause()
+            verdict = await self._review(task_id, request, deliverable, env, criteria, prev_issues)
+            issues = verdict.get("issues", [])
+            if verdict.get("verdict") == "pass" or not issues:
+                if attempt:
+                    await notify(Progress(f"✅ QA tasdiqladi ({attempt} marta tuzatildi)."))
+                return deliverable
+            key = sorted(i.strip().lower() for i in issues)
+            if attempt == rounds or key in seen:
+                return deliverable + "\n\n⚠️ QA hali ham e'tiroz bildirgan:\n- " + "\n- ".join(issues)
+            seen.append(key)
+            await notify(Progress(f"🔎 QA {len(issues)} ta muammo topdi, tuzatilyapti ({attempt + 1}/{rounds})..."))
+            if self._files(env.workspace):
+                fixer = self._fixer(steps)
+                fix = await self.team.run_agent(fixer, (
+                    f"# Original request\n{request}\n\n# Quality reviewer found these problems\n- " + "\n- ".join(issues) +
+                    "\n\nFix EVERY problem directly in the workspace files (read them first, then edit). Do not skip any. "
+                    "At the end list briefly, per problem, what you changed."), task_id=task_id, tier="mid", env=env)
+                outputs[f"qa_fix_{attempt + 1}"] = fix
+            deliverable = await self._synthesize(task_id, request, outputs, issues, "mid" if eco else "strong", env,
+                                                 previous=deliverable, criteria=criteria)
+            prev_issues = issues
+        return deliverable
 
     def _package_simple(self, request: str, answer: str, env) -> str:
         """LLM'siz qadoqlash (oddiy ishlar): NATIJA.md = javob, PROMPT.md = namunaviy prompt."""
@@ -785,14 +827,22 @@ class Orchestrator:
         if criteria:
             prompt += "\n\n# The result MUST satisfy\n- " + "\n- ".join(criteria)
         if issues:
-            prompt += ("\n\n# Previous draft\n" + clip(previous or "", 8000) +
-                       "\n\n# Reviewer issues to fix\n- " + "\n- ".join(issues))
+            prompt += ("\n\n# Previous draft\n" + clip(previous or "", 16000) +
+                       "\n\n# Reviewer issues to fix (address EVERY one; keep everything that was already correct)\n- " + "\n- ".join(issues))
         return await self.team.run_agent("ceo", prompt, task_id=task_id, tier=tier, env=env)
 
-    async def _review(self, task_id, request, deliverable, env, criteria=None) -> dict:
+    async def _review(self, task_id, request, deliverable, env, criteria=None, prev_issues=None) -> dict:
         files = self._files(env.workspace)
         checklist = ("# Acceptance criteria (check EACH one explicitly)\n- " + "\n- ".join(criteria) + "\n\n") if criteria else ""
-        prompt = (f"# Original request\n{request}\n\n{checklist}# Deliverable\n{clip(deliverable, 10000)}\n\n"
+        shown = clip(deliverable, 10000)
+        if len(deliverable) > 10000:   # QA qisqartirilgan matnni "chala" deb e'tiroz bildirmasin: to'liq matn faylda
+            (env.workspace / ".steps").mkdir(exist_ok=True)
+            (env.workspace / ".steps" / "_draft.md").write_text(deliverable, encoding="utf-8")
+            shown += "\n\n(Shown text is shortened; the FULL deliverable is in the file .steps/_draft.md: read it before saying anything is missing.)"
+        recheck = ("# Problems you reported last time\n- " + "\n- ".join(prev_issues) + "\n\nFirst verify whether EACH of these is now "
+                   "fixed. Report as issues only those still not fixed plus genuinely serious new problems; do not add new minor "
+                   "nitpicks.\n\n") if prev_issues else ""
+        prompt = (f"# Original request\n{request}\n\n{checklist}{recheck}# Deliverable\n{shown}\n\n"
                   f"# Workspace files (you may read them)\n{', '.join(files) or '(none)'}\n\n"
                   "Does the deliverable fully and correctly satisfy the request" + (" and every acceptance criterion" if criteria else "") +
                   "? Report only real problems (missing parts, errors, ignored requirements, unmet criteria). Return ONLY JSON: "

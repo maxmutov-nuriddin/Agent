@@ -486,7 +486,7 @@ def make_web_app(app: App) -> web.Application:
             "free_ai": await app.router.free_status(),
             "voice_reply": await voicereply.mode(app.store),
             "primary": await app.router.primary(),
-            "limits": {"task_usd": s.max_task_usd, "agents": s.max_agents, "parallel": s.max_parallel, "revisions": s.max_revisions,
+            "limits": {"task_usd": s.max_task_usd, "agents": s.max_agents, "parallel": s.max_parallel, "revisions": await app.orch._qa_rounds(),
                        "tool_turns": s.max_tool_turns, "command_s": s.command_timeout, "report": f"{s.report_hour}:00 ({s.report_tz})",
                        "tg_sends_per_hour": s.tg_max_sends},
         })
@@ -556,6 +556,17 @@ def make_web_app(app: App) -> web.Application:
         if not audio:
             raise web.HTTPBadRequest(reason="ovoz yaratib bo'lmadi (Gemini kaliti yoki Edge kerak)")
         return web.Response(body=audio, content_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+
+    async def h_qa_rounds(request):
+        """QA e'tirozlarini tuzatish aylanishlari (0-6). Ko'proq = sifatliroq, lekin qimmatroq."""
+        try:
+            n = int((await body(request)).get("rounds"))
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(reason="0 dan 6 gacha son")
+        if not 0 <= n <= app.orch.QA_MAX:
+            raise web.HTTPBadRequest(reason="0 dan 6 gacha son")
+        await app.store.set_kv("qa_rounds", str(n))
+        return json_ok({"rounds": n})
 
     async def h_voice_reply(request):
         m = str((await body(request)).get("mode", ""))
@@ -1185,7 +1196,7 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
         web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend),
-        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/say", h_tts_say), web.post("/api/voice_reply", h_voice_reply), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
+        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/say", h_tts_say), web.post("/api/voice_reply", h_voice_reply), web.post("/api/qa_rounds", h_qa_rounds), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),

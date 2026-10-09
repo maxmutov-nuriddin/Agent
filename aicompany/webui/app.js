@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-zd";
+const PANEL_V = "2026.10.09-ze";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -1264,6 +1264,10 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("p", { class: "hint" }, state.eco !== false
       ? "Reja va yakuniy qadoqlash arzon modelda, eng qimmat daraja ishlatilmaydi, bitta qadamli ishda qayta yozish yo'q. Odatda ~2 barobar arzon."
       : "Sifat rejimi: rahbar o'rta/kuchli modeldan foydalanadi, QA e'tirozida eng kuchli model qayta yozadi. Murakkab ishlar uchun."),
+    h("div", { class: "label" }, "QA e'tirozlarini tuzatish"),
+    h("div", { class: "seg" }, [1, 2, 3, 4, 6].map((n) => h("button", { class: (integ.limits && integ.limits.revisions) === n ? "on" : "",
+      onclick: async () => { try { await post("/qa_rounds", { rounds: n }); toast("QA: " + n + " martagacha tuzatadi"); refresh(true); } catch (e) { toast(e.message); } } }, n + "x"))),
+    h("p", { class: "hint" }, "QA e'tiroz bildirsa, ishni qilgan agent fayllarni tuzatadi, rahbar javobni qayta yig'adi va QA qayta tekshiradi: e'tiroz qolmaguncha (shu songacha). Bir xil e'tiroz takrorlansa (tuzatib bo'lmasa) erta to'xtaydi. Ko'proq = sifatliroq, lekin qimmatroq."),
     h("div", { class: "label" }, "Ovozli javob"),
     h("div", { class: "seg" }, [["mirror", "Ovozga ovoz bilan"], ["always", "Har doim"], ["off", "O'chiq"]].map(([k, l]) =>
       h("button", { class: (integ.voice_reply || "mirror") === k ? "on" : "", onclick: async () => { try { await post("/voice_reply", { mode: k }); toast("Ovozli javob: " + l); refresh(true); } catch (e) { toast(e.message); } } }, l))),

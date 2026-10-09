@@ -417,3 +417,50 @@ async def test_task_views_active_done_archive(make_app):
     assert names(await st.list_tasks(view="active")) == ["a", "d"]
     assert names(await st.list_tasks(view="done")) == ["b"]
     assert names(await st.list_tasks(view="archive")) == ["c", "e"]   # rad etilgan + arxivga olingan
+
+
+async def test_qa_keeps_fixing_until_pass(make_app):
+    """QA har safar yangi e'tiroz bersa ham, o'tguncha tuzatiladi (standart 3 aylanish): foydalanuvchiga e'tiroz chiqmaydi."""
+    handler = scripted_company(qa=[{"verdict": "fail", "issues": ["a"]}, {"verdict": "fail", "issues": ["b"]},
+                                   {"verdict": "fail", "issues": ["c"]}, {"verdict": "pass", "issues": []}])
+    app, _ = await make_app(handler)
+    res = await app.orch.run_task("x", 1)
+    assert res["status"] == "done" and "QA hali ham" not in res["result"]
+
+
+async def test_qa_loop_fixes_files_with_the_worker_and_rechecks(make_app, tmp_path):
+    from types import SimpleNamespace as NS
+    app, _ = await make_app(scripted_company())
+    orch = app.orch
+    (tmp_path / "index.html").write_text("<h1>x</h1>")
+    env = NS(workspace=tmp_path)
+    reviews, fixed = [], []
+
+    async def review(task_id, request, deliverable, env_, criteria=None, prev_issues=None):
+        reviews.append(list(prev_issues or []))
+        return {"verdict": "pass", "issues": []} if len(reviews) == 3 else {"verdict": "fail", "issues": [f"muammo {len(reviews)}"]}
+
+    async def run_agent(name, instruction, context="", **kw):
+        fixed.append(name)
+        return "tuzatdim"
+
+    async def synth(*a, **kw):
+        return "yangi javob"
+    orch._review, orch._synthesize = review, synth
+    orch.team.run_agent = run_agent
+    steps = [{"agent": "researcher"}, {"agent": "developer"}]
+    out = await orch._qa_loop(1, "sayt", "javob", {}, steps, env, [], True, lambda s: _noop_async())
+    assert out == "yangi javob" and fixed == ["developer", "developer"]       # fayllarni dasturchi tuzatdi
+    assert reviews == [[], ["muammo 1"], ["muammo 2"]]                       # QA avvalgi e'tirozlarni qayta tekshiradi
+
+
+async def test_qa_stops_when_same_issue_repeats(make_app):
+    handler = scripted_company(qa=[{"verdict": "fail", "issues": ["bad"]}])
+    app, provs = await make_app(handler)
+    await app.store.set_kv("qa_rounds", "5")
+    res = await app.orch.run_task("x", 1)
+    assert "QA hali ham e'tiroz" in res["result"]                             # tuzatib bo'lmayapti: 5 marta pul sarflamaydi
+
+
+async def _noop_async():
+    return None

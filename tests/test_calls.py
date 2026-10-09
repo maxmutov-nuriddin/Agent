@@ -477,3 +477,11 @@ async def test_fillers_cached_when_edge_is_primary(make_app, monkeypatch):
     first = n["edge"]
     await app.calls.warm_fillers()
     assert first > 0 and n["edge"] == first and await app.calls.filler_pcm("Hmm...") is not None
+
+
+async def test_qa_rounds_api(web):
+    from .test_web import post
+    c, app = web
+    assert (await post(c, "/api/qa_rounds", {"rounds": 9}))[0] == 400
+    assert (await post(c, "/api/qa_rounds", {"rounds": 4}))[1] == {"rounds": 4}
+    assert await app.orch._qa_rounds() == 4
