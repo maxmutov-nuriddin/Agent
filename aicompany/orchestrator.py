@@ -307,7 +307,7 @@ class Orchestrator:
             history = [h for h in history if not (h["role"] == "ceo" and (h["text"] or "").startswith("[Vazifa #"))]
         # oxirgisi hozirgi xabarning o'zi
         hist = "\n".join(f"{'Owner' if h['role'] == 'owner' else 'CEO'}: {clip(h['text'], 600)}" for h in history)
-        mems = await self._recall(text, 5)
+        mems = await self._recall(text, 5, fast=spoken)   # qo'ng'iroqda embedding'siz (kalit so'z): tezroq
         memo = "\n".join(f"- {m['text']}" for m in mems)
         prefs = "\n".join(f"- {m['text']}" for m in await self.store.owner_prefs(PREFS_SHOWN))
         summary = await self._chat_summary(chat_id)
@@ -399,11 +399,11 @@ class Orchestrator:
         finally:
             self._summarizing.discard(chat_id)
 
-    async def _recall(self, text: str, k: int = 5):
+    async def _recall(self, text: str, k: int = 5, fast: bool = False):
         """Xotiradan qidirish: ma'no bo'yicha (Gemini embedding) + kalit so'z. Vektori yo'q eski xotiralar shu yerda to'ldiriladi."""
         qvec = None
         router = self.team.router
-        if any(hasattr(p, "embed") for p in router.providers.values()):
+        if not fast and any(hasattr(p, "embed") for p in router.providers.values()):
             try:
                 missing = await self.store.memories_without_emb(32)
                 if missing:

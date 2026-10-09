@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-za";
+const PANEL_V = "2026.10.09-zb";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -1006,6 +1006,7 @@ function callBlock(t) {
   test.onclick = async () => { test.disabled = true; test.textContent = "Qo'ng'iroq qilinmoqda…"; try { await post("/tg/call_test", {}); toast("Qo'ng'iroq ketdi"); } catch (e) { toast(e.message); } test.disabled = false; test.textContent = "📞 Hozir menga qo'ng'iroq qil"; };
   return [h("div", { class: "label" }, "Ovozli qo'ng'iroq"), sw(C.enabled, "enabled"),
     h("p", { class: "hint" }, C.error ? "⚠️ " + C.error : !C.enabled ? "O'chiq." : C.ready ? "✅ Tayyor: agent akkauntiga qo'ng'iroq qilsangiz ko'taradi, hisobot va savollarga ovoz bilan javob beradi." : "Ishga tushmoqda…"),
+    ...(C.timing && C.timing.stt != null ? [h("p", { class: "hint" }, "⏱ Oxirgi gap: eshitish " + C.timing.stt + " s · o'ylash " + C.timing.think + " s · ovoz " + (C.timing.tts || 0) + " s. Uzun bo'lsa: Ovoz manbai → Edge, Sozlamalar → Groq yoqing.")] : []),
     h("label", {}, "Ovoz"), voiceSelect(C.voice || "jarvis"),
     h("label", {}, "Ovoz manbai"), ttsModeSelect(C.tts),
     h("label", {}, "Vazifa tugaganda menga qo'ng'iroq qilib natijani aytsin"), sw(C.notify, "notify"),

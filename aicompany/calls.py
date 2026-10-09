@@ -45,7 +45,7 @@ def rms(pcm: bytes) -> float:
 class Segmenter:
     """Doimiy PCM oqimidan gap bo'laklarini ajratadi: ovoz boshlanadi, keyin `silence` soniya jimlik -> bo'lak tayyor."""
 
-    def __init__(self, rate: int = IN_RATE, threshold: float = 500, silence: float = 0.9,
+    def __init__(self, rate: int = IN_RATE, threshold: float = 500, silence: float = 0.7,
                  min_speech: float = 0.35, max_len: float = 25):
         self.rate, self.threshold, self.silence = rate, threshold, silence
         self.min_speech, self.max_len = min_speech, max_len
@@ -93,6 +93,26 @@ def spoken_text(text: str, limit: int = 600) -> str:
     return (cut[:end + 1] if end > limit // 2 else cut.rsplit(" ", 1)[0]) + " Batafsil natija chatda."
 
 
+def split_speech(text: str, max_chunks: int = 3, min_len: int = 45) -> list[str]:
+    """Uzun javobni gaplar bo'yicha 2-3 bo'lakka ajratadi: birinchisi tez tayyor bo'lib aytila boshlaydi, qolganlari shu paytda yaratiladi."""
+    parts = re.split(r"(?<=[.!?\u2026])\s+", (text or "").strip())
+    chunks, cur = [], ""
+    for p in parts:
+        cur = (cur + " " + p).strip()
+        if len(cur) >= min_len:
+            chunks.append(cur)
+            cur = ""
+    if cur:
+        if chunks and len(cur) < min_len:
+            chunks[-1] += " " + cur
+        else:
+            chunks.append(cur)
+    while len(chunks) > max_chunks:
+        last = chunks.pop()
+        chunks[-1] += " " + last
+    return chunks or [(text or "").strip()]
+
+
 GREETING = "Assalomu alaykum, men menejeringizman. Eshitaman."   # qisqa va aniq; bir marta yaratilib keshlanadi
 STATIC_LINES = (GREETING,)
 FILLERS = ("Hmm...", "Xo'sh...", "Mm, ha...", "Bir soniya...")
@@ -125,6 +145,7 @@ class CallService:
         self._last_auto = float("-inf")  # yangi yoqilgan serverda ham birinchi avto qo'ng'iroq bloklanmasin
         self._bg: set[asyncio.Task] = set()
         self.last_error = ""
+        self.timing: dict = {}   # oxirgi gap vaqtlari (soniya): eshitish / o'ylash / ovoz
 
     # ---------- sozlamalar / holat ----------
     @staticmethod
@@ -144,7 +165,7 @@ class CallService:
     async def status(self) -> dict:
         return {"available": self.available(), "enabled": await self.enabled(), "notify": await self.notify_on(),
                 "voice": (await self.app.store.get_kv("tts_voice")) or "jarvis", "tts": await self.app.router.tts_status(),
-                "ready": self._tgc is not None, "in_call": self.call is not None, "error": self.last_error}
+                "timing": self.timing, "ready": self._tgc is not None, "in_call": self.call is not None, "error": self.last_error}
 
     def _spawn(self, coro):
         t = asyncio.create_task(coro)
@@ -218,23 +239,51 @@ class CallService:
         from pytgcalls.types.raw import AudioParameters
         await self._tgc.record(chat_id, RecordStream(True, AudioParameters(IN_RATE, 1)))
 
+    async def _synth(self, text: str) -> bytes | None:
+        """Bitta bo'lakni ovozga aylantiradi; xato bo'lsa None (sababi last_error da)."""
+        try:
+            if text in STATIC_LINES:   # doimiy gaplar keshdan: AI sarflanmaydi
+                pcm = await self.filler_pcm(text, create=True)
+                if pcm:
+                    return pcm
+            return await self.app.router.speak(text)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001 — ikkala ovoz xizmati ham ishlamadi
+            self.last_error = f"ovoz yaratib bo'lmadi: {type(e).__name__} {e}"[:200]
+            log.warning(self.last_error)
+            return None
+
     async def say(self, call: Call, text: str):
-        """Matnni ovozga aylantirib, qo'ng'iroqda aytadi (aytayotganda eshitmaydi: o'zini eshitib qolmasin)."""
+        """Matnni ovozga aylantirib, qo'ng'iroqda aytadi (aytayotganda eshitmaydi: o'zini eshitib qolmasin).
+        Uzun javob bo'laklarga bo'linadi: hammasi bir vaqtda yaratiladi, birinchisi tayyor bo'lishi bilan aytila boshlaydi."""
         text = (text or "").strip()
         if not text or call.closed:
             return
-        pcm = await self.filler_pcm(text, create=True) if text in STATIC_LINES else None   # doimiy gaplar keshdan: AI sarflanmaydi
+        chunks = [text] if text in STATIC_LINES else split_speech(text)
+        t0 = time.monotonic()
+        jobs = [asyncio.create_task(self._synth(c)) for c in chunks]
+        ok = False
         try:
-            pcm = pcm or await self.app.router.speak(text)
-        except Exception as e:  # noqa: BLE001 — ikkala ovoz xizmati ham ishlamadi: qo'ng'iroq uzilmasin, suhbat xotirasi saqlanadi
-            call.say_fails += 1
-            self.last_error = f"ovoz yaratib bo'lmadi: {type(e).__name__} {e}"[:200]
-            log.warning(self.last_error)
-            if call.say_fails >= 3:   # uch gap ketma-ket eshitilmasa, jim qo'ng'iroqni ushlab turmaymiz
-                call.closed = True
+            for i, job in enumerate(jobs):
+                pcm = await job
+                if i == 0:
+                    self.timing["tts"] = round(time.monotonic() - t0, 1)
+                if pcm is None:
+                    continue
+                ok = True
+                if call.closed:
+                    break
+                await self._play(call, pcm, pause=0.3 if i == len(jobs) - 1 else 0.04)
+        finally:
+            for job in jobs:
+                job.cancel()
+        if ok:
+            call.say_fails = 0
             return
-        call.say_fails = 0
-        await self._play(call, pcm)
+        call.say_fails += 1   # ikkala ovoz xizmati ishlamadi: qo'ng'iroq uzilmasin, suhbat xotirasi saqlanadi
+        if call.say_fails >= 3:   # uch gap ketma-ket eshitilmasa, jim qo'ng'iroqni ushlab turmaymiz
+            call.closed = True
 
     async def _play(self, call: Call, pcm: bytes, pause: float = 0.3):
         from pytgcalls.types import Device
@@ -365,9 +414,10 @@ class CallService:
     async def _turn(self, call: Call, utt: bytes) -> bool:
         """Bitta gap: eshit -> tushun -> ayt. False qaytsa qo'ng'iroq tugaydi."""
         from .providers import VoiceError, VoiceUnavailable
+        t0 = time.monotonic()
         fill = asyncio.create_task(self._filler(call))   # "hmm..." — siz gapirib bo'lgach darhol, o'ylayotganda
         try:
-            text = await self.app.router.transcribe(pcm_to_wav(utt), "audio/wav")
+            text = await self.app.router.transcribe(pcm_to_wav(utt), "audio/wav", fast=True)
         except VoiceUnavailable as e:
             await fill
             await self.say(call, str(e))
@@ -376,6 +426,7 @@ class CallService:
             await fill
             await self.say(call, "Tushunmadim, qaytaring.")
             return True
+        t_stt = time.monotonic()
         log.info("qo'ng'iroq: %s", text[:80])
         if HANGUP_WORDS.match(text.strip()):
             await fill
@@ -401,8 +452,11 @@ class CallService:
             await asyncio.wait({job, waiter}, return_when=asyncio.FIRST_COMPLETED)
         waiter.cancel()
         await fill
+        self.timing = {"stt": round(t_stt - t0, 1), "think": round(time.monotonic() - t_stt, 1)}
         if said:
             await self.say(call, spoken_text(said[0], 400))
+            log.info("qo'ng'iroq vaqti: eshitish %.1f s, o'ylash %.1f s, ovoz tayyor bo'lishi %.1f s",
+                     self.timing["stt"], self.timing["think"], self.timing.get("tts", 0))
         if job.done():
             await self._finish(call, job, spoken=bool(said))
         else:

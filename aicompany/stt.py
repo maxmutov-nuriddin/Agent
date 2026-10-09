@@ -232,7 +232,7 @@ class SpeechChain:
         m = await self.mode()
         return list(ORDER) if m == "auto" else [m] + [n for n in ORDER if n != m]
 
-    async def transcribe(self, audio: bytes, mime: str, gemini) -> str:
+    async def transcribe(self, audio: bytes, mime: str, gemini, fast: bool = False) -> str:
         """gemini: async (audio, mime) -> matn (eski yo'l, oxirgi zaxira)."""
         from .providers import VoiceError, VoiceUnavailable
         wav = None
@@ -249,6 +249,8 @@ class SpeechChain:
                     continue
             if not configured(name) or (name == "groq" and not await self.groq_on()):
                 continue
+            if fast and name == "whisper" and self.router.has_audio():
+                continue   # qo'ng'iroqda serverdagi (CPU) Whisper sekin: Gemini tezroq
             try:
                 wav = wav or await to_wav16k(audio, mime)
             except Exception as e:  # noqa: BLE001 — o'girib bo'lmasa, faqat Gemini qoladi

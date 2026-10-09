@@ -126,9 +126,9 @@ class _HttpProvider(Provider):
                 raise ModelNotFound(f"{self.name}: model '{cfg.id}' topilmadi") from e
             raise
 
-    async def _request(self, method: str, url: str, **kw) -> dict:
+    async def _request(self, method: str, url: str, attempts: int = 3, **kw) -> dict:
         last, status = "", None
-        for attempt in range(3):
+        for attempt in range(attempts):
             try:
                 r = await self.http.request(method, url, headers=self._headers(), **kw)
             except httpx.HTTPError as e:
@@ -311,7 +311,7 @@ class GeminiProvider(_HttpProvider):
         body = {"contents": [{"parts": [{"text": f"{style}: {text}" if style else text}]}],
                 "generationConfig": {"responseModalities": ["AUDIO"],
                                      "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}}}
-        data = await self._generate("POST", f"{self.base}/models/{self.TTS_MODEL}:generateContent", cfg, json=body)
+        data = await self._generate("POST", f"{self.base}/models/{self.TTS_MODEL}:generateContent", cfg, json=body, attempts=2)
         try:
             raw = data["candidates"][0]["content"]["parts"][0]["inlineData"]["data"]
             pcm = base64.b64decode(raw)

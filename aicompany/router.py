@@ -189,12 +189,12 @@ class Router:
     def has_audio(self) -> bool:
         return any(n in self.providers and self.providers[n].supports_audio for n in self.s.providers)
 
-    async def transcribe(self, audio: bytes, mime: str, *, task_id=None) -> str:
+    async def transcribe(self, audio: bytes, mime: str, *, task_id=None, fast: bool = False) -> str:
         """Ovozni matnga aylantiradi: zanjir (Google → Azure → Whisper → Gemini) yoki Sozlamalarda tanlangan xizmat."""
         if len(audio) > 15_000_000:
             raise VoiceError("Ovoz fayli juda katta")
         from .stt import SpeechChain
-        return await SpeechChain(self).transcribe(audio, mime, lambda a, m: self._transcribe_gemini(a, m, task_id=task_id))
+        return await SpeechChain(self).transcribe(audio, mime, lambda a, m: self._transcribe_gemini(a, m, task_id=task_id), fast=fast)
 
     async def _transcribe_gemini(self, audio: bytes, mime: str, *, task_id=None) -> str:
         """Gemini ovozni ma'nosi bilan tushunadi (zanjirning oxirgi, eng aqlli bo'g'ini)."""

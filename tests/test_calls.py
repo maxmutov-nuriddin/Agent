@@ -330,3 +330,30 @@ async def test_greeting_is_short_manager_line_and_cached(make_app):
 
 async def _pair(coro):
     return await coro, "gemini"
+
+
+def test_split_speech_makes_short_first_chunk():
+    from aicompany.calls import split_speech
+    assert split_speech("Salom.") == ["Salom."]
+    t = "Bugun ob-havo yaxshi, quyoshli. Kechqurun biroz yomg'ir yog'ishi mumkin. Soat beshda uchrashuvingiz bor. Unutmang!"
+    ch = split_speech(t)
+    assert 2 <= len(ch) <= 3 and " ".join(ch) == t and len(ch[0]) < len(t)
+
+
+async def test_say_plays_chunks_in_order(make_app):
+    from aicompany.calls import Call
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
+    played = []
+
+    async def fake_speak(text, **kw):
+        import asyncio
+        await asyncio.sleep(0.05 if text.startswith("Birinchi") else 0)   # birinchisi sekinroq tayyor bo'lsa ham tartib saqlanadi
+        return text.encode()
+
+    async def fake_play(call, pcm, pause=0.3):
+        played.append(pcm.decode())
+    app.router.speak = fake_speak
+    app.calls._play = fake_play
+    await app.calls.say(Call(1), "Birinchi gap ancha uzun bo'lsin deb yozildi. Ikkinchi gap ham uzunroq yozildi mana. Uchinchi.")
+    assert len(played) >= 2 and played[0].startswith("Birinchi") and "Ikkinchi" in " ".join(played)
+    assert "tts" in app.calls.timing
