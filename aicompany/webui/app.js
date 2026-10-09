@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-zk";
+const PANEL_V = "2026.10.09-zl";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -1396,7 +1396,7 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     btn.disabled = false; btn.textContent = "🩺 Tizimni tekshirish";
   };
   const checkBtn = h("button", { class: "btn lime" }, "🩺 Tizimni tekshirish"); checkBtn.onclick = () => runCheck(checkBtn);
-  return [head("Hisob", liveTag()), seg,
+  return settingsCols([head("Hisob", liveTag()), seg,
     h("div", { class: "label" }, "Tekshiruvlar"),
     h("div", { class: "acts" }, checkBtn, h("button", { class: "btn", onclick: showModels }, "🔎 Modellarni tekshirish")), checkOut,
     primary,
@@ -1453,7 +1453,20 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("div", { class: "label" }, "Telefonga o'rnatish"), installCard(),
     h("div", { class: "label" }),
     h("button", { class: "btn ghost full", onclick: () => { localStorage.removeItem("aij_token"); localStorage.removeItem("aij_cache"); S.token = ""; location.reload(); } }, "Chiqish"),
-    ver, h("p", { class: "hint ver" }, viewportInfo())];
+    ver, h("p", { class: "hint ver" }, viewportInfo())]);
+}
+// Sozlamalar: har «label» yangi bo'lim; kompyuterda bo'limlar ikki ustunda (mobilda oddiy ketma-ket)
+function settingsCols(items) {
+  const top = items.slice(0, 2), secs = [];
+  let cur = null;
+  for (const it of items.slice(2)) {
+    if (!it) continue;
+    const el = it instanceof Node ? it : null;
+    const starts = el && el.nodeType === 1 && (el.classList.contains("label") || (el.firstElementChild && el.firstElementChild.classList.contains("label")));
+    if (starts || !cur) { cur = h("div", { class: "sec" }); secs.push(cur); }
+    cur.append(it);
+  }
+  return [...top, h("div", { class: "secs" }, ...secs)];
 }
 
 // ---------- Chat (to'liq ekran) ----------

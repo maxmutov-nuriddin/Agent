@@ -566,3 +566,17 @@ details.team summary { cursor: pointer; color: var(--muted); font-weight: 700; f
 .pill.warn { background: rgba(255,176,58,.14); color: var(--amber); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
 .chips .chip { background: rgba(255,255,255,.06); display: inline-flex; align-items: center; gap: 4px; }
+
+/* Sozlamalar: maydonlar sheet'dan tashqarida ham bir xil ko'rinadi */
+#view input:not([type=checkbox]):not([type=radio]), #view select { padding: 12px 14px; border-radius: 14px; background: var(--s2); border: 0; outline: 0; max-width: 100%; }
+#view input:not([type=checkbox]):not([type=radio]):not([type=time]) { width: 100%; }
+#view input:focus, #view select:focus { box-shadow: 0 0 0 2px var(--lime); }
+#view label { display: block; color: var(--muted); font-size: 14px; font-weight: 600; margin: 14px 2px 6px; }
+.secs > .sec > .label:first-child, .secs > .sec > div:first-child > .label:first-child { margin-top: 18px; }
+/* Kompyuterda: bo'limlar ikki ustun, har biri alohida panel */
+@media (min-width: 900px) {
+  .secs { column-count: 2; column-gap: 24px; }
+  .sec { break-inside: avoid; margin: 0 0 20px; padding: 2px 20px 16px; border: 1px solid var(--line); border-radius: 22px;
+    background: linear-gradient(180deg, rgba(25,27,29,.7), rgba(16,17,18,.7)); }
+  .sec > .label:first-child, .sec > div:first-child > .label:first-child { margin-top: 16px; }
+}
