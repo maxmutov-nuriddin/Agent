@@ -135,7 +135,7 @@ class Orchestrator:
         "add \"based_on\": N so the team starts from that task's files. "
         "If the owner asks to be reminded of something at a time, use mode \"chat\" and add "
         "\"reminder\": {\"when\": \"YYYY-MM-DD HH:MM\" (owner's local time, see '# Now') or a delay like \"30 daq\", \"text\": \"...\"}. "
-        "Reply in the language the owner uses (Uzbek, Russian or English).")
+        "Reply in the language the owner uses (Uzbek, Russian or English). " + "TOPIC RULE: read the latest message first in light of the immediately preceding messages. Short or vague follow-ups ('aynan shu', 'prompt kerak', 'ha', 'buni qil') refer to the topic of those last messages, NOT to older topics, memory or keyword matches; use older context only if the owner names it. If it is truly unclear which topic is meant, ask ONE short question. ")
 
 
     EXTRA_FIELDS = (
@@ -178,7 +178,7 @@ class Orchestrator:
         "'Submit as task' button. Otherwise proposed_task is an empty string. If the work changes or continues an earlier "
         "task's result (lines like '[Vazifa #N ...]'), also add \"based_on\": N. Reminders are allowed from chat: if the owner asks "
         "to be reminded at a time, add \"reminder\": {\"when\": \"YYYY-MM-DD HH:MM\" (local time, see '# Now') or a delay like "
-        "\"30 daq\", \"text\": \"...\"}.")
+        "\"30 daq\", \"text\": \"...\"}. " + "TOPIC RULE: read the latest message first in light of the immediately preceding messages. Short or vague follow-ups ('aynan shu', 'prompt kerak', 'ha', 'buni qil') refer to the topic of those last messages, NOT to older topics, memory or keyword matches; use older context only if the owner names it. If it is truly unclear which topic is meant, ask ONE short question. ")
 
     def _ensure_call(self, text: str, decision: dict) -> dict:
         from .calls import GREETING
@@ -316,7 +316,10 @@ class Orchestrator:
         if not TASK_WORDS.search(text):  # oddiy gapda eski vazifa xulosalari (xato, qayta ishga tushish) suhbatni bosib ketmasin
             history = [h for h in history if not (h["role"] == "ceo" and (h["text"] or "").startswith("[Vazifa #"))]
         # oxirgisi hozirgi xabarning o'zi
-        hist = "\n".join(f"{'Owner' if h['role'] == 'owner' else 'CEO'}: {clip(h['text'], 600)}" for h in history)
+        def fmt(rows):
+            return "\n".join(f"{'Owner' if h['role'] == 'owner' else 'CEO'}: {clip(h['text'], 600)}" for h in rows)
+        # oxirgi 4 xabar alohida: qisqa/noaniq gap odatda aynan shunga javob (eski mavzu yoki xotiraga emas)
+        hist_old, hist_new = fmt(history[:-4]), fmt(history[-4:])
         mems = await self._recall(text, 5, fast=spoken)   # qo'ng'iroqda embedding'siz (kalit so'z): tezroq
         memo = "\n".join(f"- {m['text']}" for m in mems)
         prefs = "\n".join(f"- {m['text']}" for m in await self.store.owner_prefs(PREFS_SHOWN))
@@ -331,12 +334,14 @@ class Orchestrator:
         from datetime import datetime as _dt
         from zoneinfo import ZoneInfo
         now_local = _dt.now(ZoneInfo(self.settings.report_tz)).strftime("%Y-%m-%d %H:%M (%A)")
-        prompt = (f"# Now\n{now_local}, {self.settings.report_tz}\n\n# Team\n{roster}\n\n" + (f"# Memory\n{memo}\n\n" if memo else "") +
+        prompt = (f"# Now\n{now_local}, {self.settings.report_tz}\n\n# Team\n{roster}\n\n" + (f"# Memory (background facts: do NOT switch topic because of them)\n{memo}\n\n" if memo else "") +
                   (f"# Owner's standing preferences (ALWAYS follow)\n{prefs}\n\n" if prefs else "") +
                   (f"# Owner's pending reminders (local time, complete list)\n{rems}\n\n" if rems else "# Owner's pending reminders\n(none)\n\n") +
                   (f"# Summary of the earlier conversation (background)\n{summary}\n\n" if summary else "") +
-                  (f"# Possibly relevant older messages\n{recall}\n\n" if recall else "") +
-                  (f"# Recent conversation\n{hist}\n\n" if hist else "") + f"# Latest owner message\n{text}")
+                  (f"# Possibly relevant older messages (keyword match, often a DIFFERENT topic: background only)\n{recall}\n\n" if recall else "") +
+                  (f"# Earlier in this chat (older topics, may be finished)\n{hist_old}\n\n" if hist_old else "") +
+                  (f"# Immediately preceding messages (the latest message most likely continues THIS topic)\n{hist_new}\n\n" if hist_new else "") +
+                  f"# Latest owner message\n{text}")
         res = await self.team.router.call("cheap", (self.FRONT_DESK if allow_tasks else self.CHAT_ONLY) + self.EXTRA_FIELDS + self.TALK_STYLE + (self.SPOKEN if spoken else self.VOICE_MSG if voice else ""),
                                           [{"role": "user", "content": prompt}], agent="ceo-chat")
         try:

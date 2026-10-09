@@ -9,17 +9,18 @@ def desk(decisions):
     """Front desk javoblari ketma-ket; qolgan chaqiruvlar oddiy kompaniya."""
     seq = list(decisions)
     base = scripted_company()
-    seen, plans = [], []
+    seen, plans, systems = [], [], []
 
     def handler(system, user, model):
         if "Plan the work" in user:
             plans.append(user)
         if "front desk" in system or "in a CHAT" in system:
             seen.append((user, model))
+            systems.append(system)
             d = seq.pop(0)
             return d if isinstance(d, str) else json.dumps(d)
         return base(system, user, model)
-    handler.seen, handler.plans = seen, plans
+    handler.seen, handler.plans, handler.systems = seen, plans, systems
     return handler
 
 
@@ -448,3 +449,21 @@ async def test_task_decision_not_replaced_by_call_without_self(make_app):
     app, _ = await make_app(handler, OWNER_TELEGRAM_ID="1")
     d = app.orch._ensure_call("mijozlarga qo'ng'iroq qilib chiqish rejasini tuz", {"mode": "task", "task": "x", "reply": ""})
     assert d["mode"] == "task" and not d.get("call")
+
+
+async def test_latest_message_is_tied_to_the_last_exchange_not_old_topics(make_app):
+    h = desk([{"mode": "chat", "reply": "ok"}])
+    app, _ = await make_app(h)
+    cid = 7
+    latest = "Aynan web platforma ideyasi kerak"
+    for role, t in [("owner", "Moliyaviy startap g'oyalari ro'yxati kerak"), ("ceo", "Tayyor, fayllarda"),
+                    ("owner", "Zapchast savdosini avtomatlashtirish kerak"), ("ceo", "Qaysi tizim ishlatiladi?"),
+                    ("owner", "1C"), ("ceo", "Tushundim"), ("owner", latest)]:
+        await app.store.add_chat(cid, role, t)
+    await app.orch._front_desk(latest, cid)
+    user, system = h.seen[-1][0], h.systems[-1]
+    assert user.index("# Earlier in this chat") < user.index("# Immediately preceding messages") < user.index("# Latest owner message")
+    head, near = user.split("# Immediately preceding messages")
+    assert "Zapchast" in near and "Moliyaviy" not in near          # eski mavzu «oxirgi xabarlar»da emas
+    assert "Moliyaviy" in head
+    assert "TOPIC RULE" in system
