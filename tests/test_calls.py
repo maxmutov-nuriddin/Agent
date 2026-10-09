@@ -60,7 +60,7 @@ async def test_task_done_only_calls_when_enabled(make_app):
     assert len(asked) == 1 and "Tayyor natija" in asked[0] and "7" in asked[0]
     await calls.task_done(res)
     assert len(asked) == 1                     # cooldown
-    calls._last_auto = 0
+    calls._last_auto = float("-inf")
     await calls.task_done({"kind": "chat", "reply": "salom"})
     assert len(asked) == 1
 
@@ -88,8 +88,8 @@ async def test_voice_choice_and_jarvis_style(make_app):
     import base64
     from aicompany.providers import GeminiProvider
     from aicompany.voices import resolve
-    assert resolve(None)[0] == "Charon" and "Jarvis" in resolve(None)[1]          # standart: Jarvis uslubi
-    assert resolve("kore") == ("Kore", "")
+    assert resolve(None)[0] == "Alnilam" and "Jarvis" in resolve(None)[1] and resolve(None)[2] < 1   # standart: chuqur Jarvis
+    assert resolve("kore") == ("Kore", "", 1.0)
     prov = GeminiProvider("k")
     sent = {}
 
@@ -97,9 +97,9 @@ async def test_voice_choice_and_jarvis_style(make_app):
         sent.update(json)
         return {"candidates": [{"content": {"parts": [{"inlineData": {"data": base64.b64encode(b"\0\0" * 2400).decode()}}]}}]}
     prov._generate = fake_generate
-    pcm, cost = await prov.speak(None, "Salom", *resolve("jarvis"))
+    pcm, cost = await prov.speak(None, "Salom", *resolve("jarvis")[:2])
     voice = sent["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"]
-    assert voice == "Charon" and sent["contents"][0]["parts"][0]["text"].endswith(": Salom") and len(pcm) == 4800
+    assert voice == "Alnilam" and sent["contents"][0]["parts"][0]["text"].endswith(": Salom") and len(pcm) == 4800
 
 
 async def test_voice_api(web):
@@ -109,3 +109,13 @@ async def test_voice_api(web):
     assert (await post(c, "/api/tts/voice", {"voice": "algenib"}))[1] == {"voice": "algenib"}
     assert await app.store.get_kv("tts_voice") == "algenib"
     assert (await post(c, "/api/tts/preview", {"voice": "jarvis"}))[0] == 400     # Gemini kaliti yo'q: tushunarli xato
+
+
+async def test_pitch_shift_keeps_length_and_changes_sound():
+    import array
+    import math
+    from aicompany.voices import shift_pitch
+    tone = array.array("h", [int(8000 * math.sin(2 * math.pi * 220 * i / 24000)) for i in range(24000)]).tobytes()
+    out = await shift_pitch(tone, 0.88)
+    assert out != tone and abs(len(out) - len(tone)) < len(tone) * 0.05      # tezlik (uzunlik) deyarli o'zgarmadi
+    assert await shift_pitch(tone, 1.0) == tone

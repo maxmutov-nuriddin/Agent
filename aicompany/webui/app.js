@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-u";
+const PANEL_V = "2026.10.09-v";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -965,7 +965,7 @@ function pushBlock() {
   return out;
 }
 
-const VOICES = [["jarvis", "🤵 Jarvis"], ["orus", "Orus"], ["iapetus", "Iapetus"], ["algenib", "Algenib"], ["kore", "Kore (ayol)"]];
+const VOICES = [["jarvis", "🤵 Jarvis (chuqur bariton)"], ["jarvis2", "🤵 Jarvis 2 (yumshoqroq)"], ["sadaltager", "Sadaltager (past)"], ["algenib", "Algenib (xirillagan)"], ["orus", "Orus (qat'iy)"], ["kore", "Kore (ayol)"]];
 function voiceSelect(cur) {
   const sel = h("select", {}, VOICES.map(([k, l]) => h("option", { value: k, selected: k === cur ? "selected" : null }, l)));
   sel.addEventListener("change", async () => { try { await post("/tts/voice", { voice: sel.value }); toast("Ovoz: " + sel.selectedOptions[0].textContent); } catch (e) { toast(e.message); } });

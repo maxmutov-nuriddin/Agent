@@ -226,9 +226,10 @@ class Router:
                 last = f"{pc.name}: limit"
                 continue
             try:
-                from .voices import resolve
-                name, style = resolve(voice or await self.store.get_kv("tts_voice"))
+                from .voices import resolve, shift_pitch
+                name, style, pitch = resolve(voice or await self.store.get_kv("tts_voice"))
                 pcm, cost = await self.providers[pc.name].speak(pc.models["cheap"], text[:1500], name, style)
+                pcm = await shift_pitch(pcm, pitch)   # yetukroq, chuqurroq ohang
             except ProviderError as e:
                 last = str(e)
                 await self.store.audit("router", "tts_error", last[:500])

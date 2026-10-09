@@ -115,7 +115,7 @@ class CallService:
         self._client = None
         self._tgc = None
         self.call: Call | None = None
-        self._last_auto = 0.0
+        self._last_auto = float("-inf")  # yangi yoqilgan serverda ham birinchi avto qo'ng'iroq bloklanmasin
         self._bg: set[asyncio.Task] = set()
         self.last_error = ""
 
