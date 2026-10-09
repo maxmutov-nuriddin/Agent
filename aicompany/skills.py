@@ -12,6 +12,7 @@ import base64
 import json
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
 from . import github_api
@@ -435,6 +436,37 @@ def install_request(text: str) -> str | None:
         return None
     u = m.group(0).rstrip(".,;")
     return u if u.startswith("http") else "https://" + u
+
+
+PACK_DIR = Path(__file__).parent / "skills_pack"
+PACK_KV = "skills_pack_done"
+
+
+async def install_pack(store) -> list[str]:
+    """Birga yetkazilgan tekshirilgan skillar (aicompany/skills_pack/*.md): har biri bir marta qo'shiladi.
+    Egasi o'chirgan yoki tahrirlagan skill qayta tiklanmaydi; yangi versiyada qo'shilgan fayllar keyingi yangilashda qo'shiladi."""
+    done = set(json.loads(await store.get_kv(PACK_KV) or "[]"))
+    added = []
+    for f in sorted(PACK_DIR.glob("*.md")):
+        if f.stem in done:
+            continue
+        meta, body = {}, f.read_text(encoding="utf-8")
+        m = re.match(r"---\n(.*?)\n---\n(.*)", body, re.S)
+        if m:
+            for line in m[1].splitlines():
+                k, _, v = line.partition(":")
+                meta[k.strip()] = v.strip()
+            body = m[2].strip()
+        footer = f"\n\n(Asl manba: {meta.get('source', '?')}, litsenziya: {meta.get('license', '?')}; moslab qisqartirilgan)"
+        agents = [a.strip() for a in meta.get("agents", "").split(",") if a.strip()]
+        data = await load(store)
+        if f.stem not in data:
+            await save(store, meta.get("name", f.stem), meta.get("description", f.stem), body + footer, agents=agents,
+                       slug=f.stem, source=f"pack:{meta.get('source', f.stem)}"[:120], adapted=True)
+            added.append(f.stem)
+        done.add(f.stem)
+    await store.set_kv(PACK_KV, json.dumps(sorted(done)))
+    return added
 
 
 def import_env(app):

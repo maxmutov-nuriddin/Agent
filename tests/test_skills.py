@@ -94,7 +94,7 @@ async def test_import_is_pending_until_approved():
 async def test_skills_api(web):
     c, app = web
     code, d = await get(c, "/api/skills")
-    assert code == 200 and len(d["skills"]) == 6
+    assert code == 200 and len(d["skills"]) == 10                  # 6 tayyor + 4 ta tekshirilgan paket
     assert (await post(c, "/api/skills", {"name": "", "description": "x", "body": "y"}))[0] == 400
     code, d = await post(c, "/api/skills", {"name": "Mening skillim", "description": "tavsif", "body": "1. qadam", "agents": ["marketer"]})
     assert code == 200 and d["slug"] == "mening-skillim"
@@ -249,3 +249,21 @@ async def test_import_api_adapt_flag(web, monkeypatch):
     monkeypatch.setattr(skills, "install", fake_install)
     code, d = await post(c, "/api/skills/import", {"url": "github.com/a/b", "adapt": True, "activate": False})
     assert code == 200 and seen == {"url": "github.com/a/b", "adapt": True, "activate": False}
+
+
+async def test_bundled_pack_installs_once_and_respects_owner_changes():
+    store = KV()
+    added = await skills.install_pack(store)
+    assert added == ["copywriting", "pricing", "social", "verification-before-completion"]
+    data = await skills.load(store)
+    for slug in added:
+        s = data[slug]
+        assert s["status"] == "active" and s["enabled"] and s["adapted"] and "Asl manba" in s["body"] and len(s["body"]) < 5000
+        assert not skills.warnings_for(s["body"].split("(Asl manba")[0]), slug      # shubhali belgi yo'q
+    assert data["pricing"]["agents"] == ["marketer", "finance_analyst", "researcher", "generalist"]
+    assert "copywriting" in await skills.prompt_section(store, "marketer")
+    assert "copywriting" not in await skills.prompt_section(store, "developer")
+    assert "verification-before-completion" in await skills.prompt_section(store, "qa")
+    await skills.remove(store, "social")
+    assert await skills.install_pack(store) == []                                  # o'chirilgani qaytmaydi
+    assert "social" not in await skills.load(store)

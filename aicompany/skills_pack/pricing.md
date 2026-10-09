@@ -1,0 +1,19 @@
+---
+name: pricing
+description: Decide what to charge: set or fix prices, tiers/packages, discounts, price increases and price page for a product or service; compare with competitors using sourced data
+agents: marketer, finance_analyst, researcher, generalist
+source: https://github.com/coreyhaines31/marketingskills/blob/main/skills/pricing/SKILL.md
+license: MIT (c) 2025 Corey Haines
+---
+1. Gather (ask only what is missing, max 4 questions): what is sold and to whom (individuals, small business, companies); current prices and sales volume; cost per unit and target margin; main alternatives the customer considers and their prices; goal (growth, revenue or profit); how customers buy (walk-in, Telegram/Instagram, sales calls).
+2. Three decisions, kept separate: packaging (what is included at each level), the pricing metric (what you charge per: piece, hour, order, subscription, outcome) and the price point (the number).
+3. Value-based logic. The ceiling is the value the customer perceives; the floor for differentiation is the next best alternative; your cost is only a baseline. Price between the alternative and the perceived value. A competitor's price is a data point, not a target; matching it copies their strategy, not their economics.
+4. First price: pick a number you can learn from, ship it, watch real buyers. Do not go ultra-cheap to reduce friction: it creates false demand, attracts the most price-sensitive customers (who churn and complain most) and is hard to raise later. Start near the round number for the customer type, then adjust fast with evidence.
+5. Metric test: "when the customer uses more of this, do they get more value?" Yes means a good metric. It should be easy to understand and hard to game.
+6. Tiers (good-better-best): entry = core, limited; recommended = full value at the anchor price; premium = 2-3x the recommended with extras (speed, priority, support, warranty). Differentiate by features, limits, service level or access. Make the recommended tier obvious.
+7. Psychology: anchoring (show the higher option first), decoy (the middle option should look like the best value), charm pricing ($49-style) for value-focused buyers, round prices for premium. In so'm: use clean numbers customers can compare quickly.
+8. Research: collect real data first. Use web_search, fetch_url, osm_places and news for competitor prices and always cite the source URL and date. Willingness-to-pay survey (Van Westendorp: too expensive, too cheap, expensive but acceptable, bargain) gives an acceptable range, not proof of profit-maximizing price; test with real offers. MaxDiff: show feature sets and ask most/least important to design tiers.
+9. Raising prices. Signs: competitors raised, buyers do not flinch, "arzon ekan" feedback, high conversion, low churn, new value added. Rollout: test on NEW customers first, then move 5-10% of existing ones, watch churn and complaints, expand in waves; grandfather only as a time-limited transition; announce the reason (value delivered) weeks or months ahead with a soft offer (lock the old price for annual payment, a credit). Accept some churn from the least profitable customers.
+10. Price page: clear tier comparison, recommended tier highlighted, who each tier is for, FAQ, guarantee, prices written as text (not only in an image) so people and AI assistants can read them.
+11. Checklist before finalizing: customer types defined, competitor prices sourced, metric chosen, margins checked (price minus cost is positive at every tier), tiers clearly different, test plan written.
+12. Output: a short table with 2-3 price options (price, margin, who it fits, risk), the recommended one with reasoning, assumptions marked as unverified, sources with URLs and dates, and a test plan (what to try for 2 weeks, which number decides).

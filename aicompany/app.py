@@ -54,6 +54,8 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     team = Team(store, router, settings.max_agents, settings.max_tool_turns, settings.private_providers,
                 settings.private_mode)
     await team.ensure_seed()
+    from . import skills
+    await skills.install_pack(store)   # tekshirilgan tayyor skillar (bir marta)
     await store.fail_stale_tasks()
     clean_inbox(settings.workspace_dir)
     center = ApprovalCenter()
