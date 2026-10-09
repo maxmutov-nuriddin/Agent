@@ -14,7 +14,8 @@ log = logging.getLogger("aicompany.push")
 
 KINDS = {"done": "Vazifa tayyor bo'lganda", "failed": "Vazifa bajarilmaganda / xato", "approval": "Ruxsat so'ralganda",
          "reminder": "Eslatma vaqti kelganda", "morning": "Ertalabki xulosa", "watch": "Kuzatuv topganda",
-         "auto": "Avtonom agent ogohlantirsa"}
+         "auto": "Avtonom agent ogohlantirsa", "progress": "Vazifa jarayoni (qulf ekranida, bitta yangilanib turadi)"}
+OFF_BY_DEFAULT = {"progress"}   # har qadamda keladi: faqat egasi o'zi yoqsa
 MAX_SUBS = 10
 
 
@@ -90,7 +91,7 @@ class PushService:
             saved = json.loads(await self.store.get_kv("push_prefs") or "{}")
         except ValueError:
             saved = {}
-        return {k: bool(saved.get(k, True)) for k in KINDS}
+        return {k: bool(saved.get(k, k not in OFF_BY_DEFAULT)) for k in KINDS}
 
     async def set_prefs(self, data: dict) -> dict:
         p = await self.prefs()
@@ -101,13 +102,15 @@ class PushService:
         return p
 
     # ---------- yuborish ----------
-    async def notify(self, kind: str, title: str, body: str = "", url: str = "/", *, force: bool = False) -> int:
+    async def notify(self, kind: str, title: str, body: str = "", url: str = "/", *, force: bool = False,
+                     tag: str | None = None, renotify: bool = True) -> int:
         """Obuna bo'lgan hamma qurilmaga yuboradi. Qaytadi: yetkazilganlar soni. O'chirilgan turdagi xabar yuborilmaydi."""
         if not available() or not (await self.subs()):
             return 0
         if not force and not (await self.prefs()).get(kind, True):
             return 0
-        payload = json.dumps({"title": title[:80], "body": body[:200], "url": url, "tag": kind}, ensure_ascii=False)
+        payload = json.dumps({"title": title[:80], "body": body[:200], "url": url, "tag": tag or kind, "renotify": renotify},
+                             ensure_ascii=False)
         vapid = await self._load_vapid()
         subs, ok, dead = await self.subs(), 0, []
         for s in subs:
@@ -135,9 +138,16 @@ class PushService:
         tid = res.get("task_id")
         if res.get("status") == "done":
             text = " ".join((res.get("result") or "").split())[:160]
-            await self.notify("done", f"✅ Vazifa #{tid} tayyor", text, f"/?task={tid}")
+            await self.notify("done", f"✅ Vazifa #{tid} tayyor", text, f"/?task={tid}", tag=f"task-{tid}")
         elif res.get("status") in ("failed", "limit", "interrupted"):
-            await self.notify("failed", f"⚠️ Vazifa #{tid} bajarilmadi", (res.get("error") or res.get("status") or "")[:160], f"/?task={tid}")
+            await self.notify("failed", f"⚠️ Vazifa #{tid} bajarilmadi", (res.get("error") or res.get("status") or "")[:160],
+                              f"/?task={tid}", tag=f"task-{tid}")
+
+    async def progress(self, task_id, text: str):
+        """Vazifa jarayoni: har vazifa uchun BITTA bildirishnoma (tag bir xil), yangi bosqichda almashadi.
+        Tugaganda «tayyor» bildirishnomasi uning o'rnini egallaydi."""
+        await self.notify("progress", f"⚙️ Vazifa #{task_id} ishlanmoqda", text, f"/?task={task_id}", tag=f"task-{task_id}",
+                          renotify=False)
 
     async def approval(self, approval_id, task_id, agent, description, kind="command"):
         await self.notify("approval", "🔐 Ruxsat kerak", f"{agent}: {description}", "/?tab=cards")

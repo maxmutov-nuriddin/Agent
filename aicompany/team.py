@@ -55,6 +55,9 @@ SEED_META = {
     "assistant": ("aloqa", "shaxsiy yordamchi: joylashuv, Telegram yozishmalar"),
     "qa": ("sifat", "sifat nazoratchisi: har natijani talablar bo'yicha tekshirish"),
 }
+AGENT_UZ = {"ceo": "Rahbar", "hr": "HR", "qa": "QA", "developer": "Dasturchi", "marketer": "Marketolog", "researcher": "Tahlilchi",
+            "generalist": "Universal", "assistant": "Yordamchi", "architect": "Arxitektor", "fact_checker": "Fakt-tekshiruvchi",
+            "finance_analyst": "Moliyachi"}
 MODEL_CHOICES = ("auto", "gemini", "anthropic", "openai", "groq", "openrouter")
 
 # name: (role, tier, tool groups)
@@ -85,6 +88,30 @@ SEED = {
 }
 
 
+def describe_tool(name: str, args: dict) -> str:
+    """Vidjet uchun xodimning hozirgi harakati: qisqa, odam tushunadigan matn."""
+    from urllib.parse import urlparse
+    a = args or {}
+    if name == "web_search":
+        return "🔎 qidiryapti: " + str(a.get("query", ""))[:40]
+    if name == "fetch_url":
+        host = urlparse(str(a.get("url", ""))).hostname or "sahifa"
+        return f"🌐 {host.removeprefix('www.')} o'qiyapti"
+    if name == "write_file":
+        return f"📝 {str(a.get('path', 'fayl'))[-40:]} yozyapti"
+    if name in ("read_file", "list_files"):
+        return f"📖 {str(a.get('path', 'fayllar'))[-40:]} o'qiyapti"
+    if name == "run_command":
+        return "⚙️ buyruq ishga tushiryapti"
+    if name.startswith("tg_"):
+        return "💬 Telegram bilan ishlayapti"
+    if name in ("route_eta", "find_places", "where_am_i", "save_place"):
+        return "🗺 xaritada qidiryapti"
+    if name in ("remember", "recall"):
+        return "🧠 xotira bilan ishlayapti"
+    return f"🛠 {name}"
+
+
 def system_prompt(name: str, role: str) -> str:
     return f"You are '{name}', a member of an AI company team. Your role: {role}\n{LANG}{STANDARDS}"
 
@@ -99,6 +126,7 @@ class Team:
         self.private_providers = frozenset(private_providers)  # shaxsiy chat matni avvalo shularga yuboriladi
         self.private_mode = private_mode
         self.busy: dict[str, dict] = {}  # agent -> {"count": n, "task_id": id}: hozir kim ishlayapti
+        self.activity: dict[str, dict] = {}  # agent -> {"text": "🌐 cbu.uz o'qiyapti", "provider": ..., "ts": ...} (vidjet uchun)
 
     async def ensure_seed(self):
         for name, (role, tier, tools) in SEED.items():
@@ -113,6 +141,11 @@ class Team:
         for a in await self.store.list_agents():   # HR yollagan xodimlar ham yangi standartlarni oladi
             if STANDARDS_MARK not in (a["system_prompt"] or ""):
                 await self.store.set_agent_profile(a["name"], a["role"], system_prompt(a["name"], a["role"]), a["tier"])
+
+    def _act(self, name: str, text: str):
+        import time
+        cur = self.activity.setdefault(name, {})
+        cur.update(text=text[:80], ts=time.time())
 
     async def meta(self, name: str) -> dict:
         """Agent kartochkasi: bo'lim, nimani almashtiradi, qaysi AI (model). kv'da saqlanadi, .env kerak emas."""
@@ -210,6 +243,7 @@ class Team:
         text, pin, malformed = "", None, 0
         prefer = (await self.meta(agent["name"]))["model"]
         prefer = None if prefer == "auto" else prefer
+        self._act(agent["name"], "🤔 o'ylayapti")
         for turn in range(self.max_tool_turns + 1):
             try:
                 res = await self.router.call(tier or agent["tier"], system, messages, task_id=task_id,
@@ -225,6 +259,7 @@ class Team:
                     last["content"] = [*last["content"], {"type": "text", "text": MALFORMED_HINT}]
                 continue
             text = res.text
+            self.activity.setdefault(agent["name"], {})["provider"] = res.provider
             if not res.tool_calls or turn == self.max_tool_turns:
                 text = text or "(asbob limiti tugadi, to'liq javob olinmadi)"
                 break
@@ -262,6 +297,8 @@ class Team:
             if not tool:
                 raise ToolError(f"noma'lum asbob: {call['name']}")
             args = call["input"] or {}
+            if env is not None and getattr(env, "agent", None):
+                self._act(env.agent, describe_tool(tool.name, args))
             out = await self._cached_call(tool, env, args)
             await self.store.audit(env.agent, f"tool:{tool.name}", json.dumps(args, ensure_ascii=False)[:300])
             block["content"] = clip(out, 8000)

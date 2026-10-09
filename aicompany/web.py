@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import httpx
 import hashlib
 import hmac
 import json
@@ -826,6 +827,16 @@ def make_web_app(app: App) -> web.Application:
         return json_ok({"configured": bool(s.widget_token), "base_url": base, "token": s.widget_token or "",
                         "script": "docs/widget/ai-jamoa.js"})
 
+    async def h_widget_script(request):
+        """Scriptable skripti manzil va vidjet kaliti bilan to'ldirilgan holda (panelda «nusxalash» uchun)."""
+        from .config import ROOT
+        url, _ = web_url(s)
+        src = (ROOT / "docs" / "widget" / "ai-jamoa.js").read_text(encoding="utf-8")
+        src = src.replace('"https://SIZNING-MANZIL"', json.dumps(url.split("/#token=")[0]), 1)
+        if s.widget_token:
+            src = src.replace('"WIDGET_TOKEN_NI_SHU_YERGA"', json.dumps(s.widget_token), 1)
+        return web.Response(text=src, content_type="text/plain", charset="utf-8")
+
     async def h_location_get(request):
         from .tools_ext import age_text, last_location
         loc = await last_location(app.store)
@@ -1155,7 +1166,119 @@ def make_web_app(app: App) -> web.Application:
             "failed": sum(1 for t in recent if t["status"] == "failed"),
             "next_reminder": ({"text": rems[0]["text"][:60], "local": local_text(rems[0]["due_at"], s.report_tz)} if rems else None),
             "location": loc,
-            "last_task": ({"id": recent[0]["id"], "status": recent[0]["status"], "request": recent[0]["request"][:60]} if recent else None)})
+            "last_task": ({"id": recent[0]["id"], "status": recent[0]["status"], "request": recent[0]["request"][:60]} if recent else None),
+            **(await widget_v2(st, recent))})
+
+    async def widget_header() -> dict:
+        """Sana, ob-havo va dollar kursi: soatiga bir marta yangilanadi (kesh), tarmoq sekin bo'lsa eski qiymat."""
+        from .briefing import owner_point, rates, weather
+        tz = ZoneInfo(s.report_tz)
+        now = datetime.now(tz)
+        days = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"]
+        months = ["yan", "fev", "mar", "apr", "may", "iyun", "iyul", "avg", "sen", "okt", "noy", "dek"]
+        out = {"date": f"{days[now.weekday()]} {now.day}-{months[now.month - 1]}", "weather": "", "usd": ""}
+        try:
+            cached = json.loads(await app.store.get_kv("widget_wx") or "{}")
+        except ValueError:
+            cached = {}
+        fresh = cached.get("ts") and datetime.now(timezone.utc) - datetime.fromisoformat(cached["ts"]) < timedelta(hours=1)
+        if not fresh:
+            try:
+                lat, lon, _ = await owner_point(app.store)
+                async with httpx.AsyncClient(timeout=6) as client:
+                    w, r = await asyncio.gather(weather(lat, lon, s.report_tz, client), rates(client), return_exceptions=True)
+                if isinstance(w, dict) and w.get("max") is not None:
+                    cached["weather"] = f"{w.get('icon', '')} {round(w['max'])}°"
+                if isinstance(r, dict) and "USD" in r:
+                    cached["usd"] = f"{r['USD']['rate']:,.0f}".replace(",", " ")
+                cached["ts"] = datetime.now(timezone.utc).isoformat()
+                await app.store.set_kv("widget_wx", json.dumps(cached, ensure_ascii=False))
+            except Exception:  # noqa: BLE001 — vidjet ob-havosiz ham chiqadi
+                pass
+        out.update({k: cached.get(k, "") for k in ("weather", "usd")})
+        return out
+
+    async def widget_v2(st, recent) -> dict:
+        """Birlashgan vidjet (jonli jamoa + moliya + mening kunim). AI ishlatilmaydi."""
+        from .reminders import local_text
+        from .team import AGENT_UZ
+        tz = ZoneInfo(s.report_tz)
+        now_l = datetime.now(tz)
+        # --- jonli: ishlayotgan vazifalar va xodimlar ---
+        live = []
+        for t in st["running_tasks"][:3]:
+            tid = t["id"]
+            row = await app.store.get_task(tid)
+            try:
+                steps_total = len(json.loads(row["plan"] or "{}").get("steps") or [])
+            except (ValueError, TypeError, AttributeError):
+                steps_total = 0
+            try:
+                done = len([k for k in json.loads(await app.store.get_kv(f"ckpt:{tid}") or "{}").get("outputs", {}) if not k.startswith("qa_fix")])
+            except (ValueError, TypeError, AttributeError):
+                done = 0
+            try:
+                elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(row["created_at"])).total_seconds() / 60
+            except (ValueError, TypeError):
+                elapsed = 0
+            eta = round(elapsed / done * (steps_total - done) + 1) if done and steps_total >= done else None
+            by_agent = await app.store.spent_task_by_agent(tid)
+            agents = []
+            for name, b in app.team.busy.items():
+                if b.get("task_id") != tid:
+                    continue
+                act = app.team.activity.get(name, {})
+                agents.append({"name": name, "label": AGENT_UZ.get(name, name), "act": act.get("text") or "🤔 o'ylayapti",
+                               "provider": act.get("provider") or "", "cost": round(by_agent.get(name, 0.0), 2)})
+            live.append({"id": tid, "request": t["request"][:70], "steps_total": steps_total, "steps_done": min(done, steps_total),
+                         "elapsed_min": round(elapsed), "eta_min": eta, "cost": round(sum(by_agent.values()), 2),
+                         "limit": s.max_task_usd, "phase": app.orch.phase.get(tid, ""), "agents": agents[:3]})
+        # --- moliya ---
+        month_start = now_l.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        month = sum(r["cost"] for r in await app.store.daily_spend_local(month_start.astimezone(timezone.utc).isoformat(), tz))
+        import calendar
+        days_in = calendar.monthrange(now_l.year, now_l.month)[1]
+        forecast = month / max(now_l.day - 1 + now_l.hour / 24, 0.5) * days_in if month else 0.0
+        names = {"anthropic": "Claude", "gemini": "Gemini", "openai": "ChatGPT"}
+        providers = [{"name": names.get(b["provider"], b["provider"]), "spent": round(b["spent"], 2), "budget": b["budget"]}
+                     for b in st["budgets"] if b["enabled"]][:3]
+        # --- mening kunim ---
+        day_start = now_l.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+        today_tasks = sorted((t for t in await app.store.list_tasks(40) if (t["created_at"] or "") >= day_start), key=lambda t: t["id"])
+        timeline = [("done" if t["status"] == "done" else "running" if t["status"] == "running" else
+                     "failed" if t["status"] in ("failed", "limit", "interrupted") else "other") for t in today_tasks][-10:]
+        rems = []
+        for r in await app.store.list_reminders(limit=4):
+            rems.append({"time": local_text(r["due_at"], s.report_tz)[-5:], "day": local_text(r["due_at"], s.report_tz)[:5],
+                         "text": r["text"][:60], "call": (await app.store.get_kv(f"rcall:{r['id']}")) == "1"})
+        plan = None
+        for p in await app.store.list_plans(20):
+            if p["period"] == "day":
+                try:
+                    items = json.loads(p["items"] or "[]")
+                except ValueError:
+                    items = []
+                if items:
+                    plan = {"title": p["title"][:50], "done": sum(1 for i in items if i.get("done")), "total": len(items)}
+                    break
+        hit = None
+        try:
+            h = json.loads(await app.store.get_kv("watch_last_hit") or "null")
+            if h and datetime.now(timezone.utc) - datetime.fromisoformat(h["ts"]) < timedelta(hours=24):
+                hit = {"text": h["text"]}
+        except (ValueError, TypeError, KeyError):
+            pass
+        auto = []
+        if app.auto:
+            for j in await app.auto.list():
+                if j["mode"] != "off":
+                    auto.append(j["title"].split()[0] + (" ✅" if j["result"].startswith("✅") or not j["result"] else " ⚠️"))
+        done_recent = [t for t in recent if t["status"] == "done"][:2]
+        costs = await app.store.spent_by_task([t["id"] for t in done_recent])
+        return {"v": 2, "header": await widget_header(), "live": live,
+                "money": {"today": round(st["today"], 2), "month": round(month, 2), "forecast": round(forecast, 2), "providers": providers},
+                "day": {"timeline": timeline, "reminders": rems[:2], "plan": plan, "watch_hit": hit, "auto": " · ".join(auto)},
+                "recent_done": [{"id": t["id"], "request": t["request"][:60], "cost": round(costs.get(t["id"], 0.0), 2)} for t in done_recent]}
 
     async def h_selfcheck(request):
         """Sozlamalar → «Tizimni tekshirish»: hamma qism bir joyda, AI so'rovisiz (token sarflanmaydi)."""
@@ -1243,7 +1366,7 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/morning", h_morning), web.post("/api/stt", h_stt), web.get("/api/watches", h_watches), web.post("/api/watches", h_watch_add), web.post(r"/api/watches/{id:\d+}", h_watch_update), web.delete(r"/api/watches/{id:\d+}", h_watch_delete), web.post(r"/api/watches/{id:\d+}/check", h_watch_check), web.post("/api/watch_smart", h_watch_smart), web.post("/api/watch_kind", h_watch_kind), web.post("/api/morning/test", h_morning_test), web.post("/api/resume", h_resume),
         web.post("/api/provider", h_provider), web.post("/api/free_ai", h_free_ai), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
-        web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
+        web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/widget-script", h_widget_script), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
         web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend),
         web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/say", h_tts_say), web.post("/api/voice_reply", h_voice_reply), web.post("/api/qa_rounds", h_qa_rounds), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),

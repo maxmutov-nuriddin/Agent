@@ -97,6 +97,8 @@ class Orchestrator:
         self.running: dict[int, asyncio.Task] = {}
         self._stopping: set[int] = set()
         self.on_done = None
+        self.on_progress = None   # app.py ulaydi: async (task_id, matn) — qulf ekraniga jarayon bildirishnomasi
+        self.phase: dict[int, str] = {}   # vazifa -> hozirgi bosqich (vidjet uchun)
         self._summarizing: set[int] = set()
         self._background: set[asyncio.Task] = set()
         self.call_ready = lambda: False   # app.py ulaydi: qo'ng'iroq moduli tayyormi
@@ -636,6 +638,7 @@ class Orchestrator:
                 await notify(f"🧑‍💼 HR yangi xodim oldi: {name}")
 
         steps = plan["steps"][:MAX_STEPS]
+        await self._progress(task_id, f"Reja tayyor: {len(steps)} qadam")
         await notify(f"📋 Reja: {str(plan.get('summary', ''))[:500]}\n" + "\n".join(
             f"• {s['agent']} [{s.get('tier') or 'auto'}]: {s['task'][:80]}" for s in steps))
         if not simple and not outputs and await self.store.get_kv("dept_leads") == "1":
@@ -658,6 +661,8 @@ class Orchestrator:
                     tier = "mid"  # eng qimmat daraja faqat «sifat» rejimida
                 out = await self.team.run_agent(s["agent"], s["task"], ctx, task_id=task_id, tier=tier, env=env)
                 await notify(f"✅ {s['agent']} tugatdi ({s['id']})")
+                from .team import AGENT_UZ
+                await self._progress(task_id, f"{min(len(outputs) + 1, len(steps))}/{len(steps)} qadam: {AGENT_UZ.get(s['agent'], s['agent'])} tugatdi")
                 return s["id"], out
 
             for sid, out in await self._gather_or_cancel([work(s) for s in ready]):
@@ -677,6 +682,15 @@ class Orchestrator:
         return await self._package(task_id, request, deliverable, env, eco)
 
     QA_MAX = 6
+
+    async def _progress(self, task_id, text: str, push: bool = True):
+        """Bosqichni eslab qoladi (vidjet) va yoqilgan bo'lsa telefonga bitta, almashib turadigan bildirishnoma yuboradi."""
+        self.phase[task_id] = text
+        if push and self.on_progress:
+            try:
+                await self.on_progress(task_id, text)
+            except Exception:  # noqa: BLE001 — bildirishnoma ishni to'xtatmasin
+                pass
 
     async def _dept_refine(self, task_id, request, steps, env, eco, notify):
         """Bo'lim boshliqlari (yoqilgan bo'lsa): har bo'lim boshlig'i o'z bo'limiga tushgan qadamlarni ekspert
@@ -733,6 +747,7 @@ class Orchestrator:
         QA esa avvalgi e'tirozlar haqiqatan tuzatilganini tekshiradi. To'xtaydi: QA o'tkazsa, limit tugasa yoki
         bir xil e'tirozlar takrorlansa (tuzatib bo'lmayapti: pul behuda ketmasin)."""
         rounds = await self._qa_rounds()
+        await self._progress(task_id, "QA tekshiryapti", push=False)
         prev_issues: list[str] = []
         seen: list[list[str]] = []
         for attempt in range(rounds + 1):
@@ -748,6 +763,7 @@ class Orchestrator:
                 return deliverable + "\n\n⚠️ QA hali ham e'tiroz bildirgan:\n- " + "\n- ".join(issues)
             seen.append(key)
             await notify(Progress(f"🔎 QA {len(issues)} ta muammo topdi, tuzatilyapti ({attempt + 1}/{rounds})..."))
+            await self._progress(task_id, f"QA {len(issues)} ta muammo topdi, tuzatilyapti ({attempt + 1}/{rounds})")
             if self._files(env.workspace):
                 fixer = self._fixer(steps)
                 fix = await self.team.run_agent(fixer, (
@@ -771,6 +787,7 @@ class Orchestrator:
     async def _package(self, task_id, request, deliverable, env, eco: bool = False) -> str:
         """Yakuniy qadoqlash: NATIJA.md (to'liq tayyor natija), PROMPT.md (boshqa AI uchun to'liq prompt)
         va qaytariladigan qisqa, aniq javob (paneldagi «Natija»)."""
+        await self._progress(task_id, "Natija qadoqlanmoqda", push=False)
         ws = env.workspace
         from . import linkcheck
         links = await self._link_status(env, deliverable)

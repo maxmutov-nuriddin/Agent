@@ -1,5 +1,5 @@
 // Faqat statik qobiqni keshlaydi. /api hech qachon keshlanmaydi (maxfiy ma'lumot).
-const CACHE = "aijamoa-v58";
+const CACHE = "aijamoa-v59";
 const SHELL = ["/", "/app.js", "/style.css", "/manifest.webmanifest", "/icon-192.png", "/apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {
@@ -25,7 +25,7 @@ self.addEventListener("push", (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (_) { d = { body: e.data ? e.data.text() : "" }; }
   e.waitUntil(self.registration.showNotification(d.title || "AI Jamoa", {
-    body: d.body || "", icon: "/icon-192.png", badge: "/icon-192.png", tag: d.tag || "aijamoa", renotify: true, data: { url: d.url || "/" } }));
+    body: d.body || "", icon: "/icon-192.png", badge: "/icon-192.png", tag: d.tag || "aijamoa", renotify: d.renotify !== false, data: { url: d.url || "/" } }));
 });
 self.addEventListener("notificationclick", (e) => {
   e.notification.close();

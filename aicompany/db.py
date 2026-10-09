@@ -419,6 +419,11 @@ class Store:
             out[d] = out.get(d, 0.0) + float(r["cost_usd"] or 0)
         return [{"day": d, "cost": c} for d, c in sorted(out.items())]
 
+    async def spent_task_by_agent(self, task_id) -> dict[str, float]:
+        rows = await self._all(sa.select(usage.c.agent, sa.func.sum(usage.c.cost_usd).label("cost"))
+                               .where(usage.c.task_id == task_id).group_by(usage.c.agent))
+        return {r["agent"]: float(r["cost"] or 0) for r in rows}
+
     async def spent_by_task(self, task_ids) -> dict[int, float]:
         if not task_ids:
             return {}

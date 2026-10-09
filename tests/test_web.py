@@ -983,7 +983,7 @@ async def test_push_subscribe_prefs_and_delivery(web, monkeypatch):
     await app.push.task_done({"kind": "task", "task_id": 6, "status": "done", "result": "x"})
     assert len(sent) == n                                                     # o'chirilgan tur yuborilmaydi
     await app.push.task_done({"kind": "task", "task_id": 7, "status": "failed", "error": "limit"})
-    assert sent[-1]["tag"] == "failed"
+    assert sent[-1]["tag"] == "task-7" and sent[-1]["title"].startswith("⚠️")   # jarayon bildirishnomasi o'rnida
     await app.push.approval(1, 5, "dev", "rm -rf x")
     assert sent[-1]["tag"] == "approval"
 

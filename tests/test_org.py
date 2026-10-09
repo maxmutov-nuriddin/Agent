@@ -100,3 +100,59 @@ async def test_org_api(web):
     assert (await post(c, "/api/dept_leads", {"enabled": True}))[1] == {"enabled": True}
     status, d = await post(c, "/api/auto/run", {"name": "server_watch"})
     assert status == 200 and d["result"]
+
+
+async def test_widget_v2_live_money_day(web, monkeypatch):
+    import asyncio
+    from aicompany import briefing
+    c, app = web
+
+    async def no_net(*a, **kw):
+        raise RuntimeError("tarmoq yo'q")
+    monkeypatch.setattr(briefing, "weather", no_net)
+    monkeypatch.setattr(briefing, "rates", no_net)
+    tid = await app.store.create_task(1, "Moliyaviy tahlil")
+    await app.store.update_task(tid, status="running", plan=json.dumps({"steps": [{"id": "s1"}, {"id": "s2"}, {"id": "s3"}]}))
+    await app.store.set_kv(f"ckpt:{tid}", json.dumps({"outputs": {"s1": "x"}}))
+    await app.store.add_usage("gemini", "m", tid, "researcher", 0, 0, 0, 0.21)
+    app.team.busy["researcher"] = {"count": 1, "task_id": tid}
+    app.team._act("researcher", "🌐 cbu.uz o'qiyapti")
+    app.orch.phase[tid] = "1/3 qadam: Tahlilchi tugatdi"
+    r = await c.get("/api/widget?token=" + app.settings.widget_token)
+    d = await r.json()
+    assert d["v"] == 2 and "date" in d["header"]
+    live = d["live"][0]
+    assert live["id"] == tid and live["steps_total"] == 3 and live["steps_done"] == 1 and live["cost"] == 0.21
+    assert live["agents"][0]["label"] == "Tahlilchi" and "cbu.uz" in live["agents"][0]["act"]
+    assert d["money"]["month"] >= 0.21 and "providers" in d["money"]
+    assert "running" in d["day"]["timeline"]
+    assert "working" in d and "budget_left" in d                     # eski vidjet ham ishlayveradi
+    app.team.busy.pop("researcher")
+
+
+async def test_progress_push_is_opt_in_and_single_tag(make_app):
+    app, _ = await make_app(scripted_company())
+    sent = []
+
+    async def fake_notify(kind, title, body="", url="/", **kw):
+        sent.append((kind, kw.get("tag"), kw.get("renotify")))
+        return 1
+    assert (await app.push.prefs())["progress"] is False and (await app.push.prefs())["done"] is True
+    app.push.notify = fake_notify
+    await app.push.progress(7, "2/5 qadam")
+    await app.push.task_done({"kind": "task", "task_id": 7, "status": "done", "result": "ok"})
+    assert sent == [("progress", "task-7", False), ("done", "task-7", None)]   # bitta bildirishnoma o'rnida almashadi
+
+
+def test_describe_tool_activity():
+    from aicompany.team import describe_tool
+    assert describe_tool("fetch_url", {"url": "https://www.cbu.uz/uz/"}) == "🌐 cbu.uz o'qiyapti"
+    assert describe_tool("write_file", {"path": "unit_iqtisod.md"}) == "📝 unit_iqtisod.md yozyapti"
+    assert describe_tool("web_search", {"query": "dollar kursi"}).startswith("🔎")
+
+
+async def test_widget_script_is_prefilled(web):
+    c, app = web
+    r = await c.get("/api/widget-script", headers={"Authorization": "Bearer " + app.settings.web_token})
+    src = await r.text()
+    assert r.status == 200 and "WIDGET_TOKEN_NI_SHU_YERGA" not in src and app.settings.widget_token in src and "Versiya 2" in src

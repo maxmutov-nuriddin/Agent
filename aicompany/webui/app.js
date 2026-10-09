@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-zf";
+const PANEL_V = "2026.10.09-zg";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -893,7 +893,11 @@ async function showWidget() {
     const w = await api("/widget-link");
     const copy = async (t) => { try { await navigator.clipboard.writeText(t); toast("Nusxalandi"); } catch { toast("Nusxalab bo'lmadi (HTTPS kerak)"); } };
     openSheet(h("h2", {}, "iPhone vidjeti"),
-      h("p", { class: "muted" }, "Bepul Scriptable ilovasiga " + w.script + " skriptini qo'ying, ichidagi ikkita qiymatni almashtiring. Vidjet ishlayotgan agentlar, kutayotgan qarorlar va byudjetni ko'rsatadi (faqat o'qiydi)."),
+      h("p", { class: "muted" }, "Vidjet ish ketayotganda kim nima qilyapti, vazifa xarajati va qadamlarni; tinch paytda oxirgi natijalar, eslatmalar va moliyani ko'rsatadi (faqat o'qiydi). Kichik, o'rta, katta va qulf ekrani."),
+      w.configured ? h("button", { class: "btn lime full", onclick: async () => {
+        try { const r = await fetch("/api/widget-script", { headers: { Authorization: "Bearer " + S.token } }); if (!r.ok) throw new Error("Xatolik " + r.status); await copy(await r.text()); }
+        catch (e) { toast(e.message); } } }, "📋 Tayyor skriptni nusxalash") : null,
+      h("p", { class: "hint" }, "Scriptable → «AI Jamoa» skriptini oching → hammasini o'chirib, nusxalanganini qo'ying → saqlang. Manzil va kalit ichida tayyor. Qo'lda kiritish uchun pastdagilar:"),
       h("div", { class: "label" }, "BASE_URL"), h("div", { class: "pre" }, w.base_url),
       h("button", { class: "btn ghost full", onclick: () => copy(w.base_url) }, "Nusxalash"),
       h("div", { class: "label" }, "WIDGET_TOKEN"), h("div", { class: "pre" }, w.configured ? w.token : "yaratilmagan: `python -m aicompany run` ni qayta ishga tushiring"),
@@ -979,7 +983,7 @@ function sttBlock(st) {
 }
 
 // --- Push-bildirishnomalar ---
-const PUSH_KINDS = [["done", "✅ Vazifa tayyor bo'lganda"], ["failed", "⚠️ Vazifa bajarilmaganda"], ["approval", "🔐 Ruxsat so'ralganda"], ["reminder", "⏰ Eslatma vaqtida"], ["morning", "☀️ Ertalabki xulosa"], ["watch", "🔔 Kuzatuv topganda"], ["auto", "🤖 Avtonom agent ogohlantirsa"]];
+const PUSH_KINDS = [["done", "✅ Vazifa tayyor bo'lganda"], ["failed", "⚠️ Vazifa bajarilmaganda"], ["approval", "🔐 Ruxsat so'ralganda"], ["reminder", "⏰ Eslatma vaqtida"], ["morning", "☀️ Ertalabki xulosa"], ["watch", "🔔 Kuzatuv topganda"], ["auto", "🤖 Avtonom agent ogohlantirsa"], ["progress", "⚙️ Vazifa jarayoni (qulf ekranida, bitta yangilanib turadi)"]];
 let pushOn = null;  // shu qurilmada obuna bormi (null = hali bilmaymiz)
 const b64u = (s) => Uint8Array.from(atob((s + "=".repeat((4 - s.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 async function pushSub() {
@@ -1000,6 +1004,11 @@ async function pushEnable() {
 async function pushDisable() {
   const sub = await pushSub();
   if (sub) { try { await post("/push/unsubscribe", { endpoint: sub.endpoint }); } catch (_) { /* server o'zi tozalaydi */ } await sub.unsubscribe(); }
+}
+function awakeSwitch() {
+  let on = true; try { on = localStorage.getItem("awake") !== "0"; } catch { /* saqlash yopiq */ }
+  const set = (v) => { try { localStorage.setItem("awake", v ? "1" : "0"); } catch { /* */ } if (!v) keepAwake(false); refresh(true); };
+  return h("div", { class: "seg" }, h("button", { class: on ? "on" : "", onclick: () => set(true) }, "Yoqilgan"), h("button", { class: on ? "" : "on", onclick: () => set(false) }, "O'chiq"));
 }
 function pushBlock() {
   const P = (S.state && S.state.push) || {};
@@ -1327,6 +1336,8 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("p", { class: "hint" }, "Ovozli xabar yuborsangiz (Telegram yoki chatdagi mikrofon), javob matn bilan birga ovozli xabar bo'lib ham keladi. «Ovozli javob ber» deb yozsangiz ham. Ovoz qo'ng'iroqdagi bilan bir xil. Chatdagi har javob yonidagi 🔊 bilan istalganini tinglash mumkin."),
     h("div", { class: "label" }, "Ovozni tanish (ovoz → matn)"), ...sttBlock(integ.stt),
     h("div", { class: "label" }, "Bildirishnomalar (telefonga)"), ...pushBlock(),
+    h("div", { class: "label" }, "Ish paytida ekran o'chmasin (shu qurilma)"), awakeSwitch(),
+    h("p", { class: "hint" }, "Vazifa ishlayotganda va panel ochiq turganda ekran o'chib qolmaydi, tugagach odatdagidek o'chadi. Qulf ekranida jarayonni ko'rish uchun: Bildirishnomalar → «⚙️ Vazifa jarayoni» ni yoqing va Scriptable vidjetini qulf ekraniga qo'shing."),
     h("div", { class: "label" }, "Ertalabki xulosa"), ...morningBlock(state),
     h("div", { class: "label" }, "Kuzatuvlar"),
     ...[["tg", "📡 Telegram kanal kuzatuvi"], ["price", "🏷 Narx kuzatuvi"]].map(([k, l]) => {
@@ -1498,9 +1509,23 @@ async function poll() {
     saveCache();
     if (S.state && S.state.version) { if (!S.ver) S.ver = S.state.version; else if (S.ver !== S.state.version) showUpdate(); }
     checkUpdate();
+    keepAwake(!!(S.state && (S.state.running_tasks.length || S.state.working.length)));
   } catch (e) { if (e.message !== "auth") toast("Aloqa yo'q…"); }
   finally { polling = false; }
 }
+// Vazifa ishlayotganda ekran o'chib qolmasin (panel ochiq turganda): Screen Wake Lock. Ish tugasa o'zi bo'shatiladi.
+// iOS'da bosh ekranga qo'shilgan ilovada iOS 18.4+ da ishlaydi; qo'llamaydigan qurilmada jim o'tadi.
+let wakeLock = null, wantAwake = false;
+async function keepAwake(on) {
+  wantAwake = on;
+  try {
+    if (on && !wakeLock && !document.hidden && "wakeLock" in navigator && localStorage.getItem("awake") !== "0") {
+      wakeLock = await navigator.wakeLock.request("screen");
+      wakeLock.addEventListener("release", () => { wakeLock = null; });
+    } else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch { wakeLock = null; }
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && wantAwake) keepAwake(true); });
 function nextDelay() {  // ish bor yoki chat ochiq: tez; bo'sh turganda: sekinroq (server va bazaga yuk kamayadi)
   if (document.hidden) return 30000;
   const st = S.state;

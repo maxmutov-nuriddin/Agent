@@ -245,6 +245,10 @@ class Watcher:
             return []
 
     async def deliver(self, hits: list[str], senders):
+        if hits:   # vidjet uchun oxirgi topilma
+            from datetime import datetime, timezone
+            await self.app.store.set_kv("watch_last_hit", json.dumps(
+                {"text": hits[-1].split("\n")[0][:120], "ts": datetime.now(timezone.utc).isoformat()}, ensure_ascii=False))
         for h in hits:
             if getattr(self.app, "push", None):
                 try:
