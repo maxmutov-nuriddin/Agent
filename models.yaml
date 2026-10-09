@@ -26,3 +26,8 @@ providers:
       cheap:  {id: "meta-llama/llama-3.3-70b-instruct:free", in: 0, out: 0}
       mid:    {id: "meta-llama/llama-3.3-70b-instruct:free", in: 0, out: 0}
       strong: {id: "meta-llama/llama-3.3-70b-instruct:free", in: 0, out: 0}
+  groq:   # BEPUL (limit bilan), juda tez. Faqat fon ishlari uchun, Sozlamalarda yoqiladi. GROQ_MODEL bilan almashtiriladi
+    models:
+      cheap:  {id: llama-3.1-8b-instant,    in: 0, out: 0}
+      mid:    {id: llama-3.3-70b-versatile, in: 0, out: 0}
+      strong: {id: llama-3.3-70b-versatile, in: 0, out: 0}

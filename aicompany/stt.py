@@ -1,6 +1,6 @@
 """Ovozni matnga aylantirish zanjiri (speech-to-text).
 
-Avto rejim: Google Cloud STT → Microsoft Azure Speech → Whisper (serverda, bepul) → Gemini.
+Avto rejim: Google Cloud STT → Microsoft Azure Speech → Groq Whisper (bepul, Sozlamalarda yoqilsa) → Whisper (serverda, bepul) → Gemini.
 - Bepul limitlar hisoblanadi (oy bo'yicha daqiqa): limit tugashiga 1 daqiqa qolsa, keyingisiga o'tiladi.
 - Natijaning ishonch darajasi past bo'lsa (gap tushunilmagan bo'lishi mumkin), keyingi xizmat, oxirida Gemini
   (u ovozdagi ma'noni ham tushunadi). Hech biri ishonchli bo'lmasa, eng yaxshi natija qaytariladi.
@@ -22,8 +22,8 @@ from datetime import datetime, timezone
 import httpx
 
 log = logging.getLogger("aicompany.stt")
-ORDER = ("google", "azure", "whisper", "gemini")
-NAMES = {"google": "Google Cloud", "azure": "Microsoft Azure", "whisper": "Whisper (serverda)", "gemini": "Gemini"}
+ORDER = ("google", "azure", "groq", "whisper", "gemini")
+NAMES = {"google": "Google Cloud", "azure": "Microsoft Azure", "groq": "Groq Whisper", "whisper": "Whisper (serverda)", "gemini": "Gemini"}
 MIN_CONF = 0.6          # shundan past ishonch: "tushunilmagan bo'lishi mumkin", keyingi xizmatga
 CHUNK_S = 55            # Google/Azure qisqa so'rov limiti ~60 soniya: bo'laklab yuboriladi
 RATE = 16000
@@ -45,6 +45,8 @@ def configured(name: str) -> bool:
         return bool(os.environ.get("GOOGLE_STT_KEY"))
     if name == "azure":
         return bool(os.environ.get("AZURE_SPEECH_KEY") and os.environ.get("AZURE_SPEECH_REGION"))
+    if name == "groq":
+        return bool(os.environ.get("GROQ_API_KEY"))
     if name == "whisper":
         try:
             import faster_whisper  # noqa: F401
@@ -138,6 +140,27 @@ async def azure(wav: bytes) -> tuple[str, float]:
     return " ".join(texts).strip(), (sum(confs) / len(confs) if confs else 0.0)
 
 
+async def groq(wav: bytes) -> tuple[str, float]:
+    """Groq Whisper (bepul tarif, limit bilan). Ishonch: segmentlarning avg_logprob'idan."""
+    key = os.environ["GROQ_API_KEY"]
+    model = os.environ.get("GROQ_STT_MODEL", "whisper-large-v3")
+    async with httpx.AsyncClient(timeout=60) as c:
+        r = await c.post("https://api.groq.com/openai/v1/audio/transcriptions", headers={"Authorization": f"Bearer {key}"},
+                         files={"file": ("audio.wav", wav, "audio/wav")},
+                         data={"model": model, "language": "uz", "response_format": "verbose_json", "temperature": "0"})
+    if r.status_code >= 400:
+        raise RuntimeError(f"Groq STT: HTTP {r.status_code} {r.text[:150]}")
+    d = r.json()
+    segs = d.get("segments") or []
+    text = (d.get("text") or "").strip()
+    if not text:
+        return "", 0.0
+    if not segs:
+        return text, 0.7
+    lp = sum(float(x.get("avg_logprob", -1.0)) for x in segs) / len(segs)
+    return text, max(0.0, min(1.0, math.exp(lp)))
+
+
 _whisper_model = None
 
 
@@ -162,7 +185,7 @@ async def whisper(wav: bytes) -> tuple[str, float]:
         return await asyncio.to_thread(_whisper_sync, f.name)
 
 
-SERVICES = {"google": google, "azure": azure, "whisper": whisper}
+SERVICES = {"google": google, "azure": azure, "groq": groq, "whisper": whisper}
 
 
 class SpeechChain:
@@ -173,6 +196,9 @@ class SpeechChain:
     async def mode(self) -> str:
         m = await self.store.get_kv("stt_mode")
         return m if m in ("auto", *ORDER) else "auto"
+
+    async def groq_on(self) -> bool:
+        return await self.store.get_kv("groq_on") == "1"
 
     def _month(self) -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m")
@@ -195,7 +221,10 @@ class SpeechChain:
         out = {}
         for n in ORDER:
             lim = free_minutes(n)
-            out[n] = {"name": NAMES[n], "ready": configured(n) if n != "gemini" else self.router.has_audio(),
+            ready = configured(n) if n != "gemini" else self.router.has_audio()
+            if n == "groq":
+                ready = ready and await self.groq_on()   # Sozlamalarda "Groq" yoqilgan bo'lsagina
+            out[n] = {"name": NAMES[n], "ready": ready,
                       "used_min": round(await self.used_min(n), 1), "free_min": lim}
         return {"mode": await self.mode(), "services": out}
 
@@ -218,7 +247,7 @@ class SpeechChain:
                 except VoiceError as e:
                     errors.append(f"gemini: {e}")
                     continue
-            if not configured(name):
+            if not configured(name) or (name == "groq" and not await self.groq_on()):
                 continue
             try:
                 wav = wav or await to_wav16k(audio, mime)

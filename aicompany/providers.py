@@ -183,6 +183,12 @@ class OpenRouterProvider(OpenAIProvider):
         return {"Authorization": f"Bearer {self.api_key}", "X-Title": "AI Jamoa"}
 
 
+class GroqProvider(OpenAIProvider):
+    """Groq: juda tez, bepul tarif (daqiqalik/kunlik limit bilan). OpenAI formatida ishlaydi."""
+    name = "groq"
+    base = "https://api.groq.com/openai/v1"
+
+
 def _gemini_schema(node):
     """JSON Schema -> Gemini qabul qiladigan to'plam (additionalProperties va h.k. olib tashlanadi)."""
     if isinstance(node, dict):
@@ -319,7 +325,7 @@ class GeminiProvider(_HttpProvider):
 
 
 def build_providers(settings) -> dict[str, Provider]:
-    classes = {"anthropic": AnthropicProvider, "openai": OpenAIProvider, "gemini": GeminiProvider, "openrouter": OpenRouterProvider}
+    classes = {"anthropic": AnthropicProvider, "openai": OpenAIProvider, "gemini": GeminiProvider, "openrouter": OpenRouterProvider, "groq": GroqProvider}
     return {n: classes[n](p.api_key) for n, p in settings.providers.items() if p.api_key}
 
 

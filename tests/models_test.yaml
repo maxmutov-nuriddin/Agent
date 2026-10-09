@@ -26,3 +26,8 @@ providers:
       cheap:  {id: "free-model:free", in: 0, out: 0}
       mid:    {id: "free-model:free", in: 0, out: 0}
       strong: {id: "free-model:free", in: 0, out: 0}
+  groq:
+    models:
+      cheap:  {id: "groq-small", in: 0, out: 0}
+      mid:    {id: "groq-big", in: 0, out: 0}
+      strong: {id: "groq-big", in: 0, out: 0}

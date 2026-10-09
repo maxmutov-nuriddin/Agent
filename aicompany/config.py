@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 TIERS = ("cheap", "mid", "strong")
-KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY", "openrouter": "OPENROUTER_API_KEY"}
+KEY_ENV = {"anthropic": "ANTHROPIC_API_KEY", "openai": "OPENAI_API_KEY", "gemini": "GEMINI_API_KEY", "openrouter": "OPENROUTER_API_KEY", "groq": "GROQ_API_KEY"}
 
 
 @dataclass(frozen=True)
@@ -83,7 +83,7 @@ def load_settings(env: dict | None = None, models_path: Path | None = None) -> S
     raw = yaml.safe_load((models_path or ROOT / "models.yaml").read_text())["providers"]
     providers = {}
     for name, body in raw.items():
-        override = (env.get("OPENROUTER_MODEL") or "").strip() if name == "openrouter" else ""
+        override = (env.get(f"{name.upper()}_MODEL") or "").strip() if name in ("openrouter", "groq") else ""
         models = {
             tier: ModelCfg(
                 id=override or m["id"], price_in=float(m["in"]), price_out=float(m["out"]),

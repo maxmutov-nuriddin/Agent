@@ -177,38 +177,74 @@ async def test_say_survives_tts_failure(make_app):
 
 
 async def test_free_ai_gating(make_app):
-    """OpenRouter (bepul) faqat: yoqilgan + free_ok + cheap + asbobsiz. Xato bersa, dam oladi va pulliga o'tadi."""
+    """Bepul AI (Groq, OpenRouter): faqat yoqilgan + free_ok + cheap + asbobsiz. Xato bersa dam oladi va keyingisiga o'tadi."""
     from aicompany.providers import ProviderError
-    state = {"fail": False}
+    fail = set()
 
     def handler(system, user, model):
-        if "openrouter" in model or model.endswith(":free"):
-            return ProviderError("429 limit") if state["fail"] else "bepul javob"
+        if model.startswith("groq"):
+            return ProviderError("429 limit") if "groq" in fail else "groq javob"
+        if model.endswith(":free"):
+            return ProviderError("429 limit") if "or" in fail else "openrouter javob"
         return "pullik javob"
-    app, provs = await make_app(handler, names=("anthropic", "openrouter"), OWNER_TELEGRAM_ID="1")
+    app, provs = await make_app(handler, names=("anthropic", "openrouter", "groq"), OWNER_TELEGRAM_ID="1")
     r = app.router
+    msgs = [{"role": "user", "content": "x"}]
 
-    async def run(**kw):
-        return (await r.call("cheap", "s", [{"role": "user", "content": "x"}], **kw)).provider
+    async def run(tier="cheap", **kw):
+        return (await r.call(tier, "s", msgs, **kw)).provider
     assert await run(free_ok=True) == "anthropic"          # o'chiq: ishlatilmaydi
     await app.store.set_kv("openrouter_on", "1")
     assert await run() == "anthropic"                       # free_ok berilmagan (suhbat/agent): ishlatilmaydi
     assert await run(free_ok=True, tools=[{"name": "t", "description": "", "input_schema": {}}]) == "anthropic"
-    assert await run(free_ok=True) == "openrouter"          # yoqilgan fon ishi: bepul
-    assert (await r.call("mid", "s", [{"role": "user", "content": "x"}], free_ok=True)).provider == "anthropic"
-    state["fail"] = True
-    assert await run(free_ok=True) == "anthropic"           # xato: pulliga o'tdi
-    assert (await r.free_status())["cooldown_s"] > 0
-    state["fail"] = False
-    n = len(provs["openrouter"].calls)
-    assert await run(free_ok=True) == "anthropic" and len(provs["openrouter"].calls) == n   # dam olayotganda urinmaydi
+    assert await run(free_ok=True) == "openrouter"          # faqat OpenRouter yoqilgan
+    assert await run("mid", free_ok=True) == "anthropic"    # faqat cheap daraja
+    await app.store.set_kv("groq_on", "1")
+    assert await run(free_ok=True) == "groq"                # ikkalasi yoqiq: avval Groq
+    fail.add("groq")
+    assert await run(free_ok=True) == "openrouter"          # Groq xato: OpenRouter
+    assert (await r.free_status())["groq"]["cooldown_s"] > 0
+    fail.add("or")
+    assert await run(free_ok=True) == "anthropic"           # ikkalasi xato: pullik
+    fail.clear()
+    n = len(provs["groq"].calls)
+    assert await run(free_ok=True) == "anthropic" and len(provs["groq"].calls) == n   # dam olayotganda urinmaydi
+    r._free_down.clear()
+    assert await run(free_ok=True) == "groq"
 
 
 async def test_free_ai_api(web):
     from .test_web import post
     c, app = web
-    assert (await post(c, "/api/free_ai", {"enabled": True}))[0] == 400       # kalit yo'q
-    assert (await post(c, "/api/free_ai", {"enabled": False}))[0] == 200
+    assert (await post(c, "/api/free_ai", {"name": "groq", "enabled": True}))[0] == 400       # kalit yo'q
+    assert (await post(c, "/api/free_ai", {"name": "x", "enabled": False}))[0] == 400
+    assert (await post(c, "/api/free_ai", {"name": "groq", "enabled": False}))[0] == 200
+
+
+async def test_groq_stt(make_app, monkeypatch):
+    from aicompany import stt
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    monkeypatch.setenv("WHISPER_MODEL", "off")
+    chain = stt.SpeechChain(app.router)
+    got = []
+
+    async def fake_groq(wav):
+        got.append(1)
+        return "salom dunyo", 0.9
+    monkeypatch.setitem(stt.SERVICES, "groq", fake_groq)
+    wav = stt.frames_to_wav(b"\0\0" * 16000)
+
+    async def gem(a, m):
+        return "gemini"
+    import pytest
+    from aicompany.providers import VoiceUnavailable
+    with pytest.raises(VoiceUnavailable):
+        await chain.transcribe(wav, "audio/wav", gem)      # Groq o'chiq: o'tkazib yuboriladi (boshqa xizmat yo'q)
+    assert not got
+    await app.store.set_kv("groq_on", "1")
+    assert await chain.transcribe(wav, "audio/wav", gem) == "salom dunyo" and got      # yoqildi: Gemini'dan oldin ishlaydi
+    assert (await chain.status())["services"]["groq"]["ready"]
 
 
 async def test_openrouter_provider_request():

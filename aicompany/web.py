@@ -181,14 +181,14 @@ def make_web_app(app: App) -> web.Application:
             "watch_smart": (await app.store.get_kv("watch_smart")) == "1",
             "watch_on": {k: (await app.store.get_kv(f"watch_on:{k}")) != "0" for k in ("tg", "price")},
             "today": round(await today_spend(), 4),
-            "budgets": [{"provider": n, **v} for n, v in budgets.items() if n != app.router.FREE],
+            "budgets": [{"provider": n, **v} for n, v in budgets.items() if n not in app.router.FREE],
             "working": [{"agent": a, "task_id": b["task_id"]} for a, b in app.team.busy.items()],
             "done_today": done_today,
             "running_tasks": [{"id": t["id"], "request": t["request"][:100]} for t in running],
             "pending": len(app.center.list()) if app.center else 0,
             "version": VERSION,
             "primary": await app.router.primary(),
-            "providers": sorted(n for n in app.router.providers if n != app.router.FREE),
+            "providers": sorted(n for n in app.router.providers if n not in app.router.FREE),
         }
 
     async def h_state(request):
@@ -419,13 +419,16 @@ def make_web_app(app: App) -> web.Application:
         return json_ok({"primary": value})
 
     async def h_free_ai(request):
-        """Bepul AI (OpenRouter) yoqish/o'chirish: faqat oddiy, maxfiy bo'lmagan fon ishlari (kuzatuvlar) uchun."""
+        """Bepul AI (Groq / OpenRouter) yoqish-o'chirish: faqat oddiy, maxfiy bo'lmagan fon ishlari uchun."""
         d = await body(request)
-        if d.get("enabled") and app.router.FREE not in app.router.providers:
-            raise web.HTTPBadRequest(reason="OPENROUTER_API_KEY .env da yo'q")
-        await app.store.set_kv("openrouter_on", "1" if d.get("enabled") else "0")
-        app.router._free_down = 0.0
-        await app.store.audit("owner", "openrouter", "yoqildi" if d.get("enabled") else "o'chirildi")
+        name = str(d.get("name") or "")
+        if name not in app.router.FREE:
+            raise web.HTTPBadRequest(reason="noma'lum bepul AI")
+        if d.get("enabled") and name not in app.router.providers:
+            raise web.HTTPBadRequest(reason=f"{name.upper()}_API_KEY .env da yo'q")
+        await app.store.set_kv(f"{name}_on", "1" if d.get("enabled") else "0")
+        app.router._free_down.pop(name, None)
+        await app.store.audit("owner", name, "yoqildi" if d.get("enabled") else "o'chirildi")
         return json_ok(await app.router.free_status())
 
     async def h_voice(request):
@@ -476,7 +479,7 @@ def make_web_app(app: App) -> web.Application:
             "voice": any(p.supports_audio for p in app.router.providers.values()),
             "stt": await stt_status(),
             "search": "brave" if s.brave_key else "duckduckgo",
-            "providers": [{"name": n, "enabled": n in app.router.providers} for n in s.providers if n != app.router.FREE],
+            "providers": [{"name": n, "enabled": n in app.router.providers} for n in s.providers if n not in app.router.FREE],
             "free_ai": await app.router.free_status(),
             "primary": await app.router.primary(),
             "limits": {"task_usd": s.max_task_usd, "agents": s.max_agents, "parallel": s.max_parallel, "revisions": s.max_revisions,

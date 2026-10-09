@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-y";
+const PANEL_V = "2026.10.09-z";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -910,10 +910,10 @@ function morningBlock(state) {
 // --- Ovozni tanish zanjiri ---
 function sttBlock(st) {
   if (!st) return [];
-  const opts = [["auto", "Avto"], ["google", "Google"], ["azure", "Azure"], ["whisper", "Whisper"], ["gemini", "Gemini"]];
+  const opts = [["auto", "Avto"], ["google", "Google"], ["azure", "Azure"], ["groq", "Groq"], ["whisper", "Whisper"], ["gemini", "Gemini"]];
   const save = async (m) => { try { await post("/stt", { mode: m }); toast("Ovozni tanish: " + opts.find((o) => o[0] === m)[1]); refresh(true); } catch (e) { toast(e.message); } };
   const rows = Object.entries(st.services).map(([k, v]) => h("div", { class: "kv" }, h("span", {}, (v.ready ? "✅ " : "⚪️ ") + v.name),
-    h("span", { class: "muted" }, !v.ready ? (k === "google" ? "GOOGLE_STT_KEY yo'q" : k === "azure" ? "AZURE_SPEECH_KEY/REGION yo'q" : k === "whisper" ? "o'rnatilmagan" : "kalit yo'q")
+    h("span", { class: "muted" }, !v.ready ? (k === "google" ? "GOOGLE_STT_KEY yo'q" : k === "azure" ? "AZURE_SPEECH_KEY/REGION yo'q" : k === "groq" ? "GROQ_API_KEY yo'q yoki Sozlamalarda Groq o'chiq" : k === "whisper" ? "o'rnatilmagan" : "kalit yo'q")
       : v.free_min ? `${v.used_min} / ${v.free_min} daq (bu oy, bepul)` : v.used_min ? `${v.used_min} daq (bu oy)` : "tayyor")));
   return [h("div", { class: "seg sm plans-filter" }, opts.map(([k, l]) => h("button", { class: st.mode === k ? "on" : "", onclick: () => save(k) }, l))),
     h("div", { class: "card" }, ...rows),
@@ -1181,15 +1181,18 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("div", { class: "seg" }, ["auto", ...known].map(opt)),
     h("p", { class: "hint" }, (connected.length ? "Ulangan: " + connected.join(", ") + ". " : "Hech qanday AI ulanmagan. ") +
       (connected.length < known.length ? "Ikkinchisini qo'shish uchun .env ga kalit qo'ying. " : "") + "Avto = eng arzonidan boshlaydi; tanlangani birinchi, boshqasi zaxira."));
-  const F = integ.free_ai || {};
-  const freeSw = (on) => h("div", { class: "seg" },
-    h("button", { class: on ? "on" : "", onclick: () => setFree(true) }, "Yoqilgan"),
-    h("button", { class: on ? "" : "on", onclick: () => setFree(false) }, "O'chiq"));
-  const setFree = async (v) => { try { await post("/free_ai", { enabled: v }); toast(v ? "Bepul AI yoqildi" : "Bepul AI o'chirildi"); refresh(true); } catch (e) { toast(e.message); } };
-  const free = h("div", {}, h("div", { class: "label" }, "Bepul AI (OpenRouter)"), freeSw(!!F.enabled),
-    h("p", { class: "hint" }, !F.ready ? "Kalit yo'q: .env ga OPENROUTER_API_KEY qo'ying. "
-      : (F.enabled ? (F.cooldown_s ? "⏸ Limit/xato: " + F.cooldown_s + " s dam oladi, hozir pullik AI ishlaydi. " : "✅ Ishlayapti. ") : "O'chiq. ") + "Model: " + F.model + ". ") ,
-    h("p", { class: "hint" }, "Faqat oddiy, maxfiy bo'lmagan fon ishlari uchun (narx/kanal kuzatuvlari): Gemini/Claude byudjeti tejaladi. Suhbat, maxfiy yozishmalar va agent ishlariga ishlatilmaydi. Xato bersa, o'zi pulliga o'tadi."));
+  const FREE_AI = [["groq", "Groq", "juda tez; fon ishlari va ovozni tanish (Whisper)"], ["openrouter", "OpenRouter", "bepul modellar; faqat fon ishlari"]];
+  const setFree = async (name, v) => { try { await post("/free_ai", { name, enabled: v }); toast((name === "groq" ? "Groq" : "OpenRouter") + (v ? " yoqildi" : " o'chirildi")); refresh(true); } catch (e) { toast(e.message); } };
+  const freeRows = FREE_AI.map(([k, label, what]) => {
+    const F = (integ.free_ai || {})[k] || {};
+    return [h("div", { class: "label" }, "Bepul AI: " + label),
+      h("div", { class: "seg" }, h("button", { class: F.enabled ? "on" : "", onclick: () => setFree(k, true) }, "Yoqilgan"),
+        h("button", { class: F.enabled ? "" : "on", onclick: () => setFree(k, false) }, "O'chiq")),
+      h("p", { class: "hint" }, !F.ready ? "Kalit yo'q: .env ga " + k.toUpperCase() + "_API_KEY qo'ying. "
+        : (F.enabled ? (F.cooldown_s ? "⏸ Limit/xato: " + F.cooldown_s + " s dam oladi, hozir keyingisi ishlaydi. " : "✅ Ishlayapti. ") : "O'chiq. ") + "Model: " + F.model + " (" + what + ").")];
+  }).flat();
+  const free = h("div", {}, ...freeRows,
+    h("p", { class: "hint" }, "Bepul AI faqat oddiy, maxfiy bo'lmagan fon ishlari uchun (narx/kanal kuzatuvlari): Gemini/Claude byudjeti tejaladi. Suhbat, qo'ng'iroq, maxfiy yozishmalar va agent ishlariga ishlatilmaydi. Limit tugasa yoki xato bersa, o'zi keyingisiga (oxirida pulliga) o'tadi."));
   const ta = integ.telegram_account;
   const links = h("div", { class: "card" },
     ...[["Telegram bot", integ.telegram_bot, ""],
