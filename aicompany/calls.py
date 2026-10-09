@@ -190,7 +190,7 @@ class CallService:
         try:
             await tgc.start()
         except Exception as e:  # noqa: BLE001
-            self.last_error = f"qo'ng'iroq modulini ishga tushirib bo'lmadi: {e}"[:200]
+            self.last_error = f"qo'ng'iroq modulini ishga tushirib bo'lmadi: {type(e).__name__} {e}"[:200]
             log.warning(self.last_error)
             return False
         self._client, self._tgc, self.last_error = client, tgc, ""
@@ -295,7 +295,7 @@ class CallService:
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001
-            self.last_error = f"qo'ng'iroqni ko'tarib bo'lmadi: {e}"[:200]
+            self.last_error = f"qo'ng'iroqni ko'tarib bo'lmadi: {type(e).__name__} {e}"[:200]
             log.warning(self.last_error)
             await self._cleanup(chat_id)
 
@@ -455,7 +455,7 @@ class CallService:
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — ko'tarmadi, band yoki rad etdi
-            self.last_error = f"qo'ng'iroq qilib bo'lmadi: {e}"[:200]
+            self.last_error = f"qo'ng'iroq qilib bo'lmadi: {type(e).__name__} {e}"[:200]
             log.info(self.last_error)
             await self._cleanup(chat_id)
             return False
