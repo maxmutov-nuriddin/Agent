@@ -254,3 +254,4 @@ def tool_defs(tools: list[Tool]) -> list[dict]:
 
 
 from . import tools_ext  # noqa: E402,F401  (joylashuv va Telegram asboblarini ro'yxatga oladi)
+from . import opendata  # noqa: E402,F401  (bepul ochiq manbalar: Overpass, Wikipedia/Wikidata, World Bank, RSS)

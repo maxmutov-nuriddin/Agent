@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-zg";
+const PANEL_V = "2026.10.09-zh";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -961,7 +961,28 @@ function morningBlock(state) {
       h("button", { class: M.on ? "" : "on", onclick: () => save({ on: false }) }, "O'chiq")),
     h("div", { class: "kv" }, h("span", {}, "Vaqti"), time),
     h("p", { class: "hint" }, "Har kuni shu vaqtda bildirishnoma keladi: ob-havo (uyingiz yoki oxirgi joylashuv bo'yicha), dollar/yevro/rubl kursi (Markaziy bank), bugungi eslatmalar va rejalar. AI ishlatilmaydi, pul sarflanmaydi."),
-    h("div", { class: "acts" }, test)];
+    h("div", { class: "acts" }, test),
+    h("div", { class: "label" }, "📰 Yangiliklar (RSS, bepul)"),
+    h("div", { class: "seg" },
+      h("button", { class: M.news !== false ? "on" : "", onclick: () => save({ news: true }) }, "Xulosada bor"),
+      h("button", { class: M.news !== false ? "" : "on", onclick: () => save({ news: false }) }, "O'chiq")),
+    ...newsSitesInput(M.sites || [], save)];
+}
+function newsSitesInput(sites, save) {
+  const inp = h("input", { value: sites.join(", "), placeholder: "kun.uz, gazeta.uz, daryo.uz" });
+  inp.addEventListener("change", () => save({ sites: inp.value }));
+  const out = h("div", {});
+  const chk = h("button", { class: "btn ghost" }, "🔎 Manbalarni tekshirish");
+  chk.onclick = async () => {
+    chk.disabled = true; chk.textContent = "Tekshirilmoqda…";
+    try {
+      const r = await post("/news/check");
+      out.replaceChildren(h("div", { class: "card" }, ...Object.entries(r.status).map(([k, v]) => h("div", { class: "kv" }, h("span", {}, k), h("span", { class: "muted" }, v))),
+        ...r.items.map((x) => h("p", { class: "hint" }, "• " + x.title + " (" + x.source + ")"))));
+    } catch (e) { toast(e.message); }
+    chk.disabled = false; chk.textContent = "🔎 Manbalarni tekshirish";
+  };
+  return [h("label", {}, "Saytlar (vergul bilan)"), inp, h("p", { class: "hint" }, "RSS manzilini tizim sayt sahifasidan o'zi topadi. Agentlar ham «news» asbobi orqali o'qiydi."), h("div", { class: "acts" }, chk), out];
 }
 
 // --- Ovozni tanish zanjiri ---

@@ -25,6 +25,11 @@ def fake_sources(monkeypatch, fail_weather=False):
         return R
     monkeypatch.setattr(briefing, "weather", weather)
     monkeypatch.setattr(briefing, "rates", rates)
+    from aicompany import opendata
+
+    async def no_news(env, store, limit=10, query=""):
+        return [], {}
+    monkeypatch.setattr(opendata, "latest_news", no_news)   # testda tarmoqqa chiqilmaydi
     return seen
 
 
@@ -79,10 +84,11 @@ async def test_morning_loop_sends_once_per_day(make_app, monkeypatch):
 async def test_morning_settings_api(web, monkeypatch):
     fake_sources(monkeypatch)
     c, app = web
-    assert (await get(c, "/api/state"))[1]["morning"] == {"on": True, "time": "08:00"}
+    m = (await get(c, "/api/state"))[1]["morning"]
+    assert m["on"] is True and m["time"] == "08:00" and m["news"] is True and "kun.uz" in m["sites"]
     assert (await post(c, "/api/morning", {"time": "25:00"}))[0] == 400
     code, d = await post(c, "/api/morning", {"on": False, "time": "7:30"})
-    assert code == 200 and d == {"on": False, "time": "07:30"}
+    assert code == 200 and d["on"] is False and d["time"] == "07:30"
     code, d = await post(c, "/api/morning/test")
     assert code == 200 and "Xayrli tong" in d["text"]
 

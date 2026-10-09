@@ -136,12 +136,22 @@ async def build(app) -> tuple[str, str]:
     if open_items:
         lines.append(f"📋 Rejalaringizda {open_items} ta bajarilmagan band bor")
         short.append(f"📋 {open_items} band")
+    if (await app.store.get_kv("morning_news")) != "0":
+        try:
+            from .opendata import latest_news, plain_env
+            items, _ = await asyncio.wait_for(latest_news(plain_env(), app.store, 5), 25)
+            if items:
+                lines.append("📰 Yangiliklar:\n" + "\n".join(f"• {x['title']} ({x['source']})\n  {x['link']}" for x in items))
+        except Exception as e:  # noqa: BLE001 — yangilik bo'lmasa ham xulosa yuboriladi
+            log.warning("yangiliklar olinmadi: %s", type(e).__name__)
     full = "☀️ Xayrli tong!\n" + "\n".join(lines or ["Bugun uchun ma'lumot olinmadi."])
     return " · ".join(short) or "Xayrli tong!", full
 
 
 async def settings_of(store) -> dict:
-    return {"on": (await store.get_kv("morning")) != "0", "time": (await store.get_kv("morning_time")) or "08:00"}
+    from .opendata import news_sites
+    return {"on": (await store.get_kv("morning")) != "0", "time": (await store.get_kv("morning_time")) or "08:00",
+            "news": (await store.get_kv("morning_news")) != "0", "sites": await news_sites(store)}
 
 
 def next_run(now_local: datetime, hhmm: str) -> datetime:

@@ -1101,8 +1101,23 @@ def make_web_app(app: App) -> web.Application:
             h, m = t.split(":")
             await app.store.set_kv("morning_time", f"{int(h):02d}:{m}")
             await app.store.delete_kv("morning_sent")   # yangi vaqt bugun ham ishlashi uchun
+        if "news" in d:
+            await app.store.set_kv("morning_news", "1" if d["news"] else "0")
+        if "sites" in d:
+            sites = [x.strip().lower() for x in re.split(r"[,\s]+", str(d["sites"])) if x.strip()][:10]
+            if any(not re.fullmatch(r"(https?://)?[a-z0-9.-]+\.[a-z]{2,}(/[\w./-]*)?", x) for x in sites):
+                raise web.HTTPBadRequest(reason="sayt manzillari: masalan kun.uz, gazeta.uz")
+            await app.store.set_kv("news_sites", ",".join(sites))
         await app.store.audit("owner", "morning", json.dumps(d, ensure_ascii=False)[:200])
         return json_ok(await morning_settings(app.store))
+
+    async def h_news_check(request):
+        """Yangilik manbalarini tekshirish: har sayt uchun RSS topildimi va nechta yangilik bor (AI'siz)."""
+        from .opendata import latest_news, news_sites, plain_env
+        for site in await news_sites(app.store):
+            await app.store.delete_kv(f"news_feed:{site}")   # qayta qidiradi
+        items, status = await latest_news(plain_env(), app.store, 5)
+        return json_ok({"status": status, "items": [{"title": x["title"], "source": x["source"], "link": x["link"]} for x in items]})
 
     async def h_morning_test(request):
         from .briefing import send
@@ -1363,7 +1378,7 @@ def make_web_app(app: App) -> web.Application:
         web.post("/api/tasks", h_task_submit),
         web.post(r"/api/tasks/{id:\d+}/stop", h_task_stop), web.post(r"/api/tasks/{id:\d+}/archive", h_task_archive),
         web.post(r"/api/tasks/{id:\d+}/restore", h_task_restore), web.delete(r"/api/tasks/{id:\d+}", h_task_delete),
-        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/morning", h_morning), web.post("/api/stt", h_stt), web.get("/api/watches", h_watches), web.post("/api/watches", h_watch_add), web.post(r"/api/watches/{id:\d+}", h_watch_update), web.delete(r"/api/watches/{id:\d+}", h_watch_delete), web.post(r"/api/watches/{id:\d+}/check", h_watch_check), web.post("/api/watch_smart", h_watch_smart), web.post("/api/watch_kind", h_watch_kind), web.post("/api/morning/test", h_morning_test), web.post("/api/resume", h_resume),
+        web.post("/api/pause", h_pause), web.post("/api/eco", h_eco), web.post("/api/bot_push", h_bot_push), web.post("/api/morning", h_morning), web.post("/api/stt", h_stt), web.get("/api/watches", h_watches), web.post("/api/watches", h_watch_add), web.post(r"/api/watches/{id:\d+}", h_watch_update), web.delete(r"/api/watches/{id:\d+}", h_watch_delete), web.post(r"/api/watches/{id:\d+}/check", h_watch_check), web.post("/api/watch_smart", h_watch_smart), web.post("/api/watch_kind", h_watch_kind), web.post("/api/morning/test", h_morning_test), web.post("/api/news/check", h_news_check), web.post("/api/resume", h_resume),
         web.post("/api/provider", h_provider), web.post("/api/free_ai", h_free_ai), web.post("/api/voice", h_voice), web.post("/api/location", h_location),
         web.get("/api/memory", h_memory), web.post("/api/memory", h_memory_add), web.delete(r"/api/memory/{id:\d+}", h_memory_delete),
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/widget-script", h_widget_script), web.get("/api/location", h_location_get),
