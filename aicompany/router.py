@@ -207,7 +207,7 @@ class Router:
             return vecs
         return None
 
-    async def speak(self, text: str, *, task_id=None) -> bytes:
+    async def speak(self, text: str, *, task_id=None, voice: str | None = None) -> bytes:
         """Matnni ovozga aylantiradi (PCM 24 kHz mono). Faqat Gemini."""
         cands = [p for n, p in self.s.providers.items() if n in self.providers and hasattr(self.providers[n], "speak")]
         if not cands:
@@ -218,7 +218,9 @@ class Router:
                 last = f"{pc.name}: limit"
                 continue
             try:
-                pcm, cost = await self.providers[pc.name].speak(pc.models["cheap"], text[:1500])
+                from .voices import resolve
+                name, style = resolve(voice or await self.store.get_kv("tts_voice"))
+                pcm, cost = await self.providers[pc.name].speak(pc.models["cheap"], text[:1500], name, style)
             except ProviderError as e:
                 last = str(e)
                 await self.store.audit("router", "tts_error", last[:500])

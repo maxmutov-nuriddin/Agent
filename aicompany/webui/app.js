@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-s";
+const PANEL_V = "2026.10.09-t";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -950,6 +950,22 @@ function pushBlock() {
   return out;
 }
 
+const VOICES = [["jarvis", "🤵 Jarvis"], ["orus", "Orus"], ["iapetus", "Iapetus"], ["algenib", "Algenib"], ["kore", "Kore (ayol)"]];
+function voiceSelect(cur) {
+  const sel = h("select", {}, VOICES.map(([k, l]) => h("option", { value: k, selected: k === cur ? "selected" : null }, l)));
+  sel.addEventListener("change", async () => { try { await post("/tts/voice", { voice: sel.value }); toast("Ovoz: " + sel.selectedOptions[0].textContent); } catch (e) { toast(e.message); } });
+  const play = h("button", { class: "btn ghost sm", type: "button" }, "🔊 Eshitib ko'rish");
+  play.onclick = async () => {
+    play.disabled = true; play.textContent = "Tayyorlanmoqda…";
+    try {
+      const r = await fetch("/api/tts/preview", { method: "POST", headers: { Authorization: "Bearer " + S.token, "Content-Type": "application/json" }, body: JSON.stringify({ voice: sel.value }) });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || "Xatolik " + r.status); }
+      const a = new Audio(URL.createObjectURL(await r.blob())); await a.play();
+    } catch (e) { toast(e.message); }
+    play.disabled = false; play.textContent = "🔊 Eshitib ko'rish";
+  };
+  return h("div", { class: "acts" }, sel, play);
+}
 function callBlock(t) {
   const C = (t && t.calls) || { available: false };
   const save = async (d) => { try { await post("/tg/calls", d); toast("Saqlandi"); setTimeout(tgSheet, 800); } catch (e) { toast(e.message); } };
@@ -961,6 +977,7 @@ function callBlock(t) {
   test.onclick = async () => { test.disabled = true; test.textContent = "Qo'ng'iroq qilinmoqda…"; try { await post("/tg/call_test", {}); toast("Qo'ng'iroq ketdi"); } catch (e) { toast(e.message); } test.disabled = false; test.textContent = "📞 Hozir menga qo'ng'iroq qil"; };
   return [h("div", { class: "label" }, "Ovozli qo'ng'iroq"), sw(C.enabled, "enabled"),
     h("p", { class: "hint" }, C.error ? "⚠️ " + C.error : !C.enabled ? "O'chiq." : C.ready ? "✅ Tayyor: agent akkauntiga qo'ng'iroq qilsangiz ko'taradi, hisobot va savollarga ovoz bilan javob beradi." : "Ishga tushmoqda…"),
+    h("label", {}, "Ovoz"), voiceSelect(C.voice || "jarvis"),
     h("label", {}, "Vazifa tugaganda menga qo'ng'iroq qilib natijani aytsin"), sw(C.notify, "notify"),
     h("div", { class: "acts" }, test)];
 }

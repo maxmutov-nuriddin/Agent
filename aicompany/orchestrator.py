@@ -40,6 +40,7 @@ async def _safe_done(cb, res):
 PREFS_MAX = 15     # shundan ko'p doimiy qoida bo'lsa, takrorlari birlashtiriladi
 PREFS_SHOWN = 20   # suhbat va rejaga hammasi sig'adi (birlashtirish 15 dan oshirmaydi)
 STEP_CTX = 3000    # keyingi qadamga beriladigan oldingi natija hajmi; to'liqi .steps/ faylida
+PHONE_WORDS = re.compile(r"\btel\b|telefon|qo'?ng'?iroq|qongiroq|звон|позвон|call me", re.I)
 TASK_WORDS = re.compile(r"vazifa|natija|hisobot|task|#\d|задач|результат|отчет|отчёт|nima bo'?ldi|qani|tugadimi|xato|muammo|davom|buni|uni |shuni|o'zgartir|qisqartir|kengaytir|tuzat|qo'sh|yaxshila|qayta|yana|fayl|prompt|исправ|измени|сократи", re.I)
 
 
@@ -142,7 +143,8 @@ class Orchestrator:
         "Briefly confirm it in the reply.\n"
         "- \"call\": text to SPEAK when the owner asks you to phone/call them right now (e.g. 'menga qo'ng'iroq qil, natijani ayt'). "
         "You can only call the owner, nobody else; if asked to call someone else, say you cannot.\n"
-        "- inside \"reminder\": \"call\": true when the owner wants the reminder delivered as a phone call ('tel qilib eslat').\n"
+        "- inside \"reminder\": \"call\": true when the owner wants the reminder delivered as a phone call ('tel qilib eslat', "
+        "'ertaga 7 da telefon qilib uyg'ot'). A phone call at a LATER time is always a reminder with call:true, never top-level call.\n"
         "- \"plan\": {\"period\": \"day\"|\"week\"|\"month\"|\"year\"|\"other\", \"title\": \"...\", \"items\": [\"...\", ...]} when the owner dictates "
         "THEIR OWN daily/weekly/monthly plan or to-do list ('bugungi rejam: ...', 'haftalik reja tuz'). It is saved to their Plans page. "
         "This is not for work you should do: that is a task.\n"
@@ -183,14 +185,16 @@ class Orchestrator:
         if decision.get("reminder"):
             from . import reminders
             try:
-                r = await reminders.create(self.store, self.settings, chat_id, decision["reminder"]["text"], decision["reminder"]["when"],
-                                           call=bool(decision["reminder"].get("call")) and self.call_ready())
                 wants_call = bool(decision["reminder"].get("call"))
+                # qo'ng'iroq istagi doim saqlanadi: modul hozir tayyor bo'lmasa ham, eslatma vaqtida yana urinib ko'riladi
+                r = await reminders.create(self.store, self.settings, chat_id, decision["reminder"]["text"], decision["reminder"]["when"],
+                                           call=wants_call)
                 decision["reply"] = (f"⏰ Eslatma yangilandi: {r['local']} — {r['text']}" if r.get("merged") else f"⏰ Eslatma qo'yildi: {r['local']} — {r['text']}")
-                if r.get("call"):
+                if r.get("call") and self.call_ready():
                     decision["reply"] += " (vaqti kelganda Telegram orqali sizga qo'ng'iroq qilaman)"
-                elif wants_call:
-                    decision["reply"] += " (qo'ng'iroq moduli ulanmagan, shuning uchun faqat matn yuboraman: Hisob → Telegram akkaunt → Ovozli qo'ng'iroq)"
+                elif r.get("call"):
+                    decision["reply"] += (" (vaqti kelganda qo'ng'iroq qilishga urinaman, lekin qo'ng'iroq moduli hozir tayyor emas: "
+                                          "Hisob → Telegram akkaunt → Ovozli qo'ng'iroq. Baribir matn ham keladi)")
             except ValueError as e:
                 decision["reply"] = f"Eslatmani qo'ya olmadim: {e}. Vaqtni aniqroq yozing (masalan: ertaga 9:00)."
         if decision.get("call"):
@@ -306,11 +310,13 @@ class Orchestrator:
             if plan and not reply:
                 reply = f"📋 Reja saqlandi: {plan['title']} ({len(plan['items'])} band). Rejalar sahifasida ko'rasiz."
             say = str(d.get("call") or "").strip() if isinstance(d.get("call"), (str, bool)) and d.get("call") else ""
-            if say and say.lower() not in ("true", "1"):
-                return {"mode": "chat", "reply": reply, "task": "", "call": say}
             rem = d.get("reminder")
             if isinstance(rem, dict) and rem.get("when") and rem.get("text"):
-                return {"mode": "chat", "reply": reply, "task": "", "reminder": {"when": str(rem["when"]), "text": str(rem["text"]), "call": bool(rem.get("call"))}}
+                # vaqtli so'rov: qo'ng'iroq HOZIR emas, eslatma vaqtida (model ikkalasini qaytarsa ham)
+                wants_call = bool(rem.get("call")) or bool(say) or bool(PHONE_WORDS.search(text))
+                return {"mode": "chat", "reply": reply, "task": "", "reminder": {"when": str(rem["when"]), "text": str(rem["text"]), "call": wants_call}}
+            if say and say.lower() not in ("true", "1"):
+                return {"mode": "chat", "reply": reply, "task": "", "call": say}
             if allow_tasks and d.get("mode") == "task":
                 return {"mode": "task", "reply": reply, "task": str(d.get("task", "")).strip() or text, "based_on": based_on}
             if not allow_tasks:  # faqat suhbat: ish so'ralgan bo'lsa taklif sifatida qaytaramiz

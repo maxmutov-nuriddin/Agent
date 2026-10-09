@@ -289,9 +289,9 @@ class GeminiProvider(_HttpProvider):
 
     TTS_MODEL = "gemini-2.5-flash-preview-tts"
 
-    async def speak(self, cfg, text: str, voice: str = "Kore") -> tuple[bytes, float]:
+    async def speak(self, cfg, text: str, voice: str = "Charon", style: str = "") -> tuple[bytes, float]:
         """Matnni ovozga aylantiradi: xom PCM (s16le, 24 kHz, mono) va taxminiy narx ($)."""
-        body = {"contents": [{"parts": [{"text": text}]}],
+        body = {"contents": [{"parts": [{"text": f"{style}: {text}" if style else text}]}],
                 "generationConfig": {"responseModalities": ["AUDIO"],
                                      "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}}}
         data = await self._generate("POST", f"{self.base}/models/{self.TTS_MODEL}:generateContent", cfg, json=body)

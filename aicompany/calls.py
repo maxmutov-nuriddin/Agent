@@ -136,6 +136,7 @@ class CallService:
 
     async def status(self) -> dict:
         return {"available": self.available(), "enabled": await self.enabled(), "notify": await self.notify_on(),
+                "voice": (await self.app.store.get_kv("tts_voice")) or "jarvis",
                 "ready": self._tgc is not None, "in_call": self.call is not None, "error": self.last_error}
 
     def _spawn(self, coro):

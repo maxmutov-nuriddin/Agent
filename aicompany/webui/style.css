@@ -542,3 +542,4 @@ details.team summary { cursor: pointer; color: var(--muted); font-weight: 700; f
   #view[data-tab="plans"] .plans-wrap > .watch-sec > :not(.card) { grid-column: 1 / -1; }
   #view[data-tab="plans"] .plans-wrap > .watch-sec .card.plan { margin: 0; }
 }
+.sheet-body select { flex: 1; min-width: 0; padding: 12px 14px; border-radius: 16px; background: var(--s2); color: var(--text); border: 0; outline: 0; font: inherit; }

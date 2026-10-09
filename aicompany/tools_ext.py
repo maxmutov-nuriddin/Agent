@@ -485,7 +485,7 @@ async def tg_delete_messages(env, a):
 async def set_reminder(env, a):
     from . import reminders
     try:
-        r = await reminders.create(env.store, env.settings, env.settings.owner_id or 0, a["text"], a["when"])
+        r = await reminders.create(env.store, env.settings, env.settings.owner_id or 0, a["text"], a["when"], call=bool(a.get("call")))
     except ValueError as e:
         raise ToolError(str(e)) from e
     return f"eslatma #{r['id']} qo'yildi: {r['local']} ({env.settings.report_tz}) — {r['text']}"
@@ -506,7 +506,8 @@ async def cancel_reminder(env, a):
 TOOLS.update({t.name: t for t in [
     Tool("set_reminder", "time", "Remind the owner later (sent to Telegram and the panel). when: 'HH:MM', 'ertaga HH:MM', "
          "'YYYY-MM-DD HH:MM' (owner's local time) or a delay like '30 daq', '2 soat', '1 kun'.",
-         _obj({"text": {"type": "string"}, "when": {"type": "string"}}, ["text", "when"]), set_reminder),
+         _obj({"text": {"type": "string"}, "when": {"type": "string"},
+               "call": {"type": "boolean", "description": "true: also phone the owner at that time"}}, ["text", "when"]), set_reminder),
     Tool("list_reminders", "time", "List the owner's pending reminders.", _obj({}, []), list_reminders),
     Tool("cancel_reminder", "time", "Cancel a pending reminder by id.", _obj({"id": {"type": "integer"}}, ["id"]), cancel_reminder),
 ]})

@@ -239,6 +239,7 @@ async def test_call_now_and_phone_reminder(make_app):
     assert "qo'ng'iroq" in res["reply"]
     rid = (await app.store.list_reminders())[0]["id"]
     assert await app.store.get_kv(f"rcall:{rid}") == "1"
+    import asyncio
     from aicompany.reminders import deliver_due
     async with app.store.engine.begin() as c:
         import sqlalchemy as sa
@@ -249,6 +250,7 @@ async def test_call_now_and_phone_reminder(make_app):
     async def send(t):
         sent.append(t)
     await deliver_due(app, [send])
+    await asyncio.sleep(0.05)                                                   # qo'ng'iroq fonda
     assert sent and calls[-1] == "Eslatma. dori ich"
 
 
@@ -298,7 +300,7 @@ async def test_same_reminder_is_merged_not_duplicated_and_call_needs_module(make
     r1 = await app.orch.handle("ertaga 9 da uygot", 5)
     assert "qo'yildi" in r1["reply"]
     r2 = await app.orch.handle("telefon qilib uygotgin", 5)
-    assert "yangilandi" in r2["reply"] and "ulanmagan" in r2["reply"]          # modul yo'q: halol aytadi
+    assert "yangilandi" in r2["reply"] and "tayyor emas" in r2["reply"]        # modul yo'q: halol aytadi, istak saqlanadi
     assert len(await app.store.list_reminders()) == 1                           # takror yo'q
     app.orch.call_ready = lambda: True
     n["i"] = 1
@@ -322,3 +324,34 @@ async def test_owner_plan_dictated_in_chat_goes_to_plans_page(make_app):
     plans = await app.store.list_plans()
     assert plans[0]["title"] == "Bugungi reja" and "Bozorga borish" in plans[0]["items"]
     assert await app.store.list_tasks() == []                              # vazifa ochilmadi
+
+
+async def test_timed_phone_request_never_calls_now_and_reports_failure(make_app):
+    import asyncio
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "front desk" in system:   # model ikkalasini qaytardi: hozir qo'ng'iroq + eslatma
+            return json.dumps({"mode": "chat", "reply": "", "task": "", "call": "Uyg'oning!",
+                               "reminder": {"when": "+60m", "text": "Uyg'onish"}})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID="1")
+    calls = []
+
+    async def fake_call(text, **kw):
+        calls.append(text)
+        return False                                                          # ko'tarilmadi
+    app.orch.call_owner = fake_call
+    app.orch.call_ready = lambda: True
+    res = await app.orch.handle("ertaga 7 da telefon qilib uyg'ot", 5)
+    assert calls == [] and "qo'ng'iroq qilaman" in res["reply"]                 # hozir emas, vaqtida
+    rid = (await app.store.list_reminders())[0]["id"]
+    assert await app.store.get_kv(f"rcall:{rid}") == "1"
+    from aicompany.reminders import phone_reminder
+    app.calls.last_error = "qo'ng'iroq qilib bo'lmadi: javob yo'q"
+    sent = []
+
+    async def send(t):
+        sent.append(t)
+    ok = await phone_reminder(app, "Uyg'onish", [send], retry_after=0)
+    assert not ok and len(calls) == 2 and "qila olmadim" in sent[0] and "javob yo'q" in sent[0]   # 2 urinish, keyin sabab

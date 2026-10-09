@@ -60,6 +60,41 @@ async def create(store, settings, chat_id: int, text: str, when: str, call: bool
     return {"id": rid, "text": text, "due_at": due.isoformat(), "local": local_text(due.isoformat(), settings.report_tz), "call": call}
 
 
+_tasks: set = set()
+
+
+def _bg(coro):
+    t = asyncio.create_task(coro)
+    _tasks.add(t)
+    t.add_done_callback(_tasks.discard)
+
+
+async def phone_reminder(app, text: str, senders, retry_after: float = 120):
+    """Eslatmani qo'ng'iroq bilan yetkazadi: ko'tarilmasa 2 daqiqadan keyin yana bir marta. Bo'lmasa sababi yoziladi."""
+    orch = app.orch
+    reason = ""
+    for attempt in range(2):
+        if not (getattr(orch, "call_owner", None) and orch.call_ready()):
+            reason = "qo'ng'iroq moduli tayyor emas (Hisob → Telegram akkaunt → Ovozli qo'ng'iroq)"
+            break
+        try:
+            if await orch.call_owner(f"Eslatma. {text}"):
+                return True
+        except Exception as e:  # noqa: BLE001
+            log.exception("eslatma qo'ng'irog'i")
+            reason = str(e)[:150]
+        calls = getattr(app, "calls", None)
+        reason = (getattr(calls, "last_error", "") or reason or "javob bo'lmadi")[:200]
+        if attempt == 0:
+            await asyncio.sleep(retry_after)
+    for send in senders:
+        try:
+            await send(f"📞 Eslatma uchun qo'ng'iroq qila olmadim: {reason}. Eslatma: {text}")
+        except Exception:  # noqa: BLE001
+            log.exception("qo'ng'iroq xatosi haqida xabar")
+    return False
+
+
 async def deliver_due(app, senders) -> int:
     """Vaqti kelgan eslatmalarni yuboradi. Kamida bitta kanal yetkazsa 'sent' bo'ladi."""
     n = 0
@@ -72,12 +107,9 @@ async def deliver_due(app, senders) -> int:
             except Exception:  # noqa: BLE001 — bitta kanal ishlamasa boshqasi yetkazadi
                 log.exception("eslatma yuborilmadi")
         await app.store.mark_reminder(r["id"], "sent" if ok else "failed")
-        if await app.store.get_kv(f"rcall:{r['id']}") and getattr(app.orch, "call_owner", None) and app.orch.call_ready():
-            try:
-                await app.orch.call_owner(f"Eslatma. {r['text']}")
-            except Exception:  # noqa: BLE001 — qo'ng'iroq bo'lmasa ham matn yuborilgan
-                log.exception("eslatma qo'ng'irog'i")
+        if await app.store.get_kv(f"rcall:{r['id']}"):
             await app.store.delete_kv(f"rcall:{r['id']}")
+            _bg(phone_reminder(app, r["text"], senders))
         n += ok
     return n
 

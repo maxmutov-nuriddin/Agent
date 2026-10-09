@@ -5,6 +5,7 @@ import io
 from aicompany.calls import Segmenter, pcm_to_wav, spoken_text, rms
 
 from .conftest import scripted_company
+from .test_web import web  # noqa: F401  (fixture)
 
 
 def tone(ms, amp, rate=16000):
@@ -81,3 +82,30 @@ async def test_speak_requires_gemini(make_app):
     app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
     with pytest.raises(VoiceUnavailable):
         await app.router.speak("salom")
+
+
+async def test_voice_choice_and_jarvis_style(make_app):
+    import base64
+    from aicompany.providers import GeminiProvider
+    from aicompany.voices import resolve
+    assert resolve(None)[0] == "Charon" and "Jarvis" in resolve(None)[1]          # standart: Jarvis uslubi
+    assert resolve("kore") == ("Kore", "")
+    prov = GeminiProvider("k")
+    sent = {}
+
+    async def fake_generate(method, url, cfg, json=None, **kw):
+        sent.update(json)
+        return {"candidates": [{"content": {"parts": [{"inlineData": {"data": base64.b64encode(b"\0\0" * 2400).decode()}}]}}]}
+    prov._generate = fake_generate
+    pcm, cost = await prov.speak(None, "Salom", *resolve("jarvis"))
+    voice = sent["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]["voiceName"]
+    assert voice == "Charon" and sent["contents"][0]["parts"][0]["text"].endswith(": Salom") and len(pcm) == 4800
+
+
+async def test_voice_api(web):
+    from .test_web import post
+    c, app = web
+    assert (await post(c, "/api/tts/voice", {"voice": "nope"}))[0] == 400
+    assert (await post(c, "/api/tts/voice", {"voice": "algenib"}))[1] == {"voice": "algenib"}
+    assert await app.store.get_kv("tts_voice") == "algenib"
+    assert (await post(c, "/api/tts/preview", {"voice": "jarvis"}))[0] == 400     # Gemini kaliti yo'q: tushunarli xato
