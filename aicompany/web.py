@@ -527,6 +527,8 @@ def make_web_app(app: App) -> web.Application:
         if d.get("voice") not in VOICES:
             raise web.HTTPBadRequest(reason="noma'lum ovoz")
         await app.store.set_kv("tts_voice", d["voice"])
+        if app.calls and app.calls._tgc is not None:
+            app.calls._spawn(app.calls.warm_fillers())   # yangi ovozda "hmm"larni oldindan tayyorlash (bir marta)
         return json_ok({"voice": d["voice"]})
 
     async def h_tts_preview(request):

@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import asyncio
 
-MATURE = ("a mature man in his forties with a deep, resonant baritone voice; calm, confident, polite and slightly formal, "
-          "unhurried measured pace, like the refined AI butler Jarvis")
+NATURAL = ("Speak naturally and casually like a real person on a phone call: relaxed, warm and light, with lively natural "
+           "intonation and small natural pauses, never robotic or announcer-like. Voice: ")
 VOICES = {
     # kalit: (Gemini ovozi, uslub, pitch, panelda nomi)
-    "jarvis": ("Alnilam", f"Say in the voice of {MATURE}", 0.88, "🤵 Jarvis (chuqur bariton)"),
-    "jarvis2": ("Charon", f"Say in the voice of {MATURE}", 0.86, "🤵 Jarvis 2 (yumshoqroq)"),
-    "sadaltager": ("Sadaltager", "Say in a knowledgeable, deep, calm adult male voice", 0.9, "Sadaltager (bilimdon, past)"),
-    "algenib": ("Algenib", "Say in a deep, gravelly, mature male voice, calm pace", 0.92, "Algenib (xirillagan, chuqur)"),
-    "orus": ("Orus", "Say in a firm, clear, confident adult male voice", 0.93, "Orus (qat'iy)"),
-    "kore": ("Kore", "", 1.0, "Kore (ayol)"),
+    "jarvis": ("Alnilam", NATURAL + "a calm, confident, friendly man in his thirties, like the AI assistant Jarvis", 0.95, "🤵 Jarvis (tabiiy, yengil)"),
+    "jarvis2": ("Charon", NATURAL + "a calm, confident, friendly man in his thirties, like the AI assistant Jarvis", 0.94, "🤵 Jarvis 2 (yumshoq)"),
+    "sadaltager": ("Sadaltager", NATURAL + "a knowledgeable, easy-going adult man", 0.96, "Sadaltager (bilimdon)"),
+    "algenib": ("Algenib", NATURAL + "a slightly gravelly, relaxed adult man", 0.97, "Algenib (xirillagan)"),
+    "orus": ("Orus", NATURAL + "a clear, confident adult man", 0.98, "Orus (aniq)"),
+    "kore": ("Kore", NATURAL + "a friendly, confident woman", 1.0, "Kore (ayol)"),
 }
 DEFAULT = "jarvis"
 

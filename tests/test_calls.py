@@ -88,8 +88,8 @@ async def test_voice_choice_and_jarvis_style(make_app):
     import base64
     from aicompany.providers import GeminiProvider
     from aicompany.voices import resolve
-    assert resolve(None)[0] == "Alnilam" and "Jarvis" in resolve(None)[1] and resolve(None)[2] < 1   # standart: chuqur Jarvis
-    assert resolve("kore") == ("Kore", "", 1.0)
+    assert resolve(None)[0] == "Alnilam" and "Jarvis" in resolve(None)[1] and 0.9 < resolve(None)[2] < 1   # tabiiy, biroz past
+    assert resolve("kore")[0] == "Kore" and "naturally" in resolve("kore")[1] and resolve("kore")[2] == 1.0
     prov = GeminiProvider("k")
     sent = {}
 

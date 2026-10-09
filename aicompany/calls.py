@@ -11,6 +11,7 @@ import array
 import asyncio
 import io
 import logging
+import random
 import re
 import time
 import wave
@@ -92,6 +93,9 @@ def spoken_text(text: str, limit: int = 600) -> str:
     return (cut[:end + 1] if end > limit // 2 else cut.rsplit(" ", 1)[0]) + " Batafsil natija chatda."
 
 
+FILLERS = ("Hmm...", "Xo'sh...", "Mm, ha...", "Bir soniya...")
+LONG_FILLERS = ("Bir daqiqa, qarab chiqyapman...", "Hozir aniqlayapman...")
+LONG_WAIT = 5   # soniya: javob shundan uzoq kechiksa, yana bir ibora aytiladi
 REPORT_WORDS = re.compile(r"hisobot|otchet|отчет|отчёт|report|nima qilindi|bugun nima", re.I)
 HANGUP_WORDS = re.compile(r"^(xayr|hayr|rahmat,? xayr|bo'?ldi|tamom|пока|до свидания|bye|goodbye)\b", re.I)
 
@@ -190,6 +194,7 @@ class CallService:
             log.warning(self.last_error)
             return False
         self._client, self._tgc, self.last_error = client, tgc, ""
+        self._spawn(self.warm_fillers())
         log.info("Telegram qo'ng'iroq moduli tayyor")
         return True
 
@@ -212,13 +217,17 @@ class CallService:
 
     async def say(self, call: Call, text: str):
         """Matnni ovozga aylantirib, qo'ng'iroqda aytadi (aytayotganda eshitmaydi: o'zini eshitib qolmasin)."""
-        from pytgcalls.types import Device
         text = (text or "").strip()
         if not text or call.closed:
             return
+        await self._play(call, await self.app.router.speak(text))
+
+    async def _play(self, call: Call, pcm: bytes, pause: float = 0.3):
+        from pytgcalls.types import Device
+        if not pcm or call.closed:
+            return
         call.speaking = True
         try:
-            pcm = await self.app.router.speak(text)
             step = OUT_RATE * 2 * FRAME_MS // 1000
             t0 = time.monotonic()
             for i, off in enumerate(range(0, len(pcm), step)):
@@ -228,11 +237,47 @@ class CallService:
                 wait = t0 + (i + 1) * FRAME_MS / 1000 - time.monotonic()
                 if wait > 0:
                     await asyncio.sleep(wait)
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(pause)
         finally:
             call.speaking = False
             call.seg = Segmenter()
             call.last_activity = time.monotonic()
+
+    # ---------- "hmm" kabi o'ylash tovushlari: bir marta yaratiladi, diskda saqlanadi, keyin AI ishlatilmaydi ----------
+    def _cache_dir(self):
+        d = self.app.settings.workspace_dir / ".voice_cache"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    async def _voice_key(self) -> str:
+        return (await self.app.store.get_kv("tts_voice")) or "jarvis"
+
+    async def filler_pcm(self, text: str, create: bool = False) -> bytes | None:
+        import hashlib
+        key = hashlib.sha1(f"{await self._voice_key()}|{text}".encode()).hexdigest()[:16]
+        f = self._cache_dir() / f"{key}.pcm"
+        if f.exists():
+            return f.read_bytes()
+        if not create:
+            return None
+        try:
+            pcm = await self.app.router.speak(text)
+        except Exception:  # noqa: BLE001 — o'ylash tovushisiz ham qo'ng'iroq ishlaydi
+            return None
+        f.write_bytes(pcm)
+        return pcm
+
+    async def warm_fillers(self):
+        """Tanlangan ovozda o'ylash tovushlarini oldindan tayyorlab qo'yadi (har ovoz uchun bir marta)."""
+        for t in (*FILLERS, *LONG_FILLERS):
+            await self.filler_pcm(t, create=True)
+
+    async def _filler(self, call: Call, pool=None):
+        pcm = await self.filler_pcm(random.choice(pool or FILLERS))
+        if pcm:
+            await self._play(call, pcm, pause=0.05)
+        else:
+            self._spawn(self.warm_fillers())   # keyingi gaplar uchun tayyorlab qo'yamiz (qo'ng'iroqni kutdirmaymiz)
 
     # ---------- qo'ng'iroq hayoti ----------
     async def _owner_ids(self) -> list[int]:
@@ -303,19 +348,24 @@ class CallService:
     async def _turn(self, call: Call, utt: bytes) -> bool:
         """Bitta gap: eshit -> tushun -> ayt. False qaytsa qo'ng'iroq tugaydi."""
         from .providers import VoiceError, VoiceUnavailable
+        fill = asyncio.create_task(self._filler(call))   # "hmm..." — siz gapirib bo'lgach darhol, o'ylayotganda
         try:
             text = await self.app.router.transcribe(pcm_to_wav(utt), "audio/wav")
         except VoiceUnavailable as e:
+            await fill
             await self.say(call, str(e))
             return False
         except VoiceError:
+            await fill
             await self.say(call, "Tushunmadim, qaytaring.")
             return True
         log.info("qo'ng'iroq: %s", text[:80])
         if HANGUP_WORDS.match(text.strip()):
+            await fill
             await self.say(call, "Xayr!")
             return False
         if REPORT_WORDS.search(text):
+            await fill
             await self.say(call, await self.spoken_report())
             return True
         first = asyncio.Event()
@@ -325,10 +375,15 @@ class CallService:
             if not said:
                 said.append(str(s))
                 first.set()
-        job = asyncio.create_task(self.app.orch.handle(text, call.chat_id, notify))
+        job = asyncio.create_task(self.app.orch.handle(text, call.chat_id, notify, spoken=True))
         waiter = asyncio.create_task(first.wait())
-        await asyncio.wait({job, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        done, _ = await asyncio.wait({job, waiter}, timeout=LONG_WAIT, return_when=asyncio.FIRST_COMPLETED)
+        if not done:   # uzoq o'ylayapti: yana bir tabiiy ibora ("bir daqiqa, qarab chiqyapman")
+            await fill
+            fill = asyncio.create_task(self._filler(call, LONG_FILLERS))
+            await asyncio.wait({job, waiter}, return_when=asyncio.FIRST_COMPLETED)
         waiter.cancel()
+        await fill
         if said:
             await self.say(call, spoken_text(said[0], 400))
         if job.done():
