@@ -5,7 +5,7 @@
 // Ish ketayotganda: kim nima qilyapti, vazifa xarajati va qadamlar. Tinch paytda: oxirgi natijalar, eslatmalar, moliya.
 // DIQQAT: WIDGET_TOKEN faqat umumiy holatni o'qiydi (boshqarib bo'lmaydi), lekin baribir maxfiy saqlang.
 
-const VERSION = "2.1";   // vidjetda «Moliya» yonida ko'rinadi: qaysi skript ishlayotganini bilish uchun
+const VERSION = "2.2";   // vidjetda «Moliya» yonida ko'rinadi: qaysi skript ishlayotganini bilish uchun
 const BASE_URL = "https://SIZNING-MANZIL";
 const WIDGET_TOKEN = "WIDGET_TOKEN_NI_SHU_YERGA";
 
@@ -22,6 +22,8 @@ async function load() {
 
 // ---------- kichik yordamchilar ----------
 const money = (v) => "$" + Number(v || 0).toFixed(2);
+// vidjet qachon yangilangani (telefon vaqti): yangilanmay qolsa darrov ko'rinadi
+const stamp = (() => { const n = new Date(); return "⟳" + String(n.getHours()).padStart(2, "0") + ":" + String(n.getMinutes()).padStart(2, "0"); })();
 function txt(stack, text, size, color, bold, lines) {
   const t = stack.addText(String(text == null ? "" : text));
   t.font = bold ? Font.boldSystemFont(size) : Font.systemFont(size);
@@ -83,7 +85,7 @@ function dayCounts(tl) {
 function reminderText(r) { return `⏰ ${r.time} ${r.text}` + (r.call ? " 📞" : ""); }
 function headerBadge(d) {
   const h = d.header || {};
-  return [h.date, h.weather, h.usd ? "$1=" + h.usd : ""].filter(Boolean).join(" · ");
+  return [h.date, h.weather, h.usd ? "$1=" + h.usd : "", stamp].filter(Boolean).join(" · ");
 }
 
 // ---------- blokirovka ekrani ----------
@@ -101,13 +103,13 @@ function lockWidget(d) {
     return w;
   }
   if (live) {
-    txt(w, `⚙️ AI Jamoa · #${live.id} · ${liveHead(live)}`, 13, WHITE, true);
+    txt(w, `⚙️ #${live.id} · ${liveHead(live)} · ${stamp}`, 13, WHITE, true);
     const who = (live.agents || []).map((a) => a.label).join(", ") || live.phase || "ishlanmoqda";
     txt(w, `${who} · ${money(live.cost)}`, 12, WHITE, false);
     if ((live.agents || [])[0]) txt(w, live.agents[0].act, 11, WHITE, false);
     else if (d.pending) txt(w, `🔐 ${d.pending} ta ruxsat kutyapti`, 11, WHITE, false);
   } else {
-    txt(w, "✅ AI Jamoa · tinch", 13, WHITE, true);
+    txt(w, `✅ AI Jamoa · tinch · ${stamp}`, 13, WHITE, true);
     txt(w, `bugun ${d.done_today} tayyor · ${money(d.today)} · qoldi ${money(d.budget_left)}`, 12, WHITE, false);
     const r = ((d.day || {}).reminders || [])[0];
     if (r) txt(w, reminderText(r), 11, WHITE, false);
@@ -127,7 +129,7 @@ function small(w, d) {
     w.addSpacer(6);
     txt(w, (live.agents || []).map((a) => a.label).join(", ") || live.phase || "ishlanmoqda", 11, MUTED, false, 2);
     w.addSpacer();
-    txt(w, `${money(live.cost)} / ${money(live.limit)}`, 12, LIME, true);
+    txt(w, `${money(live.cost)} / ${money(live.limit)} · ${stamp}`, 11, LIME, true);
   } else {
     txt(w, "○ Tinch", 13, LIME, true);
     w.addSpacer(6);
@@ -136,7 +138,7 @@ function small(w, d) {
     w.addSpacer(6);
     w.addImage(bar(d.budget_total ? 1 - d.budget_left / d.budget_total : 0, 130, 6));
     w.addSpacer();
-    txt(w, `qoldi ${money(d.budget_left)} · ${d.done_today} tayyor`, 11, MUTED, false);
+    txt(w, `qoldi ${money(d.budget_left)} · ${stamp}`, 11, MUTED, false);
   }
 }
 
@@ -144,8 +146,8 @@ function medium(w, d) {
   const live = (d.live || [])[0], day = d.day || {}, m = d.money || {};
   if (live) {
     const h = row(w); txt(h, `● #${live.id} · ${liveHead(live)}`, 15, LIME, true); h.addSpacer();
-    if (d.pending) txt(h, `🔐 ${d.pending} ruxsat`, 11, AMBER, true);
-    else txt(h, live.request, 11, MUTED, false);
+    if (d.pending) txt(h, `🔐 ${d.pending} ruxsat · ${stamp}`, 11, AMBER, true);
+    else txt(h, stamp, 11, MUTED, false);
     w.addSpacer();
     const ag = (live.agents || []).slice(0, 2);
     if (ag.length) ag.forEach((a) => { agentLine(w, a, 12); w.addSpacer(3); });
@@ -157,7 +159,7 @@ function medium(w, d) {
   } else {
     const h = row(w); txt(h, "○ AI Jamoa · tinch", 15, LIME, true); h.addSpacer();
     const hd = d.header || {};
-    txt(h, [hd.weather, hd.usd ? "$1=" + hd.usd : ""].filter(Boolean).join(" · "), 11, MUTED, false);
+    txt(h, [hd.weather, hd.usd ? "$1=" + hd.usd : "", stamp].filter(Boolean).join(" · "), 11, MUTED, false);
     w.addSpacer();
     const last = (d.recent_done || [])[0];
     if (last) { const r = row(w); txt(r, `✅ #${last.id} ${last.request}`, 12, WHITE, false); r.addSpacer(4); txt(r, money(last.cost), 12, LIME, true); w.addSpacer(3); }
@@ -222,7 +224,8 @@ async function build() {
   let d;
   try { d = await load(); } catch (e) {
     const w = new ListWidget(); w.backgroundColor = BG;
-    txt(w, "AI Jamoa", 15, LIME, true); txt(w, "Aloqa yo'q", 13, RED, false);
+    txt(w, "AI Jamoa", 15, LIME, true); txt(w, "Aloqa yo'q · " + stamp, 13, RED, false);
+    txt(w, String((e && e.message) || "").slice(0, 100), 10, MUTED, false, 2);
     w.refreshAfterDate = new Date(Date.now() + 5 * 60 * 1000); return w;
   }
   const running = (d.live || []).length > 0;
@@ -243,7 +246,16 @@ async function build() {
   return w;
 }
 
-const widget = await build();
+function errorWidget(e) {
+  const w = new ListWidget(); w.backgroundColor = BG; w.url = BASE_URL;
+  txt(w, "AI Jamoa · v" + VERSION, 14, LIME, true); w.addSpacer(4);
+  txt(w, "Vidjetda xato: " + String((e && e.message) || e).slice(0, 140), 11, RED, false, 4);
+  w.addSpacer(4); txt(w, "Skrinshotini yuboring · " + stamp, 10, MUTED, false);
+  w.refreshAfterDate = new Date(Date.now() + 5 * 60 * 1000);
+  return w;
+}
+let widget;
+try { widget = await build(); } catch (e) { widget = errorWidget(e); }
 if (config.runsInWidget) Script.setWidget(widget);
 else if (fam === "small") await widget.presentSmall();
 else if (fam === "medium") await widget.presentMedium();
