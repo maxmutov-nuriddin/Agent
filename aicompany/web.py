@@ -19,6 +19,7 @@ from aiohttp import web
 from .push import available as push_available
 from .briefing import settings_of as morning_settings
 from .app import App
+from . import voicereply
 from .report import build_report, day_start_utc
 from .providers import ProviderError, VoiceError, VoiceUnavailable, suggest_model
 from .tguser import TgError, TgStale
@@ -344,15 +345,17 @@ def make_web_app(app: App) -> web.Application:
 
     async def h_chat_post(request):
         """Suhbat: oddiy xabarlar vazifa emas. Ish so'ralsa rahbar vazifa taklif qiladi."""
-        text = text_of(await body(request))
+        d = await body(request)
+        text = text_of(d)
+        want_voice = await voicereply.wanted(app.store, text, bool(d.get("voice")))   # mikrofon bilan aytilgan bo'lsa: voice=true
 
         async def job():
             try:
-                await app.orch.handle(text, chat_id, notify, allow_tasks=False)
+                await app.orch.handle(text, chat_id, notify, allow_tasks=False, voice=want_voice)
             except Exception as e:  # noqa: BLE001
                 await report_failure(e)
         spawn(job())
-        return json_ok({"ok": True})
+        return json_ok({"ok": True, "voice": want_voice})
 
     async def h_task_submit(request):
         """«Vazifa berish»: to'g'ridan-to'g'ri vazifa (suhbatsiz), ixtiyoriy biriktirilgan fayllar bilan."""
@@ -481,6 +484,7 @@ def make_web_app(app: App) -> web.Application:
             "search": "brave" if s.brave_key else "duckduckgo",
             "providers": [{"name": n, "enabled": n in app.router.providers} for n in s.providers if n not in app.router.FREE],
             "free_ai": await app.router.free_status(),
+            "voice_reply": await voicereply.mode(app.store),
             "primary": await app.router.primary(),
             "limits": {"task_usd": s.max_task_usd, "agents": s.max_agents, "parallel": s.max_parallel, "revisions": s.max_revisions,
                        "tool_turns": s.max_tool_turns, "command_s": s.command_timeout, "report": f"{s.report_hour}:00 ({s.report_tz})",
@@ -544,6 +548,21 @@ def make_web_app(app: App) -> web.Application:
         if app.calls and app.calls._tgc is not None:
             app.calls._spawn(app.calls.warm_fillers())   # yangi ovozda "hmm"larni oldindan tayyorlash (bir marta)
         return json_ok({"voice": d["voice"]})
+
+    async def h_tts_say(request):
+        """Matnni ovozli xabar (mp3) qilib beradi: panel chatida javobni tinglash. Bir xil matn keshdan."""
+        text = text_of(await body(request))
+        audio = await voicereply.synth(app, text, "mp3")
+        if not audio:
+            raise web.HTTPBadRequest(reason="ovoz yaratib bo'lmadi (Gemini kaliti yoki Edge kerak)")
+        return web.Response(body=audio, content_type="audio/mpeg", headers={"Cache-Control": "no-store"})
+
+    async def h_voice_reply(request):
+        m = str((await body(request)).get("mode", ""))
+        if m not in voicereply.MODES:
+            raise web.HTTPBadRequest(reason="rejim: mirror, always yoki off")
+        await app.store.set_kv("voice_reply", m)
+        return json_ok({"mode": m})
 
     async def h_tts_mode(request):
         d = await body(request)
@@ -1166,7 +1185,7 @@ def make_web_app(app: App) -> web.Application:
         web.get("/api/integrations", h_integrations), web.get("/api/models", h_models), web.get("/api/widget-link", h_widget_link), web.get("/api/location", h_location_get),
         web.post("/api/tg/keys", h_tg_keys), web.post("/api/tg/code", h_tg_code),
         web.post("/api/tg/verify", h_tg_verify), web.post("/api/tg/resend", h_tg_resend),
-        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
+        web.post("/api/tg/qr", h_tg_qr_start), web.get("/api/tg/qr", h_tg_qr), web.post("/api/tg/logout", h_tg_logout), web.post("/api/tg/access", h_tg_access), web.post("/api/tg/listen", h_tg_listen), web.post("/api/tg/calls", h_tg_calls), web.get("/api/push/key", h_push_key), web.post("/api/push/subscribe", h_push_subscribe), web.post("/api/push/unsubscribe", h_push_unsubscribe), web.post("/api/push/prefs", h_push_prefs), web.post("/api/push/test", h_push_test), web.post("/api/tg/call_test", h_tg_call_test), web.post("/api/tts/voice", h_tts_voice), web.post("/api/tts/mode", h_tts_mode), web.post("/api/tts/say", h_tts_say), web.post("/api/voice_reply", h_voice_reply), web.post("/api/tts/preview", h_tts_preview), web.get("/api/tg/me", h_tg_me),
         web.post("/api/place", h_place), web.delete("/api/place/{name}", h_place_delete),
         web.post("/api/team/review", h_review), web.get("/api/report", h_report), web.get("/api/audit", h_audit),
         web.post("/api/chat/clear", h_chat_clear), web.post("/api/upload", h_upload),

@@ -125,7 +125,9 @@ class TgListener:
         try:
             text = (getattr(msg, "message", "") or "").strip()
             attachments = None
+            came_as_voice = False
             if getattr(msg, "voice", None) or getattr(msg, "audio", None):
+                came_as_voice = True
                 text = await self._voice(event, msg)
                 if text is None:
                     return
@@ -137,7 +139,7 @@ class TgListener:
                 text = text or "Ilova qilingan fayl bilan ishlang."
             if not text:
                 return
-            await self.run(chat_id, text, attachments)
+            await self.run(chat_id, text, attachments, came_as_voice)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — egasi javobsiz qolmasin
@@ -182,10 +184,33 @@ class TgListener:
         for i in range(0, len(text), 3900):
             await client.send_message(chat_id, text[i:i + 3900])
 
-    async def run(self, chat_id: int, text: str, attachments=None):
+    async def _send_voice(self, chat_id: int, res: dict):
+        from . import voicereply
+        audio = await voicereply.synth(self.app, voicereply.reply_text(res))
+        if not audio:
+            return
+        f = io.BytesIO(audio)
+        f.name = "javob.ogg"
+        client = await self.app.tg.client()
+        await client.send_file(chat_id, f, voice_note=True)
+
+    async def run(self, chat_id: int, text: str, attachments=None, came_as_voice: bool = False):
+        from . import voicereply
+
         async def notify(s: str):
             await self._send(chat_id, s)
-        res = await self.app.orch.handle(text, chat_id, notify, attachments)
+        want_voice = await voicereply.wanted(self.app.store, text, came_as_voice)
+        res = await self.app.orch.handle(text, chat_id, notify, attachments, voice=want_voice)
+        try:
+            await self._deliver(chat_id, res)
+        finally:
+            if want_voice:   # matn va fayllardan keyin ovozli xabar
+                try:
+                    await self._send_voice(chat_id, res)
+                except Exception as e:  # noqa: BLE001 — ovoz yuborilmasa ham matn javob bor
+                    log.warning("ovozli javob yuborilmadi: %s", type(e).__name__)
+
+    async def _deliver(self, chat_id: int, res: dict):
         if res["kind"] == "chat":
             return
         head = f"🏁 Vazifa #{res['task_id']} — {STATUS_UZ.get(res['status'], res['status'])}"

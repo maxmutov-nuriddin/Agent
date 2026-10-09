@@ -10,7 +10,7 @@ const IC = {
   mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
   send: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6l.1 6.5 10.9 1.9-10.9 1.9z"/></svg>',
 };
-const PANEL_V = "2026.10.09-zb";
+const PANEL_V = "2026.10.09-zc";
 const PROV = { anthropic: "Claude", gemini: "Gemini", openai: "ChatGPT", auto: "Avto" };
 const TABS = [["team", "Jamoa"], ["cards", "Kartalar"], ["tasks", "Vazifalar"], ["plans", "Rejalar"], ["stats", "Hisob"]];
 const ST = { done: ["Tayyor", ""], running: ["Ishlayapti", "on"], failed: ["Xato", "red"], cancelled: ["Siz to'xtatdingiz", "amber"],
@@ -1264,6 +1264,10 @@ function drawStats({ state, spend, mem, integ, loc, rems }) {
     h("p", { class: "hint" }, state.eco !== false
       ? "Reja va yakuniy qadoqlash arzon modelda, eng qimmat daraja ishlatilmaydi, bitta qadamli ishda qayta yozish yo'q. Odatda ~2 barobar arzon."
       : "Sifat rejimi: rahbar o'rta/kuchli modeldan foydalanadi, QA e'tirozida eng kuchli model qayta yozadi. Murakkab ishlar uchun."),
+    h("div", { class: "label" }, "Ovozli javob"),
+    h("div", { class: "seg" }, [["mirror", "Ovozga ovoz bilan"], ["always", "Har doim"], ["off", "O'chiq"]].map(([k, l]) =>
+      h("button", { class: (integ.voice_reply || "mirror") === k ? "on" : "", onclick: async () => { try { await post("/voice_reply", { mode: k }); toast("Ovozli javob: " + l); refresh(true); } catch (e) { toast(e.message); } } }, l))),
+    h("p", { class: "hint" }, "Ovozli xabar yuborsangiz (Telegram yoki chatdagi mikrofon), javob matn bilan birga ovozli xabar bo'lib ham keladi. «Ovozli javob ber» deb yozsangiz ham. Ovoz qo'ng'iroqdagi bilan bir xil. Chatdagi har javob yonidagi 🔊 bilan istalganini tinglash mumkin."),
     h("div", { class: "label" }, "Ovozni tanish (ovoz → matn)"), ...sttBlock(integ.stt),
     h("div", { class: "label" }, "Bildirishnomalar (telefonga)"), ...pushBlock(),
     h("div", { class: "label" }, "Ertalabki xulosa"), ...morningBlock(state),
@@ -1326,13 +1330,32 @@ function msgEl(m) {
     });
     return h("div", { class: "msg proposal" }, h("div", { class: "q" }, "Taklif qilingan vazifa" + (p.based_on ? ` (#${p.based_on} ustida)` : "")), h("div", {}, p.task), btn);
   }
+  if (m.role === "ceo") {
+    const play = h("button", { class: "say-btn", type: "button", "aria-label": "Tinglash", title: "Ovozda tinglash" }, "🔊");
+    play.onclick = () => sayText(m.text, play);
+    return h("div", { class: "msg ceo" }, m.text, play);
+  }
   return h("div", { class: "msg " + m.role }, m.text);
+}
+let sayAudio = null;
+async function sayText(text, btn) {
+  if (sayAudio) { sayAudio.pause(); sayAudio = null; }
+  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  try {
+    const r = await fetch("/api/tts/say", { method: "POST", headers: { Authorization: "Bearer " + S.token, "Content-Type": "application/json" }, body: JSON.stringify({ text: text.slice(0, 4000) }) });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || "Xatolik " + r.status); }
+    sayAudio = new Audio(URL.createObjectURL(await r.blob()));
+    await sayAudio.play();
+  } catch (e) { if (btn) toast(e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = "🔊"; }
 }
 async function pollChat() {
   const rows = await api("/chat?after=" + S.lastChat);
   if (!rows.length) return;
   S.lastChat = rows[rows.length - 1].id; S.chat.push(...rows);
   S.typing = false;
+  const reply = rows.find((m) => m.role === "ceo");
+  if (S.speakNext && reply) { S.speakNext = false; sayText(reply.text); }   // ovoz bilan so'ralgan: javob o'zi o'qiladi
   if (S.chatOpen) {
     const box = $("msgs"), near = box.scrollHeight - box.scrollTop - box.clientHeight < 140;
     box.querySelectorAll(".typing").forEach((n) => n.remove());
@@ -1359,7 +1382,7 @@ async function sendChat() {
   const ta = $("chat-input"), text = ta.value.trim(); if (!text) return;
   ta.value = ""; ta.style.height = "auto";
   try {
-    await post("/chat", { text }); S.typing = true;
+    const r = await post("/chat", { text, voice: !!S.dictated }); S.dictated = false; S.speakNext = !!(r && r.voice); S.typing = true;
     const box = $("msgs"); box.querySelector(".empty")?.remove(); box.append(h("div", { class: "typing" }, "Rahbar o'ylayapti…")); box.scrollTop = box.scrollHeight;
     await pollChat();
   } catch (e) { toast(e.message); ta.value = text; }
@@ -1390,7 +1413,7 @@ async function voiceCapture(btn, onText) {
   rec.start(); micState(true);
 }
 function toggleMic() {
-  voiceCapture($("chat-mic"), (text) => { const ta = $("chat-input"); ta.value = (ta.value ? ta.value + " " : "") + text; ta.dispatchEvent(new Event("input")); ta.focus(); });
+  voiceCapture($("chat-mic"), (text) => { S.dictated = true; const ta = $("chat-input"); ta.value = (ta.value ? ta.value + " " : "") + text; ta.dispatchEvent(new Event("input")); ta.focus(); });
 }
 $("chat-mic").classList.add("mic-btn");
 $("chat-mic").append(svg(IC.mic));

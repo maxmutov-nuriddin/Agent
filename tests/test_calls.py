@@ -357,3 +357,47 @@ async def test_say_plays_chunks_in_order(make_app):
     await app.calls.say(Call(1), "Birinchi gap ancha uzun bo'lsin deb yozildi. Ikkinchi gap ham uzunroq yozildi mana. Uchinchi.")
     assert len(played) >= 2 and played[0].startswith("Birinchi") and "Ikkinchi" in " ".join(played)
     assert "tts" in app.calls.timing
+
+
+async def test_voice_reply_rules(make_app):
+    from aicompany import voicereply
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
+    st = app.store
+    assert voicereply.asked("ovozli javob ber") and voicereply.asked("golosovoy qilib yubor") and voicereply.asked("ответь голосом")
+    assert not voicereply.asked("bugun ob-havo qanday") and not voicereply.asked("ovozli qo'ng'iroq sozlamasi")
+    assert await voicereply.wanted(st, "salom", True)          # ovozga ovoz (standart)
+    assert not await voicereply.wanted(st, "salom", False)
+    assert await voicereply.wanted(st, "ovozli javob ber, nima gap", False)
+    await st.set_kv("voice_reply", "always")
+    assert await voicereply.wanted(st, "salom", False)
+    await st.set_kv("voice_reply", "off")
+    assert not await voicereply.wanted(st, "ovozli javob ber", True)
+    assert voicereply.reply_text({"kind": "chat", "reply": "Ha"}) == "Ha"
+    assert voicereply.reply_text({"kind": "task", "status": "done", "result": "R"}).startswith("Vazifa tayyor")
+
+
+async def test_voice_reply_web(web, monkeypatch):
+    from aicompany import voicereply
+    from .test_web import post
+    c, app = web
+    seen = []
+
+    async def handle(text, chat_id, notify, **kw):
+        seen.append(kw.get("voice"))
+        return {"kind": "chat", "reply": "ok"}
+    app.orch.handle = handle
+    status, d = await post(c, "/api/chat", {"text": "salom", "voice": True})
+    assert status == 200 and d["voice"] is True
+    status, d = await post(c, "/api/chat", {"text": "salom"})
+    assert d["voice"] is False
+    import asyncio
+    await asyncio.sleep(0.05)
+    assert seen == [True, False]
+    assert (await post(c, "/api/voice_reply", {"mode": "x"}))[0] == 400
+    assert (await post(c, "/api/voice_reply", {"mode": "always"}))[1] == {"mode": "always"}
+
+    async def fake_synth(app_, text, fmt="ogg"):
+        return b"ID3mp3" if fmt == "mp3" else None
+    monkeypatch.setattr(voicereply, "synth", fake_synth)
+    r = await c.post("/api/tts/say", json={"text": "salom"}, headers={"Authorization": "Bearer " + app.settings.web_token})
+    assert r.status == 200 and r.headers["Content-Type"].startswith("audio/mpeg") and await r.read() == b"ID3mp3"

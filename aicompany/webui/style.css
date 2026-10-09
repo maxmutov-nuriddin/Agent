@@ -139,6 +139,8 @@ input, textarea { font: inherit; color: var(--text); }
 .msg { max-width: 86%; padding: 11px 15px; border-radius: 20px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 16px; }
 .msg.owner { align-self: flex-end; background: var(--lime); color: var(--on-lime); border-bottom-right-radius: 6px; font-weight: 500; }
 .msg.ceo { align-self: flex-start; background: var(--s2); border-bottom-left-radius: 6px; }
+.msg.ceo .say-btn { display: inline-flex; margin-left: 8px; vertical-align: middle; border: 0; background: transparent; color: var(--muted, #888); font-size: 14px; padding: 2px 4px; cursor: pointer; opacity: .7; }
+.msg.ceo .say-btn:hover { opacity: 1; }
 .msg.sys { align-self: flex-start; color: var(--muted); font-size: 13px; padding: 2px 4px; max-width: 100%; }
 .msg.result { align-self: stretch; max-width: 100%; background: var(--s1); border: 1px solid var(--line); border-radius: 22px; }
 .msg.result .t { margin-top: 8px; max-height: 220px; overflow: hidden; position: relative; font-size: 15px; }

@@ -312,11 +312,27 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
             await send_text(bot, chat_id, s)
         return notify
 
-    async def run(chat_id: int, text: str, attachments=None):
+    async def send_voice_reply(chat_id: int, res: dict):
+        """Ovozli javob (matn allaqachon yuborilgan). «O'chiq» xabar rejimida vazifa natijasi ovozda ham yuborilmaydi."""
+        from . import voicereply
+        if res.get("kind") != "chat" and await push_mode() == "off":
+            return
+        audio = await voicereply.synth(app, voicereply.reply_text(res))
+        if audio:
+            await bot.send_voice(chat_id, BufferedInputFile(audio, "javob.ogg"))
+
+    async def run(chat_id: int, text: str, attachments=None, came_as_voice: bool = False):
+        from . import voicereply
         notify = await progress_notifier(chat_id)
         try:
-            res = await app.orch.handle(text, chat_id, notify, attachments)
+            want_voice = await voicereply.wanted(app.store, text, came_as_voice)
+            res = await app.orch.handle(text, chat_id, notify, attachments, voice=want_voice)
             await deliver(chat_id, res)
+            if want_voice:
+                try:
+                    await send_voice_reply(chat_id, res)
+                except Exception as e:  # noqa: BLE001 — ovoz yuborilmasa ham matn javob bor
+                    log.warning("ovozli javob yuborilmadi: %s", type(e).__name__)
         except asyncio.CancelledError:
             raise
         except Exception as e:  # noqa: BLE001 — foydalanuvchi javobsiz qolmasligi kerak
@@ -357,7 +373,7 @@ def make_dispatcher(app: App, bot: Bot) -> Dispatcher:
         except VoiceError as e:
             return await m.answer(f"🎤 {e}")
         await m.answer(f"🎤 Eshitdim: {text}")
-        spawn(run(m.chat.id, text))
+        spawn(run(m.chat.id, text, came_as_voice=True))
 
     @dp.message(F.text & ~F.text.startswith("/"))
     async def _text(m: Message):

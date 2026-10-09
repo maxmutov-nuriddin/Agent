@@ -39,7 +39,7 @@ class Client:
     async def send_message(self, chat, text):
         self.sent.append((chat, text))
 
-    async def send_file(self, chat, f, caption=None):
+    async def send_file(self, chat, f, caption=None, voice_note=False):
         self.files.append((chat, getattr(f, "name", f), caption))
 
 
@@ -98,7 +98,7 @@ async def test_task_result_and_files_are_sent_back(lapp, tmp_path):
     ws.mkdir(parents=True)
     (ws / "sayt.html").write_text("<h1>x</h1>")
 
-    async def handle(text, chat_id, notify, attachments=None):
+    async def handle(text, chat_id, notify, attachments=None, **kw):
         await notify("Boshladim")
         return {"kind": "task", "task_id": 5, "status": "done", "result": "x" * 5000, "files": ["sayt.html"]}
     app.orch.handle = handle
@@ -108,19 +108,27 @@ async def test_task_result_and_files_are_sent_back(lapp, tmp_path):
     assert [f[1] for f in client.files] == ["task_5.md", str(ws / "sayt.html")]
 
 
-async def test_voice_and_document_from_owner(lapp):
+async def test_voice_and_document_from_owner(lapp, monkeypatch):
+    from aicompany import voicereply
     app, client = lapp
     seen = []
+    said = []
 
-    async def handle(text, chat_id, notify, attachments=None):
-        seen.append((text, [p.name for p in attachments or []]))
+    async def fake_synth(app_, text, fmt="ogg"):
+        said.append(text)
+        return b"OggS"
+    monkeypatch.setattr(voicereply, "synth", fake_synth)
+
+    async def handle(text, chat_id, notify, attachments=None, **kw):
+        seen.append((text, [p.name for p in attachments or []], kw.get("voice")))
         return {"kind": "chat", "reply": "ok"}
     app.orch.handle = handle
     lst = TgListener(app)
     await lst.handle_event(event(777, voice=object(), data=b"ogg" * 100))
-    assert client.sent[-1] == (777, "🎤 Eshitdim: ertaga uchrashuv") and seen[-1] == ("ertaga uchrashuv", [])
+    assert client.sent[-1] == (777, "🎤 Eshitdim: ertaga uchrashuv") and seen[-1] == ("ertaga uchrashuv", [], True)
+    assert said == ["ok"] and client.files[-1] == (777, "javob.ogg", None)     # ovozli xabarga ovozli javob
     await lst.handle_event(event(777, "shuni tahlil qil", document=object(), data=b"%PDF", mid=42))
-    assert seen[-1] == ("shuni tahlil qil", ["tg42_hujjat.pdf"])
+    assert seen[-1] == ("shuni tahlil qil", ["tg42_hujjat.pdf"], False) and said == ["ok"]   # matnga ovoz yo'q
     assert (app.settings.workspace_dir / "inbox" / "tg42_hujjat.pdf").read_bytes() == b"%PDF"
 
 

@@ -193,14 +193,15 @@ class Orchestrator:
         return {**base, "reply": "Qachon qo'ng'iroq qilay? Vaqtni aniqroq ayting (masalan: 15 daqiqadan keyin yoki ertaga 9:00)."}
 
     async def handle(self, text: str, chat_id: int = 0, notify: Notify = _noop,
-                     attachments: list[Path] | None = None, allow_tasks: bool = True, spoken: bool = False) -> dict:
+                     attachments: list[Path] | None = None, allow_tasks: bool = True, spoken: bool = False,
+                     voice: bool = False) -> dict:
         """Oddiy xabarni qabul qiladi. allow_tasks=True: suhbat yoki vazifa ekanini o'zi aniqlaydi (Telegram).
         allow_tasks=False: faqat suhbat; ish so'ralsa vazifa taklif qiladi (veb-chat)."""
         await self.store.add_chat(chat_id, "owner", text)
         self._bg(self._maybe_summarize(chat_id))   # fonda: javobni kechiktirmaydi
         decision = {"mode": "task", "task": text, "reply": ""}
         if not attachments:  # fayl yuborilgan bo'lsa, bu aniq vazifa
-            decision = await self._front_desk(text, chat_id, allow_tasks, spoken)
+            decision = await self._front_desk(text, chat_id, allow_tasks, spoken, voice)
             if not spoken:
                 decision = self._ensure_call(text, decision)
         if decision.get("reminder"):
@@ -294,11 +295,15 @@ class Orchestrator:
         t.cancel()
         return True
 
+    VOICE_MSG = ("\n\nYOUR REPLY WILL ALSO BE SENT AS A VOICE MESSAGE: write it the way a person would say it out loud, natural "
+                 "and conversational, 1-4 short sentences in the owner's language. No lists, markdown, emojis or links.")
+
     SPOKEN = ("\n\nYOUR REPLY WILL BE SPOKEN ALOUD IN A PHONE CALL: talk like a real person, not a robot. 1-3 short, natural "
               "sentences in everyday conversational language (the owner's language), warm and relaxed. No lists, markdown, "
               "emojis, headings or reading out links.")
 
-    async def _front_desk(self, text: str, chat_id: int, allow_tasks: bool = True, spoken: bool = False) -> dict:
+    async def _front_desk(self, text: str, chat_id: int, allow_tasks: bool = True, spoken: bool = False,
+                          voice: bool = False) -> dict:
         if allow_tasks and await self.store.get_kv("talk_only") == "1":  # «Faqat suhbat» rejimi: ish boshlamaydi, /task bilan beriladi
             allow_tasks = False
         all_hist = [h for h in await self.store.recent_chat(chat_id, 60) if h["role"] in ("owner", "ceo")]
@@ -323,7 +328,7 @@ class Orchestrator:
                   (f"# Summary of the earlier conversation (background)\n{summary}\n\n" if summary else "") +
                   (f"# Possibly relevant older messages\n{recall}\n\n" if recall else "") +
                   (f"# Recent conversation\n{hist}\n\n" if hist else "") + f"# Latest owner message\n{text}")
-        res = await self.team.router.call("cheap", (self.FRONT_DESK if allow_tasks else self.CHAT_ONLY) + self.EXTRA_FIELDS + self.TALK_STYLE + (self.SPOKEN if spoken else ""),
+        res = await self.team.router.call("cheap", (self.FRONT_DESK if allow_tasks else self.CHAT_ONLY) + self.EXTRA_FIELDS + self.TALK_STYLE + (self.SPOKEN if spoken else self.VOICE_MSG if voice else ""),
                                           [{"role": "user", "content": prompt}], agent="ceo-chat")
         try:
             d = extract_json(res.text)
