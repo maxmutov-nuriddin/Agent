@@ -111,6 +111,7 @@ class Call:
         self.last_activity = time.monotonic()
         self.speaking = False
         self.closed = False
+        self.say_fails = 0     # ketma-ket ovoz yaratilmagan gaplar
 
 
 class CallService:
@@ -220,7 +221,17 @@ class CallService:
         text = (text or "").strip()
         if not text or call.closed:
             return
-        await self._play(call, await self.app.router.speak(text))
+        try:
+            pcm = await self.app.router.speak(text)
+        except Exception as e:  # noqa: BLE001 — ikkala ovoz xizmati ham ishlamadi: qo'ng'iroq uzilmasin, suhbat xotirasi saqlanadi
+            call.say_fails += 1
+            self.last_error = f"ovoz yaratib bo'lmadi: {type(e).__name__} {e}"[:200]
+            log.warning(self.last_error)
+            if call.say_fails >= 3:   # uch gap ketma-ket eshitilmasa, jim qo'ng'iroqni ushlab turmaymiz
+                call.closed = True
+            return
+        call.say_fails = 0
+        await self._play(call, pcm)
 
     async def _play(self, call: Call, pcm: bytes, pause: float = 0.3):
         from pytgcalls.types import Device

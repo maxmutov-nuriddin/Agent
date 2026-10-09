@@ -158,3 +158,19 @@ async def test_pitch_shift_keeps_length_and_changes_sound():
     out = await shift_pitch(tone, 0.88)
     assert out != tone and abs(len(out) - len(tone)) < len(tone) * 0.05      # tezlik (uzunlik) deyarli o'zgarmadi
     assert await shift_pitch(tone, 1.0) == tone
+
+
+async def test_say_survives_tts_failure(make_app):
+    from aicompany.calls import Call
+    from aicompany.providers import VoiceError
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
+
+    async def boom(text, **kw):
+        raise VoiceError("hammasi ishlamadi")
+    app.router.speak = boom
+    call = Call(1)
+    await app.calls.say(call, "salom")
+    await app.calls.say(call, "salom")
+    assert not call.closed and call.say_fails == 2     # qo'ng'iroq uzilmaydi
+    await app.calls.say(call, "salom")
+    assert call.closed                                  # 3 marta ketma-ket: jim qo'ng'iroq tugatiladi
