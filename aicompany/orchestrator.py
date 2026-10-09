@@ -664,7 +664,7 @@ class Orchestrator:
                 (steps_dir / f"{sid}.md").write_text(out, encoding="utf-8")
             await self.store.set_kv(f"ckpt:{task_id}", json.dumps({"plan": plan, "outputs": outputs}, ensure_ascii=False))
 
-        criteria = [str(c)[:200] for c in (plan.get("acceptance") or []) if str(c).strip()][:6]
+        criteria = [str(c)[:200] for c in (plan.get("acceptance") or []) if str(c).strip()][:10]
         if (eco or simple) and len(outputs) == 1:  # bitta qadam: uni qayta yozishning keragi yo'q (pul va vaqt tejaladi)
             deliverable = next(iter(outputs.values()))
         else:
@@ -737,7 +737,9 @@ class Orchestrator:
         """Yakuniy qadoqlash: NATIJA.md (to'liq tayyor natija), PROMPT.md (boshqa AI uchun to'liq prompt)
         va qaytariladigan qisqa, aniq javob (paneldagi «Natija»)."""
         ws = env.workspace
-        (ws / RESULT_FILE).write_text(deliverable, encoding="utf-8")
+        from . import linkcheck
+        links = await self._link_status(env, deliverable)
+        (ws / RESULT_FILE).write_text(deliverable + linkcheck.report(links, self.settings.report_tz), encoding="utf-8")
         previews = []
         for rel in [f for f in self._files(ws) if f not in MAIN_FILES][:6]:
             try:
@@ -749,7 +751,8 @@ class Orchestrator:
                   "Write two sections in the language of the request, in plain human language (no JSON):\n"
                   "===ANSWER===\nA short, direct answer to exactly what was asked (the conclusion, the numbers, the decision, "
                   "or what was built and how to use it). Use markdown headings/lists only if it helps. Max ~250 words. "
-                  "Mention the main file names the owner should open.\n"
+                  "Mention the main file names the owner should open. It must NOT add any claim that the deliverable does not "
+                  "support (no 'everything verified/complete' unless the deliverable shows it); mention open ⚠️ items honestly.\n"
                   "===PROMPT===\nA complete, self-contained prompt that the owner can give to ANY other AI to get this same "
                   "result 100% correctly in one go: the goal, the context, every requirement and constraint, the decisions "
                   "made, the exact structure/sections/files to produce, the style and language, and acceptance criteria to "
@@ -798,7 +801,10 @@ class Orchestrator:
                   "Set complexity to 'simple' when ONE step by one specialist is enough and no files or research are needed. "
                   "If it is a simple question you can answer fully and correctly yourself from general knowledge (no files, "
                   "no current data, no web research, nothing to build), put the complete answer in direct_answer and give one step anyway. "
-                  "List 2-6 concrete acceptance criteria the final result must meet (what the owner explicitly asked for). "
+                  "List acceptance criteria: EVERY explicit requirement, field, section and constraint in the request, one per item "
+                  "(up to 10), each concrete and checkable. When the work depends on facts (laws, prices, market data, statistics), "
+                  "include a research step whose task says to use web search, open the sources and cite URLs, and to mark anything "
+                  "unconfirmed as unverified. "
                   'Return ONLY JSON: {"summary": "...", "complexity": "simple|normal", "direct_answer": "", '
                   '"acceptance": ["..."], "steps": [{"id": "s1", "agent": "<team member name>", '
                   '"task": "self-contained instruction", "tier": "cheap|mid|strong", "depends_on": []}], '
@@ -823,7 +829,14 @@ class Orchestrator:
         prompt = (f"# Original request\n{request}\n\n# Team outputs\n{parts}\n\n"
                   f"# Files in the workspace (delivered to the user automatically)\n{', '.join(files) or '(none)'}\n\n"
                   "Assemble ONE final, complete answer for the user. Merge the outputs, remove duplication, "
-                  "keep all concrete content, and refer to the delivered files by name.")
+                  "keep all concrete content, and refer to the delivered files by name.\n"
+                  "Rules: (1) state only what the team outputs and files actually contain; never claim that links, laws, "
+                  "numbers or code were checked/verified/tested unless a teammate's output shows it was done; (2) keep source "
+                  "URLs next to the facts they support; anything without a source is marked '⚠️ Tekshirilmagan'; (3) the answer and "
+                  "the files must agree (same numbers, dates, decisions); (4) re-check any formula, score or ranking you present "
+                  "and sort it exactly as the stated rule says; (5) make the key decisions explicitly (no open 'X or Y'); "
+                  "(6) end with a section '## Talablar bo'yicha holat' listing EACH requirement with ✅ done (where) or ⚠️ not "
+                  "fully done (why), and a section '## Tekshirilmagan / Noma'lum' listing unverified assumptions (or 'yo'q').")
         if criteria:
             prompt += "\n\n# The result MUST satisfy\n- " + "\n- ".join(criteria)
         if issues:
@@ -833,6 +846,9 @@ class Orchestrator:
 
     async def _review(self, task_id, request, deliverable, env, criteria=None, prev_issues=None) -> dict:
         files = self._files(env.workspace)
+        links = await self._link_status(env, deliverable)
+        link_note = ("# Server link check (the server really opened each URL)\n" + "\n".join(f"- {u} → {st}" for u, st in links.items())
+                     + "\nTreat ❌ links as errors that must be fixed or removed.\n\n") if links else ""
         checklist = ("# Acceptance criteria (check EACH one explicitly)\n- " + "\n- ".join(criteria) + "\n\n") if criteria else ""
         shown = clip(deliverable, 10000)
         if len(deliverable) > 10000:   # QA qisqartirilgan matnni "chala" deb e'tiroz bildirmasin: to'liq matn faylda
@@ -842,10 +858,15 @@ class Orchestrator:
         recheck = ("# Problems you reported last time\n- " + "\n- ".join(prev_issues) + "\n\nFirst verify whether EACH of these is now "
                    "fixed. Report as issues only those still not fixed plus genuinely serious new problems; do not add new minor "
                    "nitpicks.\n\n") if prev_issues else ""
-        prompt = (f"# Original request\n{request}\n\n{checklist}{recheck}# Deliverable\n{shown}\n\n"
+        prompt = (f"# Original request\n{request}\n\n{checklist}{recheck}{link_note}# Deliverable\n{shown}\n\n"
                   f"# Workspace files (you may read them)\n{', '.join(files) or '(none)'}\n\n"
                   "Does the deliverable fully and correctly satisfy the request" + (" and every acceptance criterion" if criteria else "") +
-                  "? Report only real problems (missing parts, errors, ignored requirements, unmet criteria). Return ONLY JSON: "
+                  "? Audit like a demanding senior expert. Open the workspace files and check: (1) every requirement/field is "
+                  "really present; (2) the answer does not claim anything the files do not contain (e.g. 'all links checked', "
+                  "'spec complete'); (3) facts, numbers, laws and prices have sources or are marked unverified, no invented or "
+                  "vague figures; (4) formulas, scores, rankings and calculations are applied correctly and consistently; "
+                  "(5) dates and numbers agree everywhere; (6) key decisions are made, not left open. "
+                  "Report only real problems, each concrete and fixable (where + what is wrong). Return ONLY JSON: "
                   '{"verdict": "pass|fail", "issues": ["..."]}')
         raw = await self.team.run_agent("qa", prompt, task_id=task_id, env=env)
         try:
@@ -854,6 +875,32 @@ class Orchestrator:
             return v
         except (ValueError, TypeError):
             return {"verdict": "pass", "issues": []}  # QA ishlamasa vazifani bloklamaymiz
+
+    async def _link_status(self, env, deliverable: str) -> dict:
+        """Javob va fayllardagi havolalarni server o'zi ochib tekshiradi (bir vazifa ichida natija eslab qolinadi)."""
+        from . import linkcheck
+        texts = [deliverable]
+        for rel in self._files(env.workspace)[:20]:
+            try:
+                if (env.workspace / rel).stat().st_size < 300_000:
+                    texts.append((env.workspace / rel).read_text(encoding="utf-8"))
+            except (UnicodeDecodeError, OSError):
+                pass
+        urls = linkcheck.extract_urls(*texts)
+        cache = getattr(env, "_links", None)
+        if cache is None:
+            cache = {}
+            try:
+                env._links = cache
+            except AttributeError:
+                pass
+        todo = [u for u in urls if u not in cache]
+        if todo:
+            try:
+                cache.update(await linkcheck.check(env, todo))
+            except Exception:  # noqa: BLE001 — tekshiruv ishlamasa, vazifa to'xtamaydi
+                pass
+        return {u: cache[u] for u in urls if u in cache}
 
     async def _learn(self, task_id, request, result):
         """Vazifadan so'ng 0-2 ta uzoq muddatli fakt saqlaydi (arzon model, kichik so'rov)."""

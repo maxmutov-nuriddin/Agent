@@ -324,6 +324,10 @@ class Store:
                 name=name, role=role, system_prompt=system_prompt, tier=tier,
                 status="active", created_by=created_by, created_at=now(), tools=tools))
 
+    async def set_agent_profile(self, name, role, system_prompt, tier):
+        await self._exec(sa.update(agents).where(agents.c.name == name, agents.c.status == "active")
+                         .values(role=role, system_prompt=system_prompt, tier=tier))
+
     async def set_agent_tools(self, name, tools):
         await self._exec(sa.update(agents).where(agents.c.name == name, agents.c.status == "active").values(tools=tools))
 

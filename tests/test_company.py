@@ -464,3 +464,43 @@ async def test_qa_stops_when_same_issue_repeats(make_app):
 
 async def _noop_async():
     return None
+
+
+async def test_linkcheck_extracts_and_blocks_internal(tmp_path):
+    from types import SimpleNamespace as NS
+    from aicompany import linkcheck
+    urls = linkcheck.extract_urls("Manba: https://lex.uz/docs/123. Yana (https://undp.org/uz), va https://lex.uz/docs/123")
+    assert urls == ["https://lex.uz/docs/123", "https://undp.org/uz"]
+    res = await linkcheck.check(NS(http=None), ["http://127.0.0.1:8080/api/state"])
+    assert res["http://127.0.0.1:8080/api/state"].startswith("❌")          # ichki manzil ochilmaydi (SSRF himoyasi)
+    rep = linkcheck.report({"https://a.uz": "✅ 200", "https://b.uz": "❌ 404"})
+    assert "Havolalar tekshiruvi" in rep and "❌ 404" in rep
+
+
+async def test_qa_sees_real_link_status(make_app, tmp_path, monkeypatch):
+    from types import SimpleNamespace as NS
+    from aicompany import linkcheck
+    app, _ = await make_app(scripted_company())
+    seen = {}
+
+    async def fake_check(env, urls):
+        return {u: "❌ 404" for u in urls}
+
+    async def run_agent(name, instruction, context="", **kw):
+        seen["prompt"] = instruction
+        return '{"verdict": "fail", "issues": ["o\'lik havola"]}'
+    monkeypatch.setattr(linkcheck, "check", fake_check)
+    app.orch.team.run_agent = run_agent
+    v = await app.orch._review(1, "tahlil", "Manba: https://lex.uz/x", NS(workspace=tmp_path))
+    assert "https://lex.uz/x → ❌ 404" in seen["prompt"] and v["verdict"] == "fail"
+
+
+async def test_all_agents_get_expert_standards(make_app):
+    from aicompany.team import STANDARDS_MARK
+    app, _ = await make_app(scripted_company())
+    await app.store.create_agent("eski_xodim", "old role", "You are old. Reply briefly.", "cheap", "hr", "")
+    await app.team.ensure_seed()
+    for a in await app.store.list_agents():
+        assert STANDARDS_MARK in a["system_prompt"], a["name"]
+    qa = await app.store.get_agent("qa")
+    assert "auditor" in qa["role"]
