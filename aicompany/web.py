@@ -1273,7 +1273,7 @@ def make_web_app(app: App) -> web.Application:
             for j in await app.auto.list():
                 if j["mode"] != "off":
                     auto.append(j["title"].split()[0] + (" ✅" if j["result"].startswith("✅") or not j["result"] else " ⚠️"))
-        done_recent = [t for t in recent if t["status"] == "done"][:2]
+        done_recent = [t for t in recent if t["status"] == "done"][:3]
         costs = await app.store.spent_by_task([t["id"] for t in done_recent])
         return {"v": 2, "header": await widget_header(), "live": live,
                 "money": {"today": round(st["today"], 2), "month": round(month, 2), "forecast": round(forecast, 2), "providers": providers},

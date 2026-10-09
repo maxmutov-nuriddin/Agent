@@ -145,7 +145,7 @@ function medium(w, d) {
     const h = row(w); txt(h, `● #${live.id} · ${liveHead(live)}`, 15, LIME, true); h.addSpacer();
     if (d.pending) txt(h, `🔐 ${d.pending} ruxsat`, 11, AMBER, true);
     else txt(h, live.request, 11, MUTED, false);
-    w.addSpacer(6);
+    w.addSpacer();
     const ag = (live.agents || []).slice(0, 2);
     if (ag.length) ag.forEach((a) => { agentLine(w, a, 12); w.addSpacer(3); });
     else { txt(w, "⚙️ " + (live.phase || "ishlanmoqda"), 12, WHITE, false); w.addSpacer(3); }
@@ -157,7 +157,7 @@ function medium(w, d) {
     const h = row(w); txt(h, "○ AI Jamoa · tinch", 15, LIME, true); h.addSpacer();
     const hd = d.header || {};
     txt(h, [hd.weather, hd.usd ? "$1=" + hd.usd : ""].filter(Boolean).join(" · "), 11, MUTED, false);
-    w.addSpacer(6);
+    w.addSpacer();
     const last = (d.recent_done || [])[0];
     if (last) { const r = row(w); txt(r, `✅ #${last.id} ${last.request}`, 12, WHITE, false); r.addSpacer(4); txt(r, money(last.cost), 12, LIME, true); w.addSpacer(3); }
     const rem = (day.reminders || [])[0];
@@ -169,47 +169,51 @@ function medium(w, d) {
 }
 
 function large(w, d) {
+  // Bo'limlar orasida egiluvchan bo'shliq: vidjet balandligi to'liq to'ladi (tepada/pastda bo'sh joy qolmaydi)
   const lives = d.live || [], live = lives[0], day = d.day || {}, m = d.money || {};
   const h = row(w);
-  txt(h, live ? "● AI Jamoa" : "○ AI Jamoa · tinch", 16, LIME, true); h.addSpacer();
-  txt(h, headerBadge(d), 10, MUTED, false);
-  w.addSpacer(8);
+  txt(h, live ? "● AI Jamoa" : "○ AI Jamoa · tinch", 17, LIME, true); h.addSpacer();
+  txt(h, headerBadge(d), 11, MUTED, false);
+  w.addSpacer();
 
   if (live) {
     section(w, `Hozir · #${live.id} ${live.request}`, liveHead(live));
     const ag = (live.agents || []).slice(0, 3);
-    if (ag.length) ag.forEach((a) => { agentLine(w, a, 12); w.addSpacer(4); });
-    else { txt(w, "⚙️ " + (live.phase || "ishlanmoqda"), 12, WHITE, false); w.addSpacer(4); }
-    if (live.phase && ag.length) { txt(w, live.phase, 10, MUTED, false); w.addSpacer(3); }
-    w.addImage(bar(live.limit ? live.cost / live.limit : 0, 310, 6));
-    const r = row(w); txt(r, `vazifa: ${money(live.cost)} / ${money(live.limit)} limit`, 10, MUTED, false); r.addSpacer();
-    if (d.pending) txt(r, `🔐 ${d.pending} ruxsat kutyapti`, 10, AMBER, true);
-    if (lives[1]) { w.addSpacer(3); txt(w, `⚙️ #${lives[1].id} ${lives[1].request} · ${liveHead(lives[1])} · ${money(lives[1].cost)}`, 11, MUTED, false); }
+    if (ag.length) ag.forEach((a) => { agentLine(w, a, 13); w.addSpacer(4); });
+    else { txt(w, "⚙️ " + (live.phase || "ishlanmoqda"), 13, WHITE, false); w.addSpacer(4); }
+    if (live.phase && ag.length) { txt(w, live.phase, 11, MUTED, false); w.addSpacer(3); }
+    w.addImage(bar(live.limit ? live.cost / live.limit : 0, 310, 7));
+    const r = row(w); txt(r, `vazifa: ${money(live.cost)} / ${money(live.limit)} limit`, 11, MUTED, false); r.addSpacer();
+    if (d.pending) txt(r, `🔐 ${d.pending} ruxsat kutyapti`, 11, AMBER, true);
+    if (lives[1]) { w.addSpacer(3); txt(w, `⚙️ #${lives[1].id} ${lives[1].request} · ${liveHead(lives[1])} · ${money(lives[1].cost)}`, 12, MUTED, false); }
   } else {
-    section(w, "Oxirgi natijalar", "");
-    (d.recent_done || []).forEach((t) => { const r = row(w); txt(r, `✅ #${t.id} ${t.request}`, 12, WHITE, false); r.addSpacer(4); txt(r, money(t.cost), 12, LIME, true); w.addSpacer(3); });
-    if (!(d.recent_done || []).length) txt(w, "Hali tayyor vazifa yo'q", 12, MUTED, false);
-    if (day.auto) txt(w, "🤖 " + day.auto, 11, MUTED, false);
+    section(w, "Oxirgi natijalar", d.pending ? `🔐 ${d.pending} ruxsat kutyapti` : "");
+    (d.recent_done || []).slice(0, 3).forEach((t) => { const r = row(w); txt(r, `✅ #${t.id} ${t.request}`, 13, WHITE, false); r.addSpacer(4); txt(r, money(t.cost), 13, LIME, true); w.addSpacer(4); });
+    if (!(d.recent_done || []).length) txt(w, "Hali tayyor vazifa yo'q", 13, MUTED, false);
   }
 
-  w.addSpacer(10);
+  w.addSpacer();
   section(w, "Moliya", "");
-  stats(w, [[money(m.today), "bugun", LIME], [money(m.month), "shu oy"], ["~" + money(m.forecast), "oy prognozi", AMBER], [money(d.budget_left), "qoldi"]], 17);
-  w.addSpacer(5);
-  (m.providers || []).slice(0, 2).forEach((p) => {
-    const r = row(w); const n = r.addStack(); n.size = new Size(52, 0); txt(n, p.name, 10, WHITE, false);
-    r.addImage(bar(p.budget ? p.spent / p.budget : 0, 170, 5)); r.addSpacer();
-    txt(r, `${money(p.spent)}/${money(p.budget).replace(".00", "")}`, 10, MUTED, false);
-    w.addSpacer(3);
+  stats(w, [[money(m.today), "bugun", LIME], [money(m.month), "shu oy"], ["~" + money(m.forecast), "oy prognozi", AMBER], [money(d.budget_left), "qoldi"]], 20);
+  w.addSpacer(6);
+  (m.providers || []).slice(0, 3).forEach((p) => {
+    const r = row(w); const n = r.addStack(); n.size = new Size(56, 0); txt(n, p.name, 11, WHITE, false);
+    r.addImage(bar(p.budget ? p.spent / p.budget : 0, 170, 6)); r.addSpacer();
+    txt(r, `${money(p.spent)}/${money(p.budget).replace(".00", "")}`, 11, MUTED, false);
+    w.addSpacer(4);
   });
 
-  w.addSpacer(8);
+  w.addSpacer();
   section(w, "Mening kunim", dayCounts(day.timeline || []));
-  w.addImage(timeline(day.timeline || [], 310, 8));
-  w.addSpacer(5);
-  (day.reminders || []).slice(0, live ? 1 : 2).forEach((r) => { txt(w, reminderText(r), 12, WHITE, false); w.addSpacer(3); });
-  if (day.watch_hit) txt(w, "🔔 " + day.watch_hit.text, 11, AMBER, false);
-  else if (day.plan) txt(w, `☑️ Reja: ${day.plan.title} · ${day.plan.done}/${day.plan.total}`, 11, WHITE, false);
+  w.addImage(timeline(day.timeline || [], 310, 9));
+  w.addSpacer(6);
+  const rems = (day.reminders || []).slice(0, live ? 1 : 2);
+  rems.forEach((r) => { txt(w, reminderText(r), 13, WHITE, false); w.addSpacer(4); });
+  if (!rems.length) { txt(w, "⏰ Yaqin eslatma yo'q", 12, MUTED, false); w.addSpacer(4); }
+  if (day.watch_hit) { txt(w, "🔔 " + day.watch_hit.text, 12, AMBER, false); w.addSpacer(4); }
+  if (day.plan) { txt(w, `☑️ Reja: ${day.plan.title} · ${day.plan.done}/${day.plan.total}`, 12, WHITE, false); w.addSpacer(4); }
+  if (!live && day.auto) txt(w, "🤖 " + day.auto, 11, MUTED, false);
+  w.addSpacer();
 }
 
 async function build() {
