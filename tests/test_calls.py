@@ -421,3 +421,37 @@ async def test_voice_reply_cache_is_bounded(make_app, monkeypatch):
     assert await voicereply.synth(app, "tg uchun", "ogg") == b"Aogg"
     d = app.settings.workspace_dir / ".voice_cache" / "replies"
     assert len(list(d.glob("*.mp3"))) == 3 and not list(d.glob("*.ogg"))     # eskilari o'chadi, Telegram ovozi saqlanmaydi
+
+
+async def test_panel_allows_blob_audio(web):
+    c, app = web
+    r = await c.get("/")
+    assert "media-src 'self' blob:" in r.headers["Content-Security-Policy"]   # 🔊 tinglash va «Eshitib ko'rish» ishlashi uchun
+
+
+async def test_call_owner_explains_busy_and_missing(make_app):
+    from aicompany.calls import Call
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
+    c = app.calls
+    assert not await c.call_owner("salom") and "tayyor emas" in c.last_error
+    c._tgc = object()
+    c.call = Call(1)
+    assert not await c.call_owner("salom") and "boshqa qo'ng'iroq" in c.last_error
+
+
+async def test_front_desk_sees_pending_reminders(make_app):
+    import json as _json
+    from aicompany import reminders
+    seen = []
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "front desk" in system or "in a CHAT" in system:
+            seen.append(user)
+            return _json.dumps({"mode": "chat", "reply": "ok", "task": ""})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID="1")
+    await reminders.create(app.store, app.settings, 5, "Muslimaga yordam", "2 soat")
+    await reminders.create(app.store, app.settings, 5, "dori ichish", "3 soat")
+    await app.orch.handle("nechta eslatma bor", 5)
+    assert "pending reminders" in seen[-1] and "Muslimaga yordam" in seen[-1] and "dori ichish" in seen[-1]

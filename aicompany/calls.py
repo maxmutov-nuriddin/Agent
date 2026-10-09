@@ -546,10 +546,15 @@ class CallService:
 
     async def call_owner(self, text: str, *, listen: bool = True) -> bool:
         """Egasiga qo'ng'iroq qilib `text`ni aytadi. Ko'tarilmasa False (natija baribir chatda bo'ladi)."""
-        if self._tgc is None or self.call is not None:
+        if self._tgc is None:
+            self.last_error = "qo'ng'iroq qilib bo'lmadi: qo'ng'iroq moduli hali tayyor emas (Telegram akkaunt ulanmoqda yoki o'chiq)"
+            return False
+        if self.call is not None:
+            self.last_error = "qo'ng'iroq qilib bo'lmadi: hozir boshqa qo'ng'iroq davom etyapti (avval uni tugating)"
             return False
         ids = await self._owner_ids()
         if not ids:
+            self.last_error = "qo'ng'iroq qilib bo'lmadi: egasining Telegram ID'si yo'q (OWNER_TELEGRAM_ID)"
             return False
         from pytgcalls.types import CallConfig
         chat_id = ids[0]

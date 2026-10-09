@@ -300,7 +300,8 @@ class Orchestrator:
 
     SPOKEN = ("\n\nYOUR REPLY WILL BE SPOKEN ALOUD IN A PHONE CALL: talk like a real person, not a robot. 1-3 short, natural "
               "sentences in everyday conversational language (the owner's language), warm and relaxed. No lists, markdown, "
-              "emojis, headings or reading out links.")
+              "emojis, headings or reading out links. Answer in the owner's usual language (Uzbek unless they speak a whole "
+              "sentence in another language; a single word like 'allo' does not count).")
 
     async def _front_desk(self, text: str, chat_id: int, allow_tasks: bool = True, spoken: bool = False,
                           voice: bool = False) -> dict:
@@ -320,11 +321,15 @@ class Orchestrator:
         older = await self.store.search_chat(chat_id, text, window_start)
         recall = "\n".join(f"[{(h['created_at'] or '')[:10]}] {'Owner' if h['role'] == 'owner' else 'CEO'}: {clip(h['text'], 300)}" for h in older)
         roster = await self.team.roster()
+        from .reminders import local_text
+        pend = await self.store.list_reminders(limit=15)
+        rems = "\n".join(f"- {local_text(r['due_at'], self.settings.report_tz)}: {clip(r['text'], 120)}" for r in pend)
         from datetime import datetime as _dt
         from zoneinfo import ZoneInfo
         now_local = _dt.now(ZoneInfo(self.settings.report_tz)).strftime("%Y-%m-%d %H:%M (%A)")
         prompt = (f"# Now\n{now_local}, {self.settings.report_tz}\n\n# Team\n{roster}\n\n" + (f"# Memory\n{memo}\n\n" if memo else "") +
                   (f"# Owner's standing preferences (ALWAYS follow)\n{prefs}\n\n" if prefs else "") +
+                  (f"# Owner's pending reminders (local time, complete list)\n{rems}\n\n" if rems else "# Owner's pending reminders\n(none)\n\n") +
                   (f"# Summary of the earlier conversation (background)\n{summary}\n\n" if summary else "") +
                   (f"# Possibly relevant older messages\n{recall}\n\n" if recall else "") +
                   (f"# Recent conversation\n{hist}\n\n" if hist else "") + f"# Latest owner message\n{text}")
