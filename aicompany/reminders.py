@@ -134,18 +134,25 @@ _CONTACT = re.compile(r"\b(?:menga|manga|meni|mani|men\s+bilan|man\s+bilan)\b.{0
                       r"chaqir(?:ing|gin)?)\b", re.I)
 # "qil" ning turli ko'rinishlari ("ql", "qlb", "qilb", "qiling", ...) va o'xshash fe'llar ("ur", "chaqir", "bog'lan", "et")
 _ASK = re.compile(
-    r"\bq(?:i)?l(?:i)?(?:b|ib|ing|gin|sang|vor|ay)?\b|\b[қк]ил(?:иб|инг|гин)?\b|\bқл\b|\bur(?:ib|ing|gin)?\b|\bet(?:ing|gin)?\b|"
+    r"\bq(?:i)?l(?:i)?(?:b|ib|ing|gin|vor|ay)?\b|\b[қк]ил(?:иб|инг|гин)?\b|\bқл\b|\bur(?:ib|ing|gin)?\b|\bet(?:ing|gin)?\b|"
     r"\bulan\b|zvon\w*|звони\w*|позвони\w*|набери\w*|call\s*me|ring\s*me|\bdial\b|"
     r"(?:q|k)[o']{0,2}ng'?ir\w*\s+ber\w*|zvon\w*\s+ber\w*", re.I)
 _NOT_REQUEST = re.compile(
     r"\?|olasan|oladimi|mumkinmi|bormi|qila ol|qilolasan|qiladimi|nega|nima uchun|qanday|nimaga|raqam|nomer|номер|batareya|zaryad|"
-    r"narxi|sotib|modeli|sozla|ishlamay|ishlamaydi|buzil|qilgan|qilgandi|qildim|qildi\b|qilyapman|qilyapsan|qilishni|qilmoq|qilish\b", re.I)
+    r"narxi|sotib|modeli|sozla|ishlamay|ishlamaydi|buzil|qilgan|qilgandi|qildim|qildi\b|qilyapman|qilyapsan|qilishni|qilmoq|qilish\b|"
+    r"\bedi\b|ketdi|\bagar\b|\b\w{2,}sa\b|\b\w+sang\b|bezovta|qilma\b|qilmang|qilmagin|qilmay|kerak emas|shart emas|не звони", re.I)
+# o'zidan boshqa odamga ("onamga", "mijozga", "akamga"): bu egasiga qo'ng'iroq emas (vazifa yoki eslatma)
+_OTHER = re.compile(r"\b(?!(?:menga|manga|ertaga|indinga|porertaga|kechga|tushga|soatga|hozirga)\b)[a-z']{2,}(?:ga|ka|qa)\b", re.I)
+_SELF = re.compile(r"\b(?:menga|manga|meni|mani|men\s+bilan|o'zimga|мне|меня|me)\b", re.I)
 _NOW = re.compile(r"\b(hozir|hali|darrov|darhol|tezda|zudlik|сейчас|now)\b", re.I)
+_NOT_NOW = re.compile(r"\bhozir\s+(?:emas|band\w*|mumkin\s+emas|vaqtim\s+yo'q)|keyinroq", re.I)
 _WORDNUM = {"bir": 1, "ikki": 2, "uch": 3, "to'rt": 4, "besh": 5, "olti": 6, "yetti": 7, "sakkiz": 8, "to'qqiz": 9, "o'n": 10,
-            "yigirma": 20, "o'ttiz": 30, "yarim": 0.5}
+            "yigirma": 20, "o'ttiz": 30, "qirq": 40, "ellik": 50, "yarim": 0.5}
 _MONTHS = ["yanvar", "fevral", "mart", "aprel", "may", "iyun", "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"]
 _TIMEISH = re.compile(r"ertaga|indinga|bugun|kechqurun|kechki|kechasi|ertalab|peshin|tushdan|\bsoat\b|\d[:.]\d\d|" + "|".join(_MONTHS)
                       + r"|dushanba|seshanba|chorshanba|payshanba|juma|shanba|yakshanba|haftadan|oydan keyin|keyin", re.I)
+_MORNING = re.compile(r"ertalab|tong|uyg'ot|nonushta|tunda|kechasi", re.I)
+_EVENING = re.compile(r"kechqurun|kechki|tushdan keyin|peshindan keyin|\bkech\b", re.I)
 
 
 def _norm(text: str) -> str:
@@ -157,11 +164,20 @@ def _norm(text: str) -> str:
 
 
 def call_requested(text: str) -> bool:
-    """Egasi o'ziga qo'ng'iroq qilishni so'rayaptimi (savol/izoh emas)?"""
+    """Egasi O'ZIGA qo'ng'iroq qilishni so'rayaptimi? Savol, shart ("narx tushsa"), inkor, o'tgan zamon va
+    boshqa odamga qo'ng'iroq ("onamga tel qil", "mijozga qo'ng'iroq qilib so'ra") — yo'q."""
     t = _norm(text)
     if _NOT_REQUEST.search(t):
         return False
-    return bool((_PHONE.search(t) and _ASK.search(t)) or _CONTACT.search(t))
+    if _CONTACT.search(t):
+        return True
+    if not (_PHONE.search(t) and _ASK.search(t)):
+        return False
+    return not _OTHER.search(t) or bool(_SELF.search(t) and not _OTHER.search(_SELF.sub(" ", t)))
+
+
+def explicit_self(text: str) -> bool:
+    return bool(_SELF.search(_norm(text)))
 
 
 def call_when(text: str, tz: str, now: datetime | None = None) -> tuple[str, str]:
@@ -169,18 +185,23 @@ def call_when(text: str, tz: str, now: datetime | None = None) -> tuple[str, str
     zone = ZoneInfo(tz)
     now_local = (now or datetime.now(timezone.utc)).astimezone(zone)
     t = _norm(text)
-    num = r"\b(\d+(?:[.,]\d+)?|" + "|".join(map(re.escape, _WORDNUM)) + r")"
+    word = "|".join(map(re.escape, sorted(_WORDNUM, key=len, reverse=True)))
+    num = r"\b((?:(?:\d+(?:[.,]\d+)?|" + word + r")\s+)*(?:\d+(?:[.,]\d+)?|" + word + r"))"
 
-    def val(x):
-        return float(x.replace(",", ".")) if x[0].isdigit() else _WORDNUM[x]
+    def val(x):   # "o'n besh" = 15, "bir yarim" = 1.5, "yigirma besh" = 25
+        total = 0.0
+        for w in x.split():
+            total += float(w.replace(",", ".")) if w[0].isdigit() else _WORDNUM[w]
+        return total
     m = re.search(num + r"\s*(?:ta\s+)?(daqiqa|daq|minut|min|sekund|sek)\w*", t)
     if m:
         secs = val(m[1]) * (1 if m[2].startswith("sek") else 60)
         return "at", f"{int(secs)} s"
-    m = re.search(num + r"\s*soat\w*\s+(?:dan\s+)?keyin", t) or re.search(r"(yarim|bir)\s+soat\w*", t)
-    if m:
+    m = re.search(num + r"\s*soat(?:da|dan)?\b(?:\s+(?:dan\s+)?keyin)?", t)
+    if m and not re.search(r"\bsoat\s*\d", t):
         return "at", f"{int(val(m[1]) * 60)} daq"
-    if _NOW.search(t) and not re.search(r"soat\s*\d|\d[:.]\d\d", t):
+    not_now = bool(_NOT_NOW.search(t))
+    if _NOW.search(t) and not not_now and not re.search(r"soat\s*\d|\d[:.]\d\d", t):
         return "now", ""
     day = now_local.date()
     shifted = False
@@ -204,13 +225,22 @@ def call_when(text: str, tz: str, now: datetime | None = None) -> tuple[str, str
     if tm:
         hr = int(tm[1] or tm[3] or tm[5])
         mi = int(tm[2] or tm[4] or 0)
-        if hr < 12 and re.search(r"kechqurun|kechki|kechasi|tushdan keyin|peshindan keyin|\bkech\b", t):
-            hr += 12
         if hr > 23 or mi > 59:
             return "ask", ""
+        if hr == 12 and re.search(r"kechasi|tunda|yarim\s*tun", t):
+            hr = 0                                   # kechasi 12 = yarim tun
+            if not shifted:
+                day, shifted = now_local.date() + timedelta(days=1), True
+        elif 1 <= hr < 12 and _EVENING.search(t):
+            hr += 12
+        elif 1 <= hr <= 6 and not _MORNING.search(t):
+            hr += 12                                 # "soat 3 da" kunduzi odatda 15:00 (tungi 3 emas)
+        when_day = day if shifted else now_local.date()
+        if shifted and when_day == now_local.date() and hr < 12 and (hr, mi) <= (now_local.hour, now_local.minute) and not _MORNING.search(t):
+            hr += 12                                 # "bugun 5 da", ertalab 5 o'tib ketgan: kechki 17:00
         if shifted:
             return "at", f"{day.year}-{day.month:02d}-{day.day:02d} {hr:02d}:{mi:02d}"
         return "at", f"{hr:02d}:{mi:02d}"
     if m:   # sana bor, soat yo'q: ertalab 9:00
         return "at", f"{day.year}-{day.month:02d}-{day.day:02d} 09:00"
-    return ("ask", "") if _TIMEISH.search(t) else ("now", "")
+    return ("ask", "") if (_TIMEISH.search(t) or not_now) else ("now", "")

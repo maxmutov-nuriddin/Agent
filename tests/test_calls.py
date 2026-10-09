@@ -320,6 +320,10 @@ async def test_greeting_is_short_manager_line_and_cached(make_app):
         n["played"] += 1
     app.router.speak = fake_speak
     app.router.speak_ex = lambda text, **kw: _pair(fake_speak(text))
+
+    async def primary():
+        return "gemini"
+    app.router.tts_primary = primary
     app.calls._play = fake_play
     call = Call(1)
     await app.calls.say(call, GREETING)
@@ -455,3 +459,21 @@ async def test_front_desk_sees_pending_reminders(make_app):
     await reminders.create(app.store, app.settings, 5, "dori ichish", "3 soat")
     await app.orch.handle("nechta eslatma bor", 5)
     assert "pending reminders" in seen[-1] and "Muslimaga yordam" in seen[-1] and "dori ichish" in seen[-1]
+
+
+async def test_fillers_cached_when_edge_is_primary(make_app, monkeypatch):
+    """Gemini kaliti yo'q (Avto rejim): «hmm» Edge ovozida bir marta yaratilib saqlanadi, har gapda qayta yaratilmaydi."""
+    from aicompany import tts_edge
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
+    n = {"edge": 0}
+
+    async def fake_edge(text, voice=None):
+        n["edge"] += 1
+        return b"\0\0" * 50
+    monkeypatch.setattr(tts_edge, "available", lambda: True)
+    monkeypatch.setattr(tts_edge, "synth", fake_edge)
+    assert await app.router.tts_primary() == "edge"
+    await app.calls.warm_fillers()
+    first = n["edge"]
+    await app.calls.warm_fillers()
+    assert first > 0 and n["edge"] == first and await app.calls.filler_pcm("Hmm...") is not None

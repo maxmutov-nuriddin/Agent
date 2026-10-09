@@ -145,6 +145,7 @@ class CallService:
         self._last_auto = float("-inf")  # yangi yoqilgan serverda ham birinchi avto qo'ng'iroq bloklanmasin
         self._bg: set[asyncio.Task] = set()
         self.last_error = ""
+        self._warming = False
         self.timing: dict = {}   # oxirgi gap vaqtlari (soniya): eshitish / o'ylash / ovoz
 
     # ---------- sozlamalar / holat ----------
@@ -318,8 +319,8 @@ class CallService:
     async def filler_pcm(self, text: str, create: bool = False) -> bytes | None:
         import hashlib
         router = self.app.router
-        order = await router.tts_order()
-        key = hashlib.sha1(f"{await self._voice_key()}|{order[0]}|{text}".encode()).hexdigest()[:16]
+        primary = await router.tts_primary()   # Gemini kaliti yo'q yoki dam olayotgan bo'lsa: Edge (keshi alohida)
+        key = hashlib.sha1(f"{await self._voice_key()}|{primary}|{text}".encode()).hexdigest()[:16]
         f = self._cache_dir() / f"{key}.pcm"
         if f.exists():
             return f.read_bytes()
@@ -329,14 +330,21 @@ class CallService:
             pcm, engine = await router.speak_ex(text)
         except Exception:  # noqa: BLE001 — o'ylash tovushisiz ham qo'ng'iroq ishlaydi
             return None
-        if engine == order[0]:   # zaxira xizmat aytgan bo'lsa saqlamaymiz: keyin asosiy ovozda qayta yaratiladi
+        if engine == primary:   # zaxira xizmat aytgan bo'lsa saqlamaymiz: keyin asosiy ovozda qayta yaratiladi
             f.write_bytes(pcm)
         return pcm
 
     async def warm_fillers(self):
-        """Tanlangan ovozda o'ylash tovushlarini oldindan tayyorlab qo'yadi (har ovoz uchun bir marta)."""
-        for t in (*STATIC_LINES, *FILLERS, *LONG_FILLERS):
-            await self.filler_pcm(t, create=True)
+        """Tanlangan ovozda o'ylash tovushlarini oldindan tayyorlab qo'yadi (har ovoz uchun bir marta). Bir vaqtda faqat bittasi."""
+        if self._warming:
+            return
+        self._warming = True
+        try:
+            for t in (*STATIC_LINES, *FILLERS, *LONG_FILLERS):
+                if await self.filler_pcm(t, create=True) is None:
+                    break   # ovoz xizmati ishlamayapti: qolganlarini bekor urinmaymiz
+        finally:
+            self._warming = False
 
     async def _filler(self, call: Call, pool=None):
         pcm = await self.filler_pcm(random.choice(pool or FILLERS))

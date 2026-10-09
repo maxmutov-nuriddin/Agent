@@ -265,6 +265,13 @@ class Router:
             eng[e] = {"ready": self._tts_ready(e), "cooldown_s": wait}
         return {"mode": await self.tts_mode(), "order": await self.tts_order(), "last": self.tts_last, "engines": eng}
 
+    async def tts_primary(self) -> str:
+        """Hozir birinchi bo'lib aytadigan xizmat (tayyor va dam olmayotgan); hech biri bo'lmasa navbatdagi birinchisi."""
+        order = await self.tts_order()
+        now = time.monotonic()
+        live = [e for e in order if self._tts_ready(e) and self._tts_down.get(e, 0) <= now]
+        return (live or [e for e in order if self._tts_ready(e)] or order)[0]
+
     async def tts_available(self) -> bool:
         return any(self._tts_ready(e) for e in await self.tts_order())
 

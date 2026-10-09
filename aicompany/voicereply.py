@@ -13,8 +13,10 @@ import re
 
 log = logging.getLogger("aicompany.voicereply")
 MODES = ("mirror", "always", "off")
-_ASK = re.compile(r"ovozli|ovoz\s+bilan|ovozda|golos\w*|голос\w*|voice|audio\s*xabar|eshittir", re.I)
-_VERB = re.compile(r"javob|ayt|yubor|qaytar|gapir|jo'?nat|ber|answer|reply|ответ|скажи|отправ|запиш", re.I)
+# javob ovoz bilan so'ralganmi: "ovozli javob ber", "ovozli xabar bilan qaytar", "golosovoy qilib yubor", "ответь голосом"
+_ASK = re.compile(r"ovozli\s+(?:javob|[xh]abar\s+(?:bilan|blan|qilib|qlib)|qilib|qlib|qil\b)|ovoz\s+bilan|ovozda\s+(?:ayt|javob)|"
+                  r"golosov\w*|голосом|голосов\w*|\bvoice\s+(?:reply|message|note)|\b(?:reply|answer)\s+(?:by|with|in)\s+voice", re.I)
+_VERB = re.compile(r"\b(?:javob|ayt|yubor|qaytar|gapir|jo'?nat|ber\w*|answer|reply|ответ|скажи|отправ|запиш)", re.I)
 MAX_CHARS = 700
 CACHE_KEEP = 200   # panelda qayta tinglash uchun saqlanadigan oxirgi javoblar (eskilari o'chiriladi: disk to'lmasin)
 

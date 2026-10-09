@@ -416,3 +416,35 @@ async def test_call_me_works_even_if_model_misses_it(make_app):
     assert len(calls) == 1 and "Qachon" in res["reply"]
     res = await app.orch.handle("qo'ng'iroq qila olasanmi?", 5)
     assert len(calls) == 1                                               # savol: qo'ng'iroq qilinmaydi
+
+
+def test_call_intent_review_cases():
+    """Mustaqil tekshiruvda topilgan holatlar: boshqaga qo'ng'iroq, shart, inkor, o'tgan zamon, «hozir emas», so'z bilan raqamlar."""
+    from datetime import datetime, timezone
+    from aicompany.reminders import call_requested, call_when
+    for t in ("Onamga qo'ng'iroq qil", "Akamga tel qil", "mijozga qo'ng'iroq qilib narxni so'ra", "narx 500 ga tushsa qo'ng'iroq qil",
+              "Telegram kanalni kuzat, yangi post chiqsa tel qil", "kecha qo'ng'iroq qilib ketdi", "agar tel qilsang xursand bo'laman",
+              "menga qo'ng'iroq qilib bezovta qilma", "Ertaga mijozlarga qo'ng'iroq qilib chiqish kerak"):
+        assert not call_requested(t), t
+    now = datetime(2026, 10, 9, 5, 0, tzinfo=timezone.utc)   # Toshkent 10:00
+    tz = "Asia/Tashkent"
+    cases = {"hozir emas, ertaga qo'ng'iroq qil": ("ask", ""), "hozir bandman, keyinroq qo'ng'iroq qil": ("ask", ""),
+             "2 soatda tel qil": ("at", "120 daq"), "o'n besh daqiqadan keyin": ("at", "900 s"),
+             "yigirma besh daqiqadan keyin": ("at", "1500 s"), "bir yarim soatdan keyin": ("at", "90 daq"),
+             "soat 3 da": ("at", "15:00"), "bugun soat 5 da": ("at", "2026-10-09 17:00"),
+             "kechasi 12 da": ("at", "2026-10-10 00:00"), "ertaga 7 da tel qilib uyg'ot": ("at", "2026-10-10 07:00")}
+    for t, want in cases.items():
+        assert call_when(t, tz, now) == want, t
+
+
+async def test_task_decision_not_replaced_by_call_without_self(make_app):
+    import json as _json
+    base = scripted_company()
+
+    def handler(system, user, model):
+        if "front desk" in system:
+            return _json.dumps({"mode": "task", "reply": "Boshladim", "task": "mijozlarga qo'ng'iroq rejasini tuz"})
+        return base(system, user, model)
+    app, _ = await make_app(handler, OWNER_TELEGRAM_ID="1")
+    d = app.orch._ensure_call("mijozlarga qo'ng'iroq qilib chiqish rejasini tuz", {"mode": "task", "task": "x", "reply": ""})
+    assert d["mode"] == "task" and not d.get("call")

@@ -184,6 +184,8 @@ class Orchestrator:
         from . import reminders
         if decision.get("reminder") or decision.get("call") or not reminders.call_requested(text):
             return decision
+        if decision.get("mode") == "task" and not reminders.explicit_self(text):
+            return decision   # model buni ish deb tushungan va "menga" deyilmagan: vazifani almashtirmaymiz
         kind, when = reminders.call_when(text, self.settings.report_tz)
         base = {"mode": "chat", "task": "", "based_on": None}
         if kind == "now":
