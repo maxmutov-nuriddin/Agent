@@ -451,6 +451,42 @@ class CallService:
         return s + f"Sarf {spent:.2f} dollar."
 
     # ---------- chiqish: agent qo'ng'iroq qiladi ----------
+    PEER_HELP = ("agent akkaunt sizni topa olmayapti (siz bilan hali yozishmagan). Hal qilish: asosiy akkauntingizdan agent "
+                 "akkauntga bitta xabar yozing (masalan «salom») va qayta urinib ko'ring.")
+
+    async def _ensure_peer(self, chat_id: int) -> bool:
+        """Telethon egasini 'tanishi' kerak (access_hash). Tanimasa: dialoglar, keyin bot orqali username bilan topishga urinadi."""
+        c = self._client
+        if c is None:
+            return False
+
+        async def known() -> bool:
+            try:
+                await c.get_input_entity(chat_id)
+                return True
+            except ValueError:
+                return False
+        if await known():
+            return True
+        try:
+            await c.get_dialogs(limit=300)
+        except Exception as e:  # noqa: BLE001
+            log.info("dialoglarni yuklab bo'lmadi: %s", type(e).__name__)
+        if await known():
+            return True
+        token = self.app.settings.telegram_token
+        if token:   # bot egasining ochiq username'ini biladi (egasi botga yozgan bo'lsa)
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=15) as h:
+                    r = await h.get(f"https://api.telegram.org/bot{token}/getChat", params={"chat_id": chat_id})
+                uname = ((r.json() or {}).get("result") or {}).get("username")
+                if uname:
+                    await c.get_entity("@" + uname)
+            except Exception as e:  # noqa: BLE001 — token loglarga tushmasin
+                log.info("username bo'yicha topib bo'lmadi: %s", type(e).__name__)
+        return await known()
+
     async def call_owner(self, text: str, *, listen: bool = True) -> bool:
         """Egasiga qo'ng'iroq qilib `text`ni aytadi. Ko'tarilmasa False (natija baribir chatda bo'ladi)."""
         if self._tgc is None or self.call is not None:
@@ -460,6 +496,11 @@ class CallService:
             return False
         from pytgcalls.types import CallConfig
         chat_id = ids[0]
+        self.last_error = ""
+        if not await self._ensure_peer(chat_id):
+            self.last_error = f"qo'ng'iroq qilib bo'lmadi: {self.PEER_HELP}"
+            log.info(self.last_error)
+            return False
         try:
             call = await self._open(chat_id, CallConfig(timeout=40))
             await self.say(call, text)

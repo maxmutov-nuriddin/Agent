@@ -99,4 +99,5 @@ async def build_app(settings: Settings | None = None, providers=None, approver=N
     orch.on_done = on_done
     orch.call_owner = app.calls.call_owner
     orch.call_ready = lambda: app.calls._tgc is not None
+    orch.call_error = lambda: app.calls.last_error
     return app

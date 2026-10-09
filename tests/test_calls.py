@@ -271,3 +271,36 @@ async def test_stt_mode_requires_ready_service(web):
     c, app = web
     assert (await post(c, "/api/stt", {"mode": "azure"}))[0] == 400       # Azure kaliti yo'q
     assert (await post(c, "/api/stt", {"mode": "auto"}))[0] == 200
+
+
+async def test_call_owner_resolves_unknown_peer(make_app):
+    """Telethon egasini tanimasa: avval dialoglarni yuklaydi; baribir topilmasa tushunarli yo'l-yo'riq qaytaradi."""
+    app, _ = await make_app(scripted_company(), OWNER_TELEGRAM_ID="1")
+    calls = app.calls
+
+    class Client:
+        def __init__(self, known_after_dialogs):
+            self.loaded, self.known_after = False, known_after_dialogs
+
+        async def get_input_entity(self, cid):
+            if not (self.loaded and self.known_after):
+                raise ValueError("Could not find the input entity")
+            return object()
+
+        async def get_dialogs(self, limit=None):
+            self.loaded = True
+    calls._tgc = object()
+
+    async def ids():
+        return [42]
+    calls._owner_ids = ids
+    calls._client = Client(True)
+    assert await calls._ensure_peer(42)                       # dialoglardan topildi
+    calls._client = Client(False)
+    assert not await calls.call_owner("salom")                # topilmadi: qo'ng'iroq qilinmaydi
+    assert "bitta xabar yozing" in calls.last_error
+    app.orch.call_ready = lambda: True
+    app.orch.call_owner = calls.call_owner
+    app.orch.call_error = lambda: calls.last_error
+    res = await app.orch.handle("menga qo'ng'iroq qil hozir", 5)
+    assert "bitta xabar yozing" in res["reply"]               # foydalanuvchi sababini ko'radi

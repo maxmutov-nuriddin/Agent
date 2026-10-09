@@ -100,6 +100,7 @@ class Orchestrator:
         self._summarizing: set[int] = set()
         self._background: set[asyncio.Task] = set()
         self.call_ready = lambda: False   # app.py ulaydi: qo'ng'iroq moduli tayyormi
+        self.call_error = lambda: ""   # app.py ulaydi: oxirgi qo'ng'iroq xatosi (sababi foydalanuvchiga ko'rsatiladi)
         self.call_owner = None   # app.py ulaydi: egasiga qo'ng'iroq qilish (ovozli modul bo'lsa)
 
     async def _check_pause(self):
@@ -214,8 +215,10 @@ class Orchestrator:
                 decision["reply"] = f"Eslatmani qo'ya olmadim: {e}. Vaqtni aniqroq yozing (masalan: ertaga 9:00)."
         if decision.get("call"):
             ok = self.call_ready() and await self.call_owner(decision["call"])
+            why = self.call_error() if self.call_ready() else ""
             decision["reply"] = (decision["reply"] or "Qo'ng'iroq qilyapman.") if ok else \
-                "Qo'ng'iroq qila olmadim: qo'ng'iroq moduli yoqilmagan yoki akkaunt ulanmagan (Hisob → Telegram akkaunt → Ovozli qo'ng'iroq)."
+                ("Qo'ng'iroq qila olmadim: " + (why.removeprefix("qo'ng'iroq qilib bo'lmadi: ") if why else
+                 "qo'ng'iroq moduli yoqilmagan yoki akkaunt ulanmagan (Hisob → Telegram akkaunt → Ovozli qo'ng'iroq)."))
         if decision["mode"] == "chat":
             await self.store.add_chat(chat_id, "ceo", decision["reply"])
             await notify(decision["reply"])
